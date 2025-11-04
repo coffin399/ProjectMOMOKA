@@ -145,38 +145,38 @@ Convert text to speech using Style-Bert-VITS2.
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/coffin399/ProjectMOMOKA.git
    cd ProjectMOMOKA
    ```
 
-2. **Create virtual environment (recommended)**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # Linux/Mac
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Prepare configuration file**
+2. **Prepare configuration file**
    ```bash
    copy config.default.yaml config.yaml  # Windows
    cp config.default.yaml config.yaml  # Linux/Mac
    ```
 
-5. **Edit configuration file**
+3. **Edit configuration file**
    - Open `config.yaml` and set the required API keys
 
-6. **Start the bot**
-   ```bash
-   python main.py
-   ```
-   Or on Windows:
+4. **Start the bot**
+
+   **Windows (Recommended):** Use the all-in-one batch file that automatically handles virtual environment setup, package installation, and bot startup:
    ```bash
    startMOMOKA.bat
+   ```
+   
+   **Manual start (Linux/Mac or if you prefer manual setup):**
+   ```bash
+   # Create virtual environment (recommended)
+   python -m venv .venv
+   .venv\Scripts\activate  # Windows
+   source .venv/bin/activate  # Linux/Mac
+   
+   # Install dependencies
+   pip install -r requirements.txt
+   
+   # Start the bot
+   python main.py
    ```
 
 ---

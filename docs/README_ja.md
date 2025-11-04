@@ -145,38 +145,38 @@ Style-Bert-VITS2を使用してテキストを音声に変換します。
 
 1. **リポジトリのクローン**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/coffin399/ProjectMOMOKA.git
    cd ProjectMOMOKA
    ```
 
-2. **仮想環境の作成（推奨）**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # Linux/Mac
-   ```
-
-3. **依存パッケージのインストール**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **設定ファイルの準備**
+2. **設定ファイルの準備**
    ```bash
    copy config.default.yaml config.yaml  # Windows
    cp config.default.yaml config.yaml  # Linux/Mac
    ```
 
-5. **設定ファイルの編集**
+3. **設定ファイルの編集**
    - `config.yaml`を開いて、必要なAPIキーを設定してください
 
-6. **ボットの起動**
-   ```bash
-   python main.py
-   ```
-   または、Windowsの場合は：
+4. **ボットの起動**
+
+   **Windows (推奨):** オールインワンのバッチファイルを使用します。仮想環境の作成、パッケージのインストール、ボットの起動を自動で行います：
    ```bash
    startMOMOKA.bat
+   ```
+   
+   **手動起動 (Linux/Mac または手動で設定したい場合):**
+   ```bash
+   # 仮想環境の作成（推奨）
+   python -m venv .venv
+   .venv\Scripts\activate  # Windows
+   source .venv/bin/activate  # Linux/Mac
+   
+   # 依存パッケージのインストール
+   pip install -r requirements.txt
+   
+   # ボットの起動
+   python main.py
    ```
 
 ---

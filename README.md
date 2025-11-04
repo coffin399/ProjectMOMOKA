@@ -42,7 +42,7 @@
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/coffin399/ProjectMOMOKA.git
    cd ProjectMOMOKA
    ```
 
@@ -56,12 +56,15 @@
    - Fill in your bot token and API keys
 
 4. **Run the bot**
-   ```bash
-   python main.py
-   ```
-   Or use the provided batch file:
+   
+   **Windows (Recommended):** Use the all-in-one batch file that handles virtual environment setup and package installation automatically:
    ```bash
    startMOMOKA.bat
+   ```
+   
+   **Manual start (Linux/Mac or if you prefer):**
+   ```bash
+   python main.py
    ```
 
 ### 📚 Documentation
