@@ -12,7 +12,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)
-![License](https://img.shields.io/badge/license-Private-red.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 </div>
 
