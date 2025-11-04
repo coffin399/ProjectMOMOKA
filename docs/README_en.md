@@ -49,6 +49,7 @@ Mention the bot to chat with AI. Supports multiple AI models and can recognize i
 - Global memory feature (`/memory-save`)
 - Image generation tool integration
 - Web search functionality
+- **🔄 Automatic API Key Rotation** - Configure multiple API keys to automatically switch to the next key when rate limit or server errors occur. Ensures stable operation even under high load
 
 ### 2. Music Playback Feature
 
@@ -207,10 +208,22 @@ llm:
     openai:
       base_url: https://api.openai.com/v1
       api_key1: YOUR_KEY
+      api_key2: YOUR_KEY_2  # Multiple API keys can be configured
+      api_key3: YOUR_KEY_3  # Automatically switches to next key on rate limit
     google:
       base_url: https://generativelanguage.googleapis.com/v1beta/
       api_key1: YOUR_KEY
+      api_key2: YOUR_KEY_2
+      api_key3: YOUR_KEY_3
+      api_key4: YOUR_KEY_4
+      api_key5: YOUR_KEY_5  # Up to 5 keys can be set (more can be added if needed)
 ```
+
+**💡 API Key Rotation Feature:**
+- You can configure multiple API keys as `api_key1`, `api_key2`, `api_key3`, etc.
+- When rate limit or server errors occur, it automatically switches to the next API key
+- Automatically retries until all keys are exhausted
+- Ensures stable operation even under high load
 
 #### Image Generation Settings
 
@@ -373,6 +386,36 @@ Information set with `/set-user-bio` is referenced in conversations with that us
 #### Global Memory
 
 Information can be saved to server-wide memory. Useful for storing bot settings and common information.
+
+#### API Key Rotation
+
+MOMOKA provides robust handling of rate limits and server errors by configuring multiple API keys.
+
+**How it works:**
+1. Configure multiple API keys in the config file (`config.yaml`) as `api_key1`, `api_key2`, `api_key3`, etc.
+2. By default, the first API key (`api_key1`) is used
+3. When a rate limit error (`RateLimitError`) or server error (`InternalServerError`) occurs, it automatically switches to the next API key
+4. Automatically retries until all API keys are exhausted
+5. Only returns an error if all keys fail
+
+**Benefits:**
+- **High Availability**: Service continues with other keys even if one API key hits rate limits
+- **Load Distribution**: Distributes load across multiple keys instead of a single key
+- **Automatic Recovery**: Automatically switches without manual intervention when errors occur
+- **Flexible Configuration**: Can set different numbers of API keys for each provider
+
+**Example:**
+```yaml
+providers:
+  google:
+    api_key1: "key1"
+    api_key2: "key2"
+    api_key3: "key3"
+    api_key4: "key4"
+    api_key5: "key5"
+```
+
+With this configuration, 5 API keys will automatically rotate when using the Google Gemini API.
 
 ### Music Playback Feature Details
 

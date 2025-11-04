@@ -30,7 +30,7 @@
 
 ### 🚀 Key Features
 
-- 🤖 **AI Chat (LLM)** - Chat with multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP
+- 🤖 **AI Chat (LLM)** - Chat with multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
 - 🎨 **Image Generation** - Generate images using Stable Diffusion via WebUI Forge
 - 🗣️ **Text-to-Speech** - Convert text to speech with Style-Bert-VITS2
