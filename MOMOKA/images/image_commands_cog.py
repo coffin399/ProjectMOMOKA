@@ -1,0 +1,207 @@
+# MOMOKA/cogs/images/image_commands_cog.py
+
+import logging
+import aiohttp
+import discord
+import random
+from discord import app_commands
+from discord.ext import commands
+
+from PLANA.images.error import errors
+
+logger = logging.getLogger(__name__)
+
+# --- 設定キー (config.yaml から読み込むことを想定) ---
+THECATAPI_API_KEY = "thecatapi_api_key"
+# User-Agent設定
+BOT_USER_AGENT = "PlanaDiscordBot/1.0"
+
+
+class ImageCommandsCog(commands.Cog, name="画像検索"):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+        self.bot_user_agent = self.bot.config.get("bot_user_agent", BOT_USER_AGENT)
+        headers = {"User-Agent": self.bot_user_agent}
+        self.http_session = aiohttp.ClientSession(headers=headers)
+
+        self.thecatapi_key = self.bot.config.get(THECATAPI_API_KEY)
+        if not self.thecatapi_key:
+            logger.warning("TheCatAPIのAPIキーが設定されていません。レート制限が厳しくなる可能性があります。")
+
+    async def cog_unload(self):
+        await self.http_session.close()
+        logger.info("ImageCommandsCog: aiohttpセッションを閉じました。")
+
+    @app_commands.command(name="meow", description="可愛い猫の画像を表示します。 / Displays a cute cat picture.")
+    async def meow_command(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        try:
+            cat_api_headers = {}
+            if self.thecatapi_key:
+                cat_api_headers["x-api-key"] = self.thecatapi_key
+
+            request_headers = {**self.http_session.headers, **cat_api_headers}
+
+            async with self.http_session.get("https://api.thecatapi.com/v1/images/search",
+                                             headers=request_headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # 正常なデータかチェック
+                    if data and isinstance(data, list) and len(data) > 0 and data[0].get("url"):
+                        # --- 成功時の処理 ---
+                        cat_url = data[0]["url"]
+                        embed = discord.Embed(title="にゃーん！ / Meow!", color=discord.Color.random())
+                        embed.set_image(url=cat_url)
+                        embed.set_footer(text="Powered by thecatapi.com")
+                        await interaction.followup.send(embed=embed, ephemeral=False)
+                        logger.info(f"/meow: 猫画像送信成功 - {cat_url} (User: {interaction.user.id})")
+                    else:
+                        await errors.handle_meow_invalid_data(interaction)
+                else:
+                    await errors.handle_meow_api_error(interaction, response)
+
+        # ▼▼▼ 変更点: 各エラーハンドリングを委譲 ▼▼▼
+        except aiohttp.ClientError as e:  # aiohttpの接続関連エラーを広く捕捉
+            await errors.handle_meow_connection_error(interaction, e)
+        except Exception as e:
+            await errors.handle_meow_unexpected_error(interaction, e)
+
+    @app_commands.command(name="yandere", description="Yandereから画像を検索します / Search images from Yandere")
+    @app_commands.describe(query="検索タグ (スペース区切り) / Search tags (space separated)")
+    async def yandere_command(self, interaction: discord.Interaction, query: str = ""):
+        # NSFWチャンネルチェック
+        if not interaction.channel.is_nsfw():
+            await interaction.response.send_message(
+                "⚠️ このコマンドはNSFWチャンネルでのみ使用できます。\n⚠️ This command can only be used in NSFW channels.",
+                ephemeral=False
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            # タグをスペース区切りで分割し、+で結合
+            tags = query.strip().replace(" ", "+") if query else ""
+
+            # Yandere APIエンドポイント
+            url = f"https://yande.re/post.json?limit=100&tags={tags}"
+
+            async with self.http_session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data and isinstance(data, list) and len(data) > 0:
+                        # ランダムに1つ選択
+                        post = random.choice(data)
+                        image_url = post.get("file_url") or post.get("sample_url")
+
+                        if image_url:
+                            embed = discord.Embed(
+                                title="Yandere Image",
+                                color=discord.Color.pink(),
+                                url=f"https://yande.re/post/show/{post.get('id', '')}"
+                            )
+                            embed.set_image(url=image_url)
+
+                            # タグ情報を追加
+                            tags_str = post.get("tags", "")[:200]  # 200文字まで
+                            if tags_str:
+                                embed.add_field(name="Tags", value=tags_str, inline=False)
+
+                            embed.set_footer(text=f"Rating: {post.get('rating', 'unknown')} | Yande.re")
+
+                            await interaction.followup.send(embed=embed, ephemeral=False)
+                            logger.info(f"/yandere: 画像送信成功 - Query: {query} (User: {interaction.user.id})")
+                        else:
+                            await interaction.followup.send("画像URLが取得できませんでした。", ephemeral=False)
+                    else:
+                        await interaction.followup.send(
+                            f"検索結果が見つかりませんでした。\nQuery: `{query}`",
+                            ephemeral=False
+                        )
+                else:
+                    await interaction.followup.send(
+                        f"Yandere APIエラー: ステータスコード {response.status}",
+                        ephemeral=False
+                    )
+                    logger.error(f"/yandere: API error - Status: {response.status}")
+
+        except aiohttp.ClientError as e:
+            await interaction.followup.send("接続エラーが発生しました。", ephemeral=False)
+            logger.error(f"/yandere: Connection error - {e}")
+        except Exception as e:
+            await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
+            logger.error(f"/yandere: Unexpected error - {e}")
+
+    @app_commands.command(name="danbooru", description="Danbooruから画像を検索します / Search images from Danbooru")
+    @app_commands.describe(query="検索タグ (スペース区切り) / Search tags (space separated)")
+    async def danbooru_command(self, interaction: discord.Interaction, query: str = ""):
+        # NSFWチャンネルチェック
+        if not interaction.channel.is_nsfw():
+            await interaction.response.send_message(
+                "⚠️ このコマンドはNSFWチャンネルでのみ使用できます。\n⚠️ This command can only be used in NSFW channels.",
+                ephemeral=False
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            # タグをスペース区切りで分割し、+で結合
+            tags = query.strip().replace(" ", "+") if query else ""
+
+            # Danbooru APIエンドポイント
+            url = f"https://danbooru.donmai.us/posts.json?limit=100&tags={tags}"
+
+            async with self.http_session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data and isinstance(data, list) and len(data) > 0:
+                        # ランダムに1つ選択
+                        post = random.choice(data)
+                        image_url = post.get("file_url") or post.get("large_file_url")
+
+                        if image_url:
+                            embed = discord.Embed(
+                                title="Danbooru Image",
+                                color=discord.Color.blue(),
+                                url=f"https://danbooru.donmai.us/posts/{post.get('id', '')}"
+                            )
+                            embed.set_image(url=image_url)
+
+                            # タグ情報を追加
+                            tag_string = post.get("tag_string", "")[:200]  # 200文字まで
+                            if tag_string:
+                                embed.add_field(name="Tags", value=tag_string, inline=False)
+
+                            embed.set_footer(text=f"Rating: {post.get('rating', 'unknown')} | Danbooru")
+
+                            await interaction.followup.send(embed=embed, ephemeral=False)
+                            logger.info(f"/danbooru: 画像送信成功 - Query: {query} (User: {interaction.user.id})")
+                        else:
+                            await interaction.followup.send("画像URLが取得できませんでした。", ephemeral=False)
+                    else:
+                        await interaction.followup.send(
+                            f"検索結果が見つかりませんでした。\nQuery: `{query}`",
+                            ephemeral=False
+                        )
+                else:
+                    await interaction.followup.send(
+                        f"Danbooru APIエラー: ステータスコード {response.status}",
+                        ephemeral=False
+                    )
+                    logger.error(f"/danbooru: API error - Status: {response.status}")
+
+        except aiohttp.ClientError as e:
+            await interaction.followup.send("接続エラーが発生しました。", ephemeral=False)
+            logger.error(f"/danbooru: Connection error - {e}")
+        except Exception as e:
+            await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
+            logger.error(f"/danbooru: Unexpected error - {e}")
+
+
+async def setup(bot: commands.Bot):
+    if not hasattr(bot, 'config') or not bot.config:
+        logger.error("ImageCommandsCog: Botインスタンスに 'config' 属性が見つからないか空です。Cogをロードできません。")
+        raise commands.ExtensionFailed("ImageCommandsCog", "Botのconfigがロードされていません。")
+
+    await bot.add_cog(ImageCommandsCog(bot))
+    logger.info("ImageCommandsCogが正常にロードされました。")

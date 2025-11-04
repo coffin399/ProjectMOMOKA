@@ -1,0 +1,401 @@
+name: Build and Release Executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version tag (e.g., v1.2.3 or 1.2.3)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  NUITKA_VERSION: '1.9.7'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build-all:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            ext: ''
+          - os: windows-latest
+            platform: win
+            ext: '.exe'
+          - os: macos-latest
+            platform: mac
+            ext: ''
+      fail-fast: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuitka
+            ~/.cache/Nuitka
+          key: nuitka-${{ runner.os }}-${{ env.NUITKA_VERSION }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ env.NUITKA_VERSION }}-
+            nuitka-${{ runner.os }}-
+
+      - name: Install Nuitka
+        run: pip install nuitka==${{ env.NUITKA_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build executable (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          python -m nuitka \
+            --onefile \
+            --output-dir=dist \
+            --output-filename=PLANA${{ matrix.ext }} \
+            --include-data-file=config.default.yaml=config.default.yaml \
+            --include-package-data=PLANA \
+            --include-package-data=PLANA.images \
+            --include-package-data=PLANA.images.error \
+            --include-package-data=PLANA.llm \
+            --include-package-data=PLANA.llm.error \
+            --include-package-data=PLANA.llm.plugins \
+            --include-package-data=PLANA.llm.utils \
+            --include-package-data=PLANA.media_downloader \
+            --include-package-data=PLANA.media_downloader.error \
+            --include-package-data=PLANA.music \
+            --include-package-data=PLANA.music.error \
+            --include-package-data=PLANA.music.plugins \
+            --include-package-data=PLANA.notifications \
+            --include-package-data=PLANA.notifications.error \
+            --include-package-data=PLANA.services \
+            --include-package-data=PLANA.timer \
+            --include-package-data=PLANA.timer.error \
+            --include-package-data=PLANA.tracker \
+            --include-package-data=PLANA.tracker.error \
+            --include-package-data=PLANA.tts \
+            --include-package-data=PLANA.tts.error \
+            --include-package-data=PLANA.utilities \
+            --include-package-data=PLANA.utilities.error \
+            --include-package-data=discord \
+            --include-package-data=yaml \
+            --include-package-data=openai \
+            --include-package-data=google \
+            --include-package-data=PIL \
+            --include-package-data=matplotlib \
+            --include-package-data=cartopy \
+            --include-package-data=langdetect \
+            --include-package-data=aiohttp \
+            --include-package-data=aiofiles \
+            --include-package-data=nacl \
+            --include-package-data=yt_dlp \
+            --assume-yes-for-downloads \
+            --show-progress \
+            --show-memory \
+            --jobs=4 \
+            main.py
+
+      - name: Build executable (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          python -m nuitka `
+            --onefile `
+            --output-dir=dist `
+            --output-filename=PLANA${{ matrix.ext }} `
+            --include-data-file=config.default.yaml=config.default.yaml `
+            --include-package-data=PLANA `
+            --include-package-data=PLANA.images `
+            --include-package-data=PLANA.images.error `
+            --include-package-data=PLANA.llm `
+            --include-package-data=PLANA.llm.error `
+            --include-package-data=PLANA.llm.plugins `
+            --include-package-data=PLANA.llm.utils `
+            --include-package-data=PLANA.media_downloader `
+            --include-package-data=PLANA.media_downloader.error `
+            --include-package-data=PLANA.music `
+            --include-package-data=PLANA.music.error `
+            --include-package-data=PLANA.music.plugins `
+            --include-package-data=PLANA.notifications `
+            --include-package-data=PLANA.notifications.error `
+            --include-package-data=PLANA.services `
+            --include-package-data=PLANA.timer `
+            --include-package-data=PLANA.timer.error `
+            --include-package-data=PLANA.tracker `
+            --include-package-data=PLANA.tracker.error `
+            --include-package-data=PLANA.tts `
+            --include-package-data=PLANA.tts.error `
+            --include-package-data=PLANA.utilities `
+            --include-package-data=PLANA.utilities.error `
+            --include-package-data=discord `
+            --include-package-data=yaml `
+            --include-package-data=openai `
+            --include-package-data=google `
+            --include-package-data=PIL `
+            --include-package-data=matplotlib `
+            --include-package-data=cartopy `
+            --include-package-data=langdetect `
+            --include-package-data=aiohttp `
+            --include-package-data=aiofiles `
+            --include-package-data=nacl `
+            --include-package-data=yt_dlp `
+            --assume-yes-for-downloads `
+            --show-progress `
+            --show-memory `
+            --jobs=4 `
+            main.py
+
+      - name: Verify build output and set permissions (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          if [ ! -f "dist/PLANA${{ matrix.ext }}" ]; then
+            echo "Build failed: PLANA${{ matrix.ext }} not found in dist/"
+            ls -la dist/ || ls -la
+            exit 1
+          fi
+          echo "Build successful: PLANA${{ matrix.ext }} found"
+          chmod +x "dist/PLANA${{ matrix.ext }}"
+          ls -lh "dist/PLANA${{ matrix.ext }}"
+
+      - name: Verify build output (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/PLANA${{ matrix.ext }}")) {
+            Write-Error "Build failed: PLANA${{ matrix.ext }} not found in dist/"
+            Get-ChildItem dist/ -ErrorAction SilentlyContinue
+            Get-ChildItem .
+            exit 1
+          }
+          Write-Host "Build successful: PLANA${{ matrix.ext }} found"
+          Get-ChildItem "dist/PLANA${{ matrix.ext }}" | Format-List
+
+      - name: Copy build files (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "release_package" -Force
+          Copy-Item "dist/PLANA${{ matrix.ext }}" "release_package/"
+          Copy-Item "config.default.yaml" "release_package/"
+          Copy-Item "requirements.txt" "release_package/"
+
+          $readmeContent = @"
+          PLANA Release Package
+          =====================
+
+          Files included:
+          - PLANA${{ matrix.ext }}: Main executable
+          - config.default.yaml: Default configuration (will be copied to config.yaml on first run)
+          - requirements.txt: Python dependencies (for reference only)
+
+          Required files (user must provide):
+          - client_secrets.json: Google API credentials (for image generation and TTS features)
+
+          Auto-generated at runtime:
+          - config.yaml: Application configuration (generated from config.default.yaml on first run)
+          - data/: Directory containing various JSON data files generated during execution
+
+          Usage:
+          1. Copy client_secrets.json to this directory
+          2. Run PLANA${{ matrix.ext }}
+          3. The first run will generate config.yaml from config.default.yaml
+          4. Edit config.yaml with your bot token and API keys
+          5. Run PLANA${{ matrix.ext }} again
+
+          Platform: ${{ matrix.os }} (${{ matrix.platform }})
+          Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          "@
+
+          $readmeContent | Out-File -FilePath "release_package/README.txt" -Encoding UTF8
+
+      - name: Copy build files (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p release_package
+          cp "dist/PLANA${{ matrix.ext }}" release_package/
+          cp config.default.yaml release_package/
+          cp requirements.txt release_package/
+
+          cat > release_package/README.txt << 'EOF'
+          PLANA Release Package
+          =====================
+
+          Files included:
+          - PLANA: Main executable
+          - config.default.yaml: Default configuration (will be copied to config.yaml on first run)
+          - requirements.txt: Python dependencies (for reference only)
+
+          Required files (user must provide):
+          - client_secrets.json: Google API credentials (for image generation and TTS features)
+
+          Auto-generated at runtime:
+          - config.yaml: Application configuration (generated from config.default.yaml on first run)
+          - data/: Directory containing various JSON data files generated during execution
+
+          Usage:
+          1. Copy client_secrets.json to this directory
+          2. Run ./PLANA
+          3. The first run will generate config.yaml from config.default.yaml
+          4. Edit config.yaml with your bot token and API keys
+          5. Run ./PLANA again
+          EOF
+
+          echo "" >> release_package/README.txt
+          echo "Platform: ${{ matrix.os }} (${{ matrix.platform }})" >> release_package/README.txt
+          echo "Build Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> release_package/README.txt
+
+      - name: Create zip package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "release_package/*" -DestinationPath "PLANA-${{ matrix.platform }}.zip" -Force
+          if (-not (Test-Path "PLANA-${{ matrix.platform }}.zip")) {
+            Write-Error "Failed to create zip package"
+            exit 1
+          }
+          $fileSize = (Get-Item "PLANA-${{ matrix.platform }}.zip").Length / 1MB
+          Write-Host "Zip package created successfully (Size: $([math]::Round($fileSize, 2)) MB)"
+
+      - name: Create zip package (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          cd release_package
+          zip -r "../PLANA-${{ matrix.platform }}.zip" .
+          cd ..
+          if [ ! -f "PLANA-${{ matrix.platform }}.zip" ]; then
+            echo "Failed to create zip package"
+            exit 1
+          fi
+          size=$(du -h "PLANA-${{ matrix.platform }}.zip" | cut -f1)
+          echo "Zip package created successfully (Size: $size)"
+
+      - name: Archive release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: plana-release-${{ matrix.platform }}
+          path: PLANA-${{ matrix.platform }}.zip
+          retention-days: 90
+
+  create-release:
+    needs: build-all
+    runs-on: ubuntu-latest
+    if: needs.build-all.result == 'success'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(date +'%Y%m%d-%H%M%S')
+          SHA=$(git rev-parse --short HEAD)
+          FULL_VERSION="${VERSION}-${SHA}"
+          echo "VERSION=$FULL_VERSION" >> $GITHUB_ENV
+          echo "VERSION=$FULL_VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $FULL_VERSION"
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release_assets
+
+          for platform in linux win mac; do
+            artifact_path="artifacts/plana-release-${platform}/PLANA-${platform}.zip"
+            if [ -f "$artifact_path" ]; then
+              cp "$artifact_path" release_assets/
+              size=$(du -h "$artifact_path" | cut -f1)
+              echo "Found: PLANA-${platform}.zip (Size: $size)"
+            else
+              echo "Missing release file: $artifact_path"
+              exit 1
+            fi
+          done
+
+          echo "Release assets:"
+          ls -lh release_assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: release-${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          body: |
+            ## Auto-generated Release ${{ env.VERSION }}
+
+            This is an automated release build from the `advanced-bot-utilities` branch.
+
+            ### Downloads
+            - **PLANA-linux.zip**: Linux executable package
+            - **PLANA-win.zip**: Windows executable package
+            - **PLANA-mac.zip**: macOS executable package
+
+            ### Package Contents
+            Each zip file contains:
+            - `PLANA` (or `PLANA.exe` on Windows): Main executable
+            - `config.default.yaml`: Default configuration
+            - `requirements.txt`: Python dependencies reference
+            - `README.txt`: Detailed setup instructions
+
+            ### First-time Setup
+            1. Download the zip file for your platform
+            2. Extract the zip file
+            3. Copy your `client_secrets.json` file to the extracted directory
+            4. Run the executable (see platform-specific notes below)
+            5. Edit the generated `config.yaml` file with your credentials
+            6. Run the executable again
+
+            ### Platform-specific Notes
+
+            #### macOS
+            - You may need to right-click and select "Open" the first time due to Gatekeeper
+            - Or run: `xattr -d com.apple.quarantine PLANA` in Terminal
+
+            #### Linux
+            - Ensure executable permissions: `chmod +x PLANA`
+            - Run with: `./PLANA`
+
+            #### Windows
+            - Windows Defender may show a warning for unsigned executables
+            - Click "More info" and then "Run anyway" if prompted
+
+            ### Dependencies
+            Built with:
+            - Python ${{ env.PYTHON_VERSION }}
+            - Nuitka ${{ env.NUITKA_VERSION }}
+
+            ---
+
+            **Commit**: ${{ github.sha }}
+            **Branch**: ${{ github.ref_name }}
+          files: release_assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
