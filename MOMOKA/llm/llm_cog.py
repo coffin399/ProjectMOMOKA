@@ -35,37 +35,37 @@ except ImportError:
                     "Install with: pip install langdetect")
 
 try:
-    from PLANA.llm.plugins.search_agent import SearchAgent
+    from MOMOKA.llm.plugins.search_agent import SearchAgent
 except ImportError:
     logging.error("Could not import SearchAgent. Search functionality will be disabled.")
     SearchAgent = None
 
 try:
-    from PLANA.llm.plugins.bio_manager import BioManager
+    from MOMOKA.llm.plugins.bio_manager import BioManager
 except ImportError:
     logging.error("Could not import BioManager. Bio functionality will be disabled.")
     BioManager = None
 
 try:
-    from PLANA.llm.plugins.memory_manager import MemoryManager
+    from MOMOKA.llm.plugins.memory_manager import MemoryManager
 except ImportError:
     logging.error("Could not import MemoryManager. Memory functionality will be disabled.")
     MemoryManager = None
 
 try:
-    from PLANA.llm.plugins.commands_manager import CommandInfoManager
+    from MOMOKA.llm.plugins.commands_manager import CommandInfoManager
 except ImportError:
     logging.error("Could not import CommandInfoManager. Command suggestions will be disabled.")
     CommandInfoManager = None
 
 try:
-    from PLANA.llm.plugins.image_generator import ImageGenerator
+    from MOMOKA.llm.plugins.image_generator import ImageGenerator
 except ImportError:
     logging.error("Could not import ImageGenerator. Image generation will be disabled.")
     ImageGenerator = None
 
 try:
-    from PLANA.llm.utils.tips import TipsManager
+    from MOMOKA.llm.utils.tips import TipsManager
 except ImportError:
     logging.error("Could not import TipsManager. Tips functionality will be disabled.")
     TipsManager = None
