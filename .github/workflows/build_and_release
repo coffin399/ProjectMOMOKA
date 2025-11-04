@@ -71,31 +71,32 @@ jobs:
           python -m nuitka \
             --onefile \
             --output-dir=dist \
-            --output-filename=PLANA${{ matrix.ext }} \
+            --output-filename=MOMOKA${{ matrix.ext }} \
             --include-data-file=config.default.yaml=config.default.yaml \
-            --include-package-data=PLANA \
-            --include-package-data=PLANA.images \
-            --include-package-data=PLANA.images.error \
-            --include-package-data=PLANA.llm \
-            --include-package-data=PLANA.llm.error \
-            --include-package-data=PLANA.llm.plugins \
-            --include-package-data=PLANA.llm.utils \
-            --include-package-data=PLANA.media_downloader \
-            --include-package-data=PLANA.media_downloader.error \
-            --include-package-data=PLANA.music \
-            --include-package-data=PLANA.music.error \
-            --include-package-data=PLANA.music.plugins \
-            --include-package-data=PLANA.notifications \
-            --include-package-data=PLANA.notifications.error \
-            --include-package-data=PLANA.services \
-            --include-package-data=PLANA.timer \
-            --include-package-data=PLANA.timer.error \
-            --include-package-data=PLANA.tracker \
-            --include-package-data=PLANA.tracker.error \
-            --include-package-data=PLANA.tts \
-            --include-package-data=PLANA.tts.error \
-            --include-package-data=PLANA.utilities \
-            --include-package-data=PLANA.utilities.error \
+            --include-package=MOMOKA \
+            --include-package-data=MOMOKA \
+            --include-package-data=MOMOKA.images \
+            --include-package-data=MOMOKA.images.error \
+            --include-package-data=MOMOKA.llm \
+            --include-package-data=MOMOKA.llm.error \
+            --include-package-data=MOMOKA.llm.plugins \
+            --include-package-data=MOMOKA.llm.utils \
+            --include-package-data=MOMOKA.media_downloader \
+            --include-package-data=MOMOKA.media_downloader.error \
+            --include-package-data=MOMOKA.music \
+            --include-package-data=MOMOKA.music.error \
+            --include-package-data=MOMOKA.music.plugins \
+            --include-package-data=MOMOKA.notifications \
+            --include-package-data=MOMOKA.notifications.error \
+            --include-package-data=MOMOKA.services \
+            --include-package-data=MOMOKA.timer \
+            --include-package-data=MOMOKA.timer.error \
+            --include-package-data=MOMOKA.tracker \
+            --include-package-data=MOMOKA.tracker.error \
+            --include-package-data=MOMOKA.tts \
+            --include-package-data=MOMOKA.tts.error \
+            --include-package-data=MOMOKA.utilities \
+            --include-package-data=MOMOKA.utilities.error \
             --include-package-data=discord \
             --include-package-data=yaml \
             --include-package-data=openai \
@@ -121,31 +122,32 @@ jobs:
           python -m nuitka `
             --onefile `
             --output-dir=dist `
-            --output-filename=PLANA${{ matrix.ext }} `
+            --output-filename=MOMOKA${{ matrix.ext }} `
             --include-data-file=config.default.yaml=config.default.yaml `
-            --include-package-data=PLANA `
-            --include-package-data=PLANA.images `
-            --include-package-data=PLANA.images.error `
-            --include-package-data=PLANA.llm `
-            --include-package-data=PLANA.llm.error `
-            --include-package-data=PLANA.llm.plugins `
-            --include-package-data=PLANA.llm.utils `
-            --include-package-data=PLANA.media_downloader `
-            --include-package-data=PLANA.media_downloader.error `
-            --include-package-data=PLANA.music `
-            --include-package-data=PLANA.music.error `
-            --include-package-data=PLANA.music.plugins `
-            --include-package-data=PLANA.notifications `
-            --include-package-data=PLANA.notifications.error `
-            --include-package-data=PLANA.services `
-            --include-package-data=PLANA.timer `
-            --include-package-data=PLANA.timer.error `
-            --include-package-data=PLANA.tracker `
-            --include-package-data=PLANA.tracker.error `
-            --include-package-data=PLANA.tts `
-            --include-package-data=PLANA.tts.error `
-            --include-package-data=PLANA.utilities `
-            --include-package-data=PLANA.utilities.error `
+            --include-package=MOMOKA `
+            --include-package-data=MOMOKA `
+            --include-package-data=MOMOKA.images `
+            --include-package-data=MOMOKA.images.error `
+            --include-package-data=MOMOKA.llm `
+            --include-package-data=MOMOKA.llm.error `
+            --include-package-data=MOMOKA.llm.plugins `
+            --include-package-data=MOMOKA.llm.utils `
+            --include-package-data=MOMOKA.media_downloader `
+            --include-package-data=MOMOKA.media_downloader.error `
+            --include-package-data=MOMOKA.music `
+            --include-package-data=MOMOKA.music.error `
+            --include-package-data=MOMOKA.music.plugins `
+            --include-package-data=MOMOKA.notifications `
+            --include-package-data=MOMOKA.notifications.error `
+            --include-package-data=MOMOKA.services `
+            --include-package-data=MOMOKA.timer `
+            --include-package-data=MOMOKA.timer.error `
+            --include-package-data=MOMOKA.tracker `
+            --include-package-data=MOMOKA.tracker.error `
+            --include-package-data=MOMOKA.tts `
+            --include-package-data=MOMOKA.tts.error `
+            --include-package-data=MOMOKA.utilities `
+            --include-package-data=MOMOKA.utilities.error `
             --include-package-data=discord `
             --include-package-data=yaml `
             --include-package-data=openai `
@@ -168,43 +170,43 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          if [ ! -f "dist/PLANA${{ matrix.ext }}" ]; then
-            echo "Build failed: PLANA${{ matrix.ext }} not found in dist/"
+          if [ ! -f "dist/MOMOKA${{ matrix.ext }}" ]; then
+            echo "Build failed: MOMOKA${{ matrix.ext }} not found in dist/"
             ls -la dist/ || ls -la
             exit 1
           fi
-          echo "Build successful: PLANA${{ matrix.ext }} found"
-          chmod +x "dist/PLANA${{ matrix.ext }}"
-          ls -lh "dist/PLANA${{ matrix.ext }}"
+          echo "Build successful: MOMOKA${{ matrix.ext }} found"
+          chmod +x "dist/MOMOKA${{ matrix.ext }}"
+          ls -lh "dist/MOMOKA${{ matrix.ext }}"
 
       - name: Verify build output (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist/PLANA${{ matrix.ext }}")) {
-            Write-Error "Build failed: PLANA${{ matrix.ext }} not found in dist/"
+          if (-not (Test-Path "dist/MOMOKA${{ matrix.ext }}")) {
+            Write-Error "Build failed: MOMOKA${{ matrix.ext }} not found in dist/"
             Get-ChildItem dist/ -ErrorAction SilentlyContinue
             Get-ChildItem .
             exit 1
           }
-          Write-Host "Build successful: PLANA${{ matrix.ext }} found"
-          Get-ChildItem "dist/PLANA${{ matrix.ext }}" | Format-List
+          Write-Host "Build successful: MOMOKA${{ matrix.ext }} found"
+          Get-ChildItem "dist/MOMOKA${{ matrix.ext }}" | Format-List
 
       - name: Copy build files (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path "release_package" -Force
-          Copy-Item "dist/PLANA${{ matrix.ext }}" "release_package/"
+          Copy-Item "dist/MOMOKA${{ matrix.ext }}" "release_package/"
           Copy-Item "config.default.yaml" "release_package/"
           Copy-Item "requirements.txt" "release_package/"
 
           $readmeContent = @"
-          PLANA Release Package
+          MOMOKA Release Package
           =====================
 
           Files included:
-          - PLANA${{ matrix.ext }}: Main executable
+          - MOMOKA${{ matrix.ext }}: Main executable
           - config.default.yaml: Default configuration (will be copied to config.yaml on first run)
           - requirements.txt: Python dependencies (for reference only)
 
@@ -217,10 +219,10 @@ jobs:
 
           Usage:
           1. Copy client_secrets.json to this directory
-          2. Run PLANA${{ matrix.ext }}
+          2. Run MOMOKA${{ matrix.ext }}
           3. The first run will generate config.yaml from config.default.yaml
           4. Edit config.yaml with your bot token and API keys
-          5. Run PLANA${{ matrix.ext }} again
+          5. Run MOMOKA${{ matrix.ext }} again
 
           Platform: ${{ matrix.os }} (${{ matrix.platform }})
           Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
@@ -233,16 +235,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p release_package
-          cp "dist/PLANA${{ matrix.ext }}" release_package/
+          cp "dist/MOMOKA${{ matrix.ext }}" release_package/
           cp config.default.yaml release_package/
           cp requirements.txt release_package/
 
           cat > release_package/README.txt << 'EOF'
-          PLANA Release Package
+          MOMOKA Release Package
           =====================
 
           Files included:
-          - PLANA: Main executable
+          - MOMOKA: Main executable
           - config.default.yaml: Default configuration (will be copied to config.yaml on first run)
           - requirements.txt: Python dependencies (for reference only)
 
@@ -255,10 +257,10 @@ jobs:
 
           Usage:
           1. Copy client_secrets.json to this directory
-          2. Run ./PLANA
+          2. Run ./MOMOKA
           3. The first run will generate config.yaml from config.default.yaml
           4. Edit config.yaml with your bot token and API keys
-          5. Run ./PLANA again
+          5. Run ./MOMOKA again
           EOF
 
           echo "" >> release_package/README.txt
@@ -269,12 +271,12 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          Compress-Archive -Path "release_package/*" -DestinationPath "PLANA-${{ matrix.platform }}.zip" -Force
-          if (-not (Test-Path "PLANA-${{ matrix.platform }}.zip")) {
+          Compress-Archive -Path "release_package/*" -DestinationPath "MOMOKA-${{ matrix.platform }}.zip" -Force
+          if (-not (Test-Path "MOMOKA-${{ matrix.platform }}.zip")) {
             Write-Error "Failed to create zip package"
             exit 1
           }
-          $fileSize = (Get-Item "PLANA-${{ matrix.platform }}.zip").Length / 1MB
+          $fileSize = (Get-Item "MOMOKA-${{ matrix.platform }}.zip").Length / 1MB
           Write-Host "Zip package created successfully (Size: $([math]::Round($fileSize, 2)) MB)"
 
       - name: Create zip package (Linux/macOS)
@@ -282,20 +284,20 @@ jobs:
         shell: bash
         run: |
           cd release_package
-          zip -r "../PLANA-${{ matrix.platform }}.zip" .
+          zip -r "../MOMOKA-${{ matrix.platform }}.zip" .
           cd ..
-          if [ ! -f "PLANA-${{ matrix.platform }}.zip" ]; then
+          if [ ! -f "MOMOKA-${{ matrix.platform }}.zip" ]; then
             echo "Failed to create zip package"
             exit 1
           fi
-          size=$(du -h "PLANA-${{ matrix.platform }}.zip" | cut -f1)
+          size=$(du -h "MOMOKA-${{ matrix.platform }}.zip" | cut -f1)
           echo "Zip package created successfully (Size: $size)"
 
       - name: Archive release package
         uses: actions/upload-artifact@v4
         with:
-          name: plana-release-${{ matrix.platform }}
-          path: PLANA-${{ matrix.platform }}.zip
+          name: momoka-release-${{ matrix.platform }}
+          path: MOMOKA-${{ matrix.platform }}.zip
           retention-days: 90
 
   create-release:
@@ -327,11 +329,11 @@ jobs:
           mkdir -p release_assets
 
           for platform in linux win mac; do
-            artifact_path="artifacts/plana-release-${platform}/PLANA-${platform}.zip"
+            artifact_path="artifacts/momoka-release-${platform}/MOMOKA-${platform}.zip"
             if [ -f "$artifact_path" ]; then
               cp "$artifact_path" release_assets/
               size=$(du -h "$artifact_path" | cut -f1)
-              echo "Found: PLANA-${platform}.zip (Size: $size)"
+              echo "Found: MOMOKA-${platform}.zip (Size: $size)"
             else
               echo "Missing release file: $artifact_path"
               exit 1
@@ -352,13 +354,13 @@ jobs:
             This is an automated release build from the `advanced-bot-utilities` branch.
 
             ### Downloads
-            - **PLANA-linux.zip**: Linux executable package
-            - **PLANA-win.zip**: Windows executable package
-            - **PLANA-mac.zip**: macOS executable package
+            - **MOMOKA-linux.zip**: Linux executable package
+            - **MOMOKA-win.zip**: Windows executable package
+            - **MOMOKA-mac.zip**: macOS executable package
 
             ### Package Contents
             Each zip file contains:
-            - `PLANA` (or `PLANA.exe` on Windows): Main executable
+            - `MOMOKA` (or `MOMOKA.exe` on Windows): Main executable
             - `config.default.yaml`: Default configuration
             - `requirements.txt`: Python dependencies reference
             - `README.txt`: Detailed setup instructions
@@ -375,11 +377,11 @@ jobs:
 
             #### macOS
             - You may need to right-click and select "Open" the first time due to Gatekeeper
-            - Or run: `xattr -d com.apple.quarantine PLANA` in Terminal
+            - Or run: `xattr -d com.apple.quarantine MOMOKA` in Terminal
 
             #### Linux
-            - Ensure executable permissions: `chmod +x PLANA`
-            - Run with: `./PLANA`
+            - Ensure executable permissions: `chmod +x MOMOKA`
+            - Run with: `./MOMOKA`
 
             #### Windows
             - Windows Defender may show a warning for unsigned executables

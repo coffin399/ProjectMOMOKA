@@ -376,8 +376,8 @@ if __name__ == "__main__":
 
         if cog_name:
             # 特定のCogをリロード
-            if not cog_name.startswith('PLANA.'):
-                cog_name = f'PLANA.{cog_name}'
+            if not cog_name.startswith('MOMOKA.'):
+                cog_name = f'MOMOKA.{cog_name}'
 
             try:
                 await bot_instance.reload_extension(cog_name)
