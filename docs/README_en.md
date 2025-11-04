@@ -32,7 +32,7 @@
 
 ### 1. AI Chat Feature (LLM)
 
-Mention the bot to chat with AI. Supports multiple AI models and can recognize images.
+Simply mention the bot with `@<bot名>` to start chatting with AI! Supports multiple AI models and can recognize images.
 
 #### Supported Models
 
@@ -369,7 +369,7 @@ For detailed configuration options, refer to `config.default.yaml`.
 
 #### Mention Method
 
-Mention the bot (`@MOMOKA`) and send a message, and the AI will respond.
+Simply mention the bot with `@<bot名>` (e.g., `@MOMOKA`) and send a message, and the AI will respond.
 
 #### Image Recognition
 
