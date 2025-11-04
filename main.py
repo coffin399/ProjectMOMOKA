@@ -51,7 +51,7 @@ async def mobile_identify(self):
     await self.send_as_json(payload)
 
 
-class Shittim(commands.Bot):
+class Momoka(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = None
@@ -318,15 +318,15 @@ class Shittim(commands.Bot):
 
 
 if __name__ == "__main__":
-    plana_art = r"""
-██████╗ ██╗      █████╗ ███╗   ██╗ █████╗ 
-██╔══██╗██║     ██╔══██╗████╗  ██║██╔══██╗
-██████╔╝██║     ███████║██╔██╗ ██║███████║
-██╔═══╝ ██║     ██╔══██║██║╚██╗██║██╔══██║
-██║     ███████╗██║  ██║██║ ╚████║██║  ██║
-╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝
+    momoka_art = r"""
+███╗   ███╗ ██████╗ ███╗   ███╗ ██████╗ ██╗  ██╗ █████╗ 
+████╗ ████║██╔═══██╗████╗ ████║██╔═══██╗██║ ██╔╝██╔══██╗
+██╔████╔██║██║   ██║██╔████╔██║██║   ██║█████╔╝ ███████║
+██║╚██╔╝██║██║   ██║██║╚██╔╝██║██║   ██║██╔═██╗ ██╔══██║
+██║ ╚═╝ ██║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║  ██╗██║  ██║
+╚═╝     ╚═╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
     """
-    print(plana_art)
+    print(momoka_art)
     initial_config = {}
     try:
         if not os.path.exists(CONFIG_FILE) and os.path.exists(DEFAULT_CONFIG_FILE):
@@ -359,7 +359,7 @@ if __name__ == "__main__":
     intents.presences = False
     allowed_mentions = discord.AllowedMentions(everyone=False, users=True, roles=False, replied_user=True)
     discord.gateway.DiscordWebSocket.identify = mobile_identify
-    bot_instance = Shittim(command_prefix=commands.when_mentioned, intents=intents, help_command=None,
+    bot_instance = Momoka(command_prefix=commands.when_mentioned, intents=intents, help_command=None,
                            allowed_mentions=allowed_mentions)
 
 
