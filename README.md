@@ -15,7 +15,10 @@
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
+[![Discord](https://img.shields.io/discord/1305004687921250436?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/H79HKKqx3s)
+[![](https://coffin399.github.io/coffin299page/assets/badge.svg)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
 
+</div>
 </div>
 
 <div align="center">

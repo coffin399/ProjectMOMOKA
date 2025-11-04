@@ -499,7 +499,7 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 
 If you encounter issues, you can get support through:
 
-- Discord Support Server: [Link]
+- Discord Support Server: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
 - Contact Developer: Displayed with `/support` command
 
 ---

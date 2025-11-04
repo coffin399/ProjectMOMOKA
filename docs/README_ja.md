@@ -499,7 +499,7 @@ AIとの対話で「画像を生成して」などと依頼すると、AIがプ�
 
 問題が発生した場合、以下の方法でサポートを受けられます：
 
-- Discordサポートサーバー: [リンク]
+- Discordサポートサーバー: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
 - 開発者への連絡: `/support`コマンドで表示
 
 ---
