@@ -74,7 +74,14 @@
 
 ### 3. 画像生成機能
 
-Stable Diffusionを使用して画像を生成できます。WebUI ForgeまたはKoboldCPPと連携します。
+Stable Diffusionを使用して画像を生成できます。[Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)またはKoboldCPPと連携します。
+
+**⚠️ セットアップ要件:**
+- [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)のインストールとセットアップが必要です
+- WebUI Forgeを起動する際に、**`--api`引数を指定する必要があります**：
+  ```bash
+  python webui.py --api
+  ```
 
 #### 主な機能
 
@@ -85,7 +92,14 @@ Stable Diffusionを使用して画像を生成できます。WebUI Forgeまた�
 
 ### 4. 音声読み上げ機能 (TTS)
 
-Style-Bert-VITS2を使用してテキストを音声に変換します。
+[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)を使用してテキストを音声に変換します。
+
+**⚠️ セットアップ要件:**
+- [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)のインストールとセットアップが必要です
+- APIサーバーを起動する必要があります：
+  ```bash
+  python server_fastapi.py
+  ```
 
 #### 主な機能
 
@@ -227,10 +241,17 @@ llm:
 
 #### 画像生成設定
 
+**⚠️ セットアップ要件:**
+- [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)のインストールとセットアップが必要です
+- WebUI Forgeを起動する際に、**`--api`引数を必ず指定してください**：
+  ```bash
+  python webui.py --api
+  ```
+
 ```yaml
 llm:
   image_generator:
-    forge_url: "http://127.0.0.1:7860"
+    forge_url: "http://127.0.0.1:7860"  # Stable Diffusion WebUI ForgeのURL
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
 ```
@@ -246,9 +267,16 @@ music:
 
 #### TTS設定
 
+**⚠️ セットアップ要件:**
+- [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)のインストールとセットアップが必要です
+- Style-Bert-VITS2のAPIサーバーを起動する必要があります：
+  ```bash
+  python server_fastapi.py
+  ```
+
 ```yaml
 tts:
-  api_server_url: "http://127.0.0.1:5000"
+  api_server_url: "http://127.0.0.1:5000"  # Style-Bert-VITS2のAPIサーバーURL
   default_model_id: 0
   default_style: "Neutral"
 ```
@@ -441,7 +469,14 @@ providers:
 
 #### Stable Diffusion WebUI Forge連携
 
-Forge WebUIを起動している場合、ボットから画像生成を依頼できます。
+[Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)を起動している場合、ボットから画像生成を依頼できます。
+
+**重要:** WebUI Forgeを起動する際は、必ず`--api`引数を指定してください：
+```bash
+python webui.py --api
+```
+
+この引数がないと、ボットがWebUI ForgeのAPIにアクセスできません。
 
 #### プロンプト
 
@@ -483,9 +518,10 @@ AIとの対話で「画像を生成して」などと依頼すると、AIがプ�
 
 ### 画像生成ができない
 
-1. Stable Diffusion WebUI Forgeが起動しているか確認
-2. `config.yaml`の`forge_url`が正しいか確認
-3. モデルが正しくロードされているか確認
+1. [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)が起動しているか確認
+2. WebUI Forgeを`--api`引数で起動しているか確認（必須）
+3. `config.yaml`の`forge_url`が正しいか確認
+4. モデルが正しくロードされているか確認
 
 ### 地震速報が届かない
 

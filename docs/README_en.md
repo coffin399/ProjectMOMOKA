@@ -74,7 +74,14 @@ Play music in voice channels. Provides queue management, loop, shuffle, and othe
 
 ### 3. Image Generation Feature
 
-Generate images using Stable Diffusion. Integrates with WebUI Forge or KoboldCPP.
+Generate images using Stable Diffusion. Integrates with [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) or KoboldCPP.
+
+**⚠️ Setup Requirements:**
+- Installation and setup of [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is required
+- You **must start WebUI Forge with the `--api` flag**:
+  ```bash
+  python webui.py --api
+  ```
 
 #### Main Features
 
@@ -85,7 +92,14 @@ Generate images using Stable Diffusion. Integrates with WebUI Forge or KoboldCPP
 
 ### 4. Text-to-Speech Feature (TTS)
 
-Convert text to speech using Style-Bert-VITS2.
+Convert text to speech using [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2).
+
+**⚠️ Setup Requirements:**
+- Installation and setup of [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is required
+- You need to start the API server:
+  ```bash
+  python server_fastapi.py
+  ```
 
 #### Main Features
 
@@ -227,10 +241,17 @@ llm:
 
 #### Image Generation Settings
 
+**⚠️ Setup Requirements:**
+- Installation and setup of [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is required
+- You **must start WebUI Forge with the `--api` flag**:
+  ```bash
+  python webui.py --api
+  ```
+
 ```yaml
 llm:
   image_generator:
-    forge_url: "http://127.0.0.1:7860"
+    forge_url: "http://127.0.0.1:7860"  # Stable Diffusion WebUI Forge URL
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
 ```
@@ -246,9 +267,16 @@ music:
 
 #### TTS Settings
 
+**⚠️ Setup Requirements:**
+- Installation and setup of [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is required
+- You need to start the Style-Bert-VITS2 API server:
+  ```bash
+  python server_fastapi.py
+  ```
+
 ```yaml
 tts:
-  api_server_url: "http://127.0.0.1:5000"
+  api_server_url: "http://127.0.0.1:5000"  # Style-Bert-VITS2 API server URL
   default_model_id: 0
   default_style: "Neutral"
 ```
@@ -441,7 +469,14 @@ When the voice channel becomes empty, the bot automatically leaves after the con
 
 #### Stable Diffusion WebUI Forge Integration
 
-If Forge WebUI is running, you can request image generation from the bot.
+If [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is running, you can request image generation from the bot.
+
+**Important:** When starting WebUI Forge, you **must** specify the `--api` flag:
+```bash
+python webui.py --api
+```
+
+Without this flag, the bot cannot access the WebUI Forge API.
 
 #### Prompts
 
@@ -483,9 +518,10 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 
 ### Image generation doesn't work
 
-1. Check if Stable Diffusion WebUI Forge is running
-2. Check if `forge_url` in `config.yaml` is correct
-3. Check if the model is correctly loaded
+1. Check if [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is running
+2. Check if WebUI Forge was started with the `--api` flag (required)
+3. Check if `forge_url` in `config.yaml` is correct
+4. Check if the model is correctly loaded
 
 ### Earthquake alerts don't arrive
 
