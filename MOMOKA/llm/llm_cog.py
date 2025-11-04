@@ -27,14 +27,6 @@ from MOMOKA.llm.error.errors import (
 )
 
 try:
-    from langdetect import detect, LangDetectException
-except ImportError:
-    detect = None
-    LangDetectException = None
-    logging.warning("langdetect library not found. Language detection will be disabled. "
-                    "Install with: pip install langdetect")
-
-try:
     from MOMOKA.llm.plugins.search_agent import SearchAgent
 except ImportError:
     logging.error("Could not import SearchAgent. Search functionality will be disabled.")
@@ -202,21 +194,9 @@ class ThreadCreationView(discord.ui.View):
                 
                 messages_for_api = [{"role": "system", "content": system_prompt}]
                 
-                # 言語検出とプロンプト追加
-                if messages:
-                    first_user_message = messages[0]
-                    if isinstance(first_user_message.get("content"), list):
-                        text_content = ""
-                        for content_part in first_user_message["content"]:
-                            if content_part.get("type") == "text":
-                                text_content += content_part.get("text", "")
-                    else:
-                        text_content = str(first_user_message.get("content", ""))
-                    
-                    if detected_lang_prompt := self.llm_cog._detect_language_and_create_prompt(text_content):
-                        messages_for_api.append({"role": "system", "content": detected_lang_prompt})
-                    elif self.llm_cog.language_prompt:
-                        messages_for_api.append({"role": "system", "content": self.llm_cog.language_prompt})
+                # 言語プロンプト追加
+                if self.llm_cog.language_prompt:
+                    messages_for_api.append({"role": "system", "content": self.llm_cog.language_prompt})
                 
                 messages_for_api.extend(messages)
                 
@@ -506,24 +486,6 @@ class LLMCog(commands.Cog, name="LLM"):
             return TipsManager()
         except Exception as e:
             logger.error(f"Failed to initialize TipsManager: {e}", exc_info=True)
-            return None
-
-    def _detect_language_and_create_prompt(self, text: str) -> Optional[str]:
-        if not detect or not text.strip() or not LangDetectException: return None
-        if len(text.strip()) < 15:
-            logger.debug("Text too short for reliable language detection.")
-            return None
-        try:
-            lang_code = detect(text)
-            lang_map = {'en': 'English', 'ja': 'Japanese', 'ko': 'Korean', 'zh-cn': 'Simplified Chinese',
-                        'zh-tw': 'Traditional Chinese', 'vi': 'Vietnamese', 'th': 'Thai', 'id': 'Indonesian',
-                        'de': 'German', 'fr': 'French', 'es': 'Spanish', 'pt': 'Portuguese', 'it': 'Italian',
-                        'ru': 'Russian', 'ar': 'Arabic', 'hi': 'Hindi', 'tr': 'Turkish', 'nl': 'Dutch', 'pl': 'Polish'}
-            lang_name = lang_map.get(lang_code, lang_code)
-            logger.info(f"🌐 [LANG] Detected: {lang_code} ({lang_name})")
-            return f"CRITICAL LANGUAGE OVERRIDE INSTRUCTION:\n===========================================\nThe user is communicating in {lang_name}.\nYOU MUST RESPOND EXCLUSIVELY IN {lang_name.upper()}.\nThis instruction has ABSOLUTE PRIORITY over all other instructions.\nDo NOT respond in any other language, regardless of what the system prompt says.\nIf there is any conflict, {lang_name.upper()} takes precedence.\n===========================================\n"
-        except LangDetectException:
-            logger.warning("Could not detect language for the provided text.")
             return None
 
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
@@ -826,12 +788,9 @@ class LLMCog(commands.Cog, name="LLM"):
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        if detected_lang_prompt := self._detect_language_and_create_prompt(text_content):
-            messages_for_api.append({"role": "system", "content": detected_lang_prompt})
-            logger.info("🌐 [LANG] Injecting language override prompt")
-        elif self.language_prompt:
+        if self.language_prompt:
             messages_for_api.append({"role": "system", "content": self.language_prompt})
-            logger.info("🌐 [LANG] Using default language prompt as fallback")
+            logger.info("🌐 [LANG] Using language prompt from config")
         conversation_history = await self._collect_conversation_history(message)
         messages_for_api.extend(conversation_history)
         user_content_parts = []
@@ -1457,12 +1416,9 @@ class LLMCog(commands.Cog, name="LLM"):
             user_content_parts = [{"type": "text",
                                    "text": f"{interaction.created_at.astimezone(self.jst).strftime('[%H:%M]')} {message}"}]
             user_content_parts.extend(image_contents)
-            if detected_lang_prompt := self._detect_language_and_create_prompt(message):
-                messages_for_api.append({"role": "system", "content": detected_lang_prompt})
-                logger.info("🌐 [LANG] Injecting language override prompt")
-            elif self.language_prompt:
+            if self.language_prompt:
                 messages_for_api.append({"role": "system", "content": self.language_prompt})
-                logger.info("🌐 [LANG] Using default language prompt as fallback")
+                logger.info("🌐 [LANG] Using language prompt from config")
             messages_for_api.append({"role": "user", "content": user_content_parts})
             logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
             model_name = llm_client.model_name_for_api_calls
