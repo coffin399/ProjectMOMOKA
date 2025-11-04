@@ -59,17 +59,17 @@ class Shittim(commands.Bot):
         self.status_index = 0
         #ロードする順序を指定
         self.cogs_to_load = [
-            'PLANA.images.image_commands_cog',
-            'PLANA.llm.llm_cog',
-            'PLANA.media_downloader.ytdlp_downloader_cog',
-            'PLANA.music.music_cog',
-            'PLANA.notifications.earthquake_notification_cog',
-            'PLANA.notifications.twitch_notification_cog',
-            'PLANA.timer.timer_cog',
-            'PLANA.tracker.r6s_tracker_cog',
-            'PLANA.tracker.valorant_tracker_cog',
-            'PLANA.tts.tts_cog',
-            'PLANA.utilities.slash_command_cog',
+            'MOMOKA.images.image_commands_cog',
+            'MOMOKA.llm.llm_cog',
+            'MOMOKA.media_downloader.ytdlp_downloader_cog',
+            'MOMOKA.music.music_cog',
+            'MOMOKA.notifications.earthquake_notification_cog',
+            'MOMOKA.notifications.twitch_notification_cog',
+            'MOMOKA.timer.timer_cog',
+            'MOMOKA.tracker.r6s_tracker_cog',
+            'MOMOKA.tracker.valorant_tracker_cog',
+            'MOMOKA.tts.tts_cog',
+            'MOMOKA.utilities.slash_command_cog',
         ]
 
     def is_admin(self, user_id: int) -> bool:
@@ -274,10 +274,10 @@ class Shittim(commands.Bot):
         logging.info(f"現在 {len(self.guilds)} サーバーに参加しています。")
         logging.info("📱 モバイルステータスで表示されています")
         self.status_templates = self.config.get('status_rotation', [
-                                                                    "Ask @PLANA for command help",
+                                                                    "Ask @MOMOKA for command help",
                                                                     "operating on {guild_count} servers",
-                                                                    "PLANA Ver.2025-11-03",
-                                                                    "Ask @PLANA <image generation>",
+                                                                    "MOMOKA Ver.2025-11-03",
+                                                                    "Ask @MOMOKA <image generation>",
                                                                     "/say <audio generation>"
                                                                     ])
         self.rotate_status.start()
