@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 from typing import Dict, Optional, List, Any
 import time
+import logging
 
 try:
     from MOMOKA.music.music_cog import MusicCog
@@ -22,7 +23,9 @@ except ImportError:
 try:
     from MOMOKA.tts.error.errors import TTSCogExceptionHandler
 except ImportError as e:
-    print(f"[CRITICAL] TTSCog: 必須コンポーネントのインポートに失敗しました。エラー: {e}")
+    logging.getLogger("MOMOKA.tts").critical(
+        "TTSCog: 必須コンポーネントのインポートに失敗しました。エラー: %s", e
+    )
     TTSCogExceptionHandler = None
 
 
@@ -92,10 +95,12 @@ class TTSCog(commands.Cog, name="tts_cog"):
 
         self.llm_bot_ids = [1031673203774464160, 1311866016011124736]
 
-        print("TTSCog loaded (Internal Style-Bert-VITS2 wrapper, AudioMixer enabled)")
+        logging.getLogger(__name__).info(
+            "TTSCog loaded (Internal Style-Bert-VITS2 wrapper, AudioMixer enabled)"
+        )
 
     async def cog_load(self):
-        print("TTSCog loaded. Preparing internal synthesizer...")
+        logging.getLogger(__name__).info("TTSCog loaded. Preparing internal synthesizer...")
         await self.fetch_available_models()  # still useful for UI and IDs
 
     async def cog_unload(self):
@@ -103,7 +108,7 @@ class TTSCog(commands.Cog, name="tts_cog"):
         self._save_speech_settings()
         self._save_dictionary()
         await self.session.close()
-        print("TTSCog unloaded and session closed.")
+        logging.getLogger(__name__).info("TTSCog unloaded and session closed.")
 
     def _load_settings(self):
         try:
@@ -111,11 +116,13 @@ class TTSCog(commands.Cog, name="tts_cog"):
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.channel_settings = {int(k): v for k, v in data.items()}
-                print(f"✓ [TTSCog] モデル設定を読み込みました: {len(self.channel_settings)}チャンネル")
+                logging.getLogger(__name__).info(
+                    "[TTSCog] モデル設定を読み込みました: %dチャンネル", len(self.channel_settings)
+                )
             else:
                 self.settings_file.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            print(f"✗ [TTSCog] モデル設定読み込みエラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] モデル設定読み込みエラー: %s", e)
             self.channel_settings = {}
 
     def _save_settings(self):
@@ -125,18 +132,20 @@ class TTSCog(commands.Cog, name="tts_cog"):
                 data = {str(k): v for k, v in self.channel_settings.items()}
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"✗ [TTSCog] モデル設定保存エラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] モデル設定保存エラー: %s", e)
 
     def _load_speech_settings(self):
         try:
             if self.speech_settings_file.exists():
                 with open(self.speech_settings_file, 'r', encoding='utf-8') as f:
                     self.speech_settings = json.load(f)
-                print(f"✓ [TTSCog] 読み上げ設定を読み込みました: {len(self.speech_settings)}ギルド")
+                logging.getLogger(__name__).info(
+                    "[TTSCog] 読み上げ設定を読み込みました: %dギルド", len(self.speech_settings)
+                )
             else:
                 self.speech_settings_file.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            print(f"✗ [TTSCog] 読み上げ設定読み込みエラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 読み上げ設定読み込みエラー: %s", e)
             self.speech_settings = {}
 
     def _save_speech_settings(self):
@@ -145,7 +154,7 @@ class TTSCog(commands.Cog, name="tts_cog"):
             with open(self.speech_settings_file, 'w', encoding='utf-8') as f:
                 json.dump(self.speech_settings, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"✗ [TTSCog] 読み上げ設定保存エラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 読み上げ設定保存エラー: %s", e)
 
     def _get_guild_speech_settings(self, guild_id: int) -> Dict[str, Any]:
         guild_id_str = str(guild_id)
@@ -261,7 +270,7 @@ class TTSCog(commands.Cog, name="tts_cog"):
                 try:
                     await after.channel.connect()
                 except Exception as e:
-                    print(f"[TTSCog] 自動参加エラー: {e}")
+                    logging.getLogger(__name__).error("[TTSCog] 自動参加エラー: %s", e)
 
         if not voice_client:
             return
@@ -451,19 +460,21 @@ class TTSCog(commands.Cog, name="tts_cog"):
             if self.dictionary_file.exists():
                 with open(self.dictionary_file, 'r', encoding='utf-8') as f:
                     self.speech_dictionary = json.load(f)
-                print(f"✓ [TTSCog] 読み上げ辞書を読み込みました: {len(self.speech_dictionary)}単語")
+                    logging.getLogger(__name__).info(
+                        "[TTSCog] 読み上げ辞書を読み込みました: %d単語", len(self.speech_dictionary)
+                    )
             else:
                 self.dictionary_file.parent.mkdir(parents=True, exist_ok=True)
                 self._save_dictionary()
         except Exception as e:
-            print(f"✗ [TTSCog] 辞書読み込みエラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 辞書読み込みエラー: %s", e)
 
     def _save_dictionary(self):
         try:
             with open(self.dictionary_file, 'w', encoding='utf-8') as f:
                 json.dump(self.speech_dictionary, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"✗ [TTSCog] 辞書保存エラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 辞書保存エラー: %s", e)
 
     def _apply_dictionary(self, text: str) -> str:
         if not self.speech_dictionary:
@@ -553,7 +564,7 @@ class TTSCog(commands.Cog, name="tts_cog"):
             )
             return wav
         except Exception as e:
-            print(f"✗ [TTSCog] 内製TTS処理エラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 内製TTS処理エラー: %s", e)
 
         if not self.api_url:
             return None
@@ -564,10 +575,12 @@ class TTSCog(commands.Cog, name="tts_cog"):
             async with self.session.post(endpoint, params=params) as response:
                 if response.status == 200:
                     return await response.read()
-                print(f"✗ [TTSCog] 音声生成APIエラー: {response.status} {await response.text()}")
+                logging.getLogger(__name__).error(
+                    "[TTSCog] 音声生成APIエラー: %s %s", response.status, await response.text()
+                )
                 return None
         except Exception as e:
-            print(f"✗ [TTSCog] 音声生成APIリクエストエラー: {e}")
+            logging.getLogger(__name__).error("[TTSCog] 音声生成APIリクエストエラー: %s", e)
             return None
 
     async def _overlay_tts_with_mixer(self, guild: discord.Guild, text: str, model_id: int, style: str, style_weight: float, speed: float, volume: float, interaction: Optional[discord.Interaction] = None) -> bool:
@@ -601,9 +614,9 @@ class TTSCog(commands.Cog, name="tts_cog"):
 
 async def setup(bot: commands.Bot):
     if 'tts' not in bot.config:
-        print("Warning: 'tts' section not found in config.yaml. TTSCog will not be loaded.")
+        logging.getLogger("MOMOKA.tts").warning("'tts' section not found in config.yaml. TTSCog will not be loaded.")
         return
     if not bot.get_cog("music_cog"):
-        print("Warning: MusicCog is not loaded. TTSCog may not function correctly with music.")
+        logging.getLogger("MOMOKA.tts").warning("MusicCog is not loaded. TTSCog may not function correctly with music.")
     
     await bot.add_cog(TTSCog(bot))
