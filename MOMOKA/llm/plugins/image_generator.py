@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
 
 import discord
+from discord.abc import Messageable
 
 from MOMOKA.generator.imagen import (
     GenerationParams,
@@ -272,12 +273,17 @@ class ImageGenerator:
         if not prompt:
             return "❌ Error: Empty prompt provided. / エラー: プロンプトが空です。"
 
+        arguments = dict(arguments)
+        confirmed = bool(arguments.pop("__modal_confirmed__", False))
+        if not confirmed:
+            return "📝 Awaiting modal confirmation before starting generation."
+
         task = GenerationTask(
             user_id=user_id,
             user_name=user_name,
             prompt=prompt,
             channel_id=channel_id,
-            arguments=dict(arguments),
+            arguments=arguments,
         )
 
         queue_message: Optional[discord.Message] = None
@@ -348,60 +354,133 @@ class ImageGenerator:
         )
 
         start_time = time.time()
-        image_bytes = await self.pipeline.generate(model_info, params)
+        loop = asyncio.get_running_loop()
+        progress_message: Optional[discord.Message] = None
+        progress_state = {"last_step": 0}
+
+        channel = self.bot.get_channel(task.channel_id)
+        if not channel:
+            logger.error("Channel %s not found; aborting send", task.channel_id)
+            return "❌ Error: Could not find channel to send image."
+
+        try:
+            progress_message = await self._send_progress_message(
+                channel,
+                prompt,
+                model_name,
+                adjusted_size,
+                steps,
+                sampler_name or "default",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to send progress message: %s", exc)
+
+        def progress_callback(step: int, _timestep: int, _latents) -> None:
+            if not progress_message:
+                return
+            if step <= 0 or step <= progress_state["last_step"]:
+                return
+            progress_state["last_step"] = step
+            elapsed = time.time() - start_time
+            it_s = step / elapsed if elapsed > 0 else 0.0
+            loop.call_soon_threadsafe(
+                asyncio.create_task,
+                self._update_progress_message(
+                    progress_message,
+                    prompt,
+                    model_name,
+                    adjusted_size,
+                    steps,
+                    step,
+                    sampler_name or "default",
+                    elapsed,
+                    it_s,
+                    status="Generating",
+                ),
+            )
+
+        try:
+            image_bytes = await self.pipeline.generate(
+                model_info,
+                params,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if progress_message:
+                await self._update_progress_message(
+                    progress_message,
+                    prompt,
+                    model_name,
+                    adjusted_size,
+                    steps,
+                    progress_state.get("last_step", 0),
+                    sampler_name or "default",
+                    time.time() - start_time,
+                    0.0,
+                    status=f"❌ Error: {exc}"
+                )
+            raise
+
         elapsed_time = time.time() - start_time
+        if progress_message:
+            await self._update_progress_message(
+                progress_message,
+                prompt,
+                model_name,
+                adjusted_size,
+                steps,
+                steps,
+                sampler_name or "default",
+                elapsed_time,
+                steps / elapsed_time if elapsed_time > 0 else 0.0,
+                status="✅ Completed",
+            )
 
         if self.save_images:
             saved_path = await self._save_image(image_bytes, prompt, model_name, adjusted_size)
         else:
             saved_path = None
 
-        channel = self.bot.get_channel(task.channel_id)
-        if not channel:
-            logger.error("Channel %s not found; aborting send", task.channel_id)
-            result_text = "❌ Error: Could not find channel to send image."
-        else:
-            embed = discord.Embed(
-                title="🎨 Generated Image / 生成された画像",
-                description=f"**Prompt:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}",
-                color=discord.Color.blue(),
+        embed = discord.Embed(
+            title="🎨 Generated Image / 生成された画像",
+            description=f"**Prompt:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}",
+            color=discord.Color.blue(),
+        )
+        if negative_prompt:
+            embed.add_field(
+                name="Negative Prompt",
+                value=negative_prompt[:100] + ("..." if len(negative_prompt) > 100 else ""),
+                inline=False,
             )
-            if negative_prompt:
-                embed.add_field(
-                    name="Negative Prompt",
-                    value=negative_prompt[:100] + ("..." if len(negative_prompt) > 100 else ""),
-                    inline=False,
-                )
-            embed.add_field(name="Model", value=model_name, inline=True)
-            embed.add_field(name="Size", value=adjusted_size, inline=True)
-            embed.add_field(name="Steps", value=str(steps), inline=True)
-            embed.add_field(name="CFG Scale", value=f"{cfg_scale:.2f}", inline=True)
-            embed.add_field(name="Sampler", value=sampler_name or "default", inline=True)
-            if seed != -1:
-                embed.add_field(name="Seed", value=str(seed), inline=True)
-            embed.add_field(name="Generation Time", value=f"{elapsed_time:.1f}s", inline=True)
-            if size_input != adjusted_size:
-                embed.add_field(
-                    name="ℹ️ Size Adjusted",
-                    value=f"Requested: {size_input} → Used: {adjusted_size}",
-                    inline=False,
-                )
-            embed.set_footer(text="Powered by MOMOKA Local Diffusers Pipeline")
-
-            file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
-            await channel.send(embed=embed, file=file)
-
-            details = (
-                f"✅ Successfully generated image with prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'\n"
-                f"Parameters: size={adjusted_size}, steps={steps}, cfg={cfg_scale:.2f}, sampler={sampler_name or 'default'}"
+        embed.add_field(name="Model", value=model_name, inline=True)
+        embed.add_field(name="Size", value=adjusted_size, inline=True)
+        embed.add_field(name="Steps", value=str(steps), inline=True)
+        embed.add_field(name="CFG Scale", value=f"{cfg_scale:.2f}", inline=True)
+        embed.add_field(name="Sampler", value=sampler_name or "default", inline=True)
+        if seed != -1:
+            embed.add_field(name="Seed", value=str(seed), inline=True)
+        embed.add_field(name="Generation Time", value=f"{elapsed_time:.1f}s", inline=True)
+        if size_input != adjusted_size:
+            embed.add_field(
+                name="ℹ️ Size Adjusted",
+                value=f"Requested: {size_input} → Used: {adjusted_size}",
+                inline=False,
             )
-            if seed != -1:
-                details += f", seed={seed}"
-            if size_input != adjusted_size:
-                details += f"\n(Size adjusted from {size_input} to {adjusted_size})"
-            if saved_path:
-                details += " (Saved locally)"
-            result_text = details
+        embed.set_footer(text="Powered by MOMOKA Local Diffusers Pipeline")
+
+        file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
+        await channel.send(embed=embed, file=file)
+
+        result_text = (
+            f"✅ Successfully generated image with prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'\n"
+            f"Parameters: size={adjusted_size}, steps={steps}, cfg={cfg_scale:.2f}, sampler={sampler_name or 'default'}"
+        )
+        if seed != -1:
+            result_text += f", seed={seed}"
+        if size_input != adjusted_size:
+            result_text += f"\n(Size adjusted from {size_input} to {adjusted_size})"
+        if saved_path:
+            result_text += " (Saved locally)"
 
         if task.queue_message:
             try:
@@ -425,37 +504,6 @@ class ImageGenerator:
 
         asyncio.create_task(self._process_task(next_task, return_result=False))
 
-    async def _handle_modal_submission(self, interaction: discord.Interaction, updated_arguments: Dict[str, Any],
-                                       requester_name: str) -> None:
-        result = await self._enqueue_task(
-            updated_arguments,
-            channel_id=interaction.channel_id,
-            user_id=interaction.user.id,
-            user_name=requester_name,
-        )
-        await interaction.response.send_message(result, ephemeral=True)
-
-    # ------------------------------------------------------------------
-    # Discord helpers
-    # ------------------------------------------------------------------
-    async def _show_queue_message(self, channel_id: int, position: int, prompt: str) -> Optional[discord.Message]:
-        channel = self.bot.get_channel(channel_id)
-        if not channel:
-            return None
-        try:
-            embed = discord.Embed(
-                title="⏳ Added to Queue / キューに追加されました",
-                description=f"**Prompt:** {prompt[:100]}{'...' if len(prompt) > 100 else ''}",
-                color=discord.Color.gold(),
-            )
-            embed.add_field(name="Position", value=f"#{position}", inline=True)
-            embed.add_field(name="Status", value="Waiting... / 待機中...", inline=True)
-            embed.set_footer(text="Generation will begin automatically")
-            return await channel.send(embed=embed)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to send queue message: %s", exc)
-            return None
-
     async def _update_queue_message(self, message: discord.Message, status: str, position: int, prompt: str) -> None:
         try:
             embed = discord.Embed(
@@ -469,6 +517,68 @@ class ImageGenerator:
             await message.edit(embed=embed)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to update queue message: %s", exc)
+
+    async def _send_progress_message(
+        self,
+        channel: Messageable,
+        prompt: str,
+        model_name: str,
+        size: str,
+        total_steps: int,
+        sampler: str,
+    ) -> discord.Message:
+        embed = discord.Embed(
+            title="🎨 Generating... / 生成中...",
+            description=f"**Prompt:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}",
+            color=discord.Color.orange(),
+        )
+        embed.add_field(name="Model", value=model_name, inline=True)
+        embed.add_field(name="Size", value=size, inline=True)
+        embed.add_field(name="Sampler", value=sampler, inline=True)
+        embed.add_field(name="Progress", value=self._format_progress(0, total_steps), inline=False)
+        embed.add_field(name="Speed", value="-- it/s", inline=True)
+        embed.add_field(name="Elapsed", value="0.0s", inline=True)
+        return await channel.send(embed=embed)
+
+    async def _update_progress_message(
+        self,
+        message: discord.Message,
+        prompt: str,
+        model_name: str,
+        size: str,
+        total_steps: int,
+        current_step: int,
+        sampler: str,
+        elapsed: float,
+        it_per_s: float,
+        status: str,
+    ) -> None:
+        try:
+            embed = discord.Embed(
+                title=f"🎨 {status}",
+                description=f"**Prompt:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}",
+                color=discord.Color.orange() if "Generating" in status else discord.Color.green(),
+            )
+            embed.add_field(name="Model", value=model_name, inline=True)
+            embed.add_field(name="Size", value=size, inline=True)
+            embed.add_field(name="Sampler", value=sampler, inline=True)
+            embed.add_field(
+                name="Progress",
+                value=self._format_progress(current_step, total_steps),
+                inline=False,
+            )
+            embed.add_field(name="Speed", value=f"{it_per_s:.2f} it/s", inline=True)
+            embed.add_field(name="Elapsed", value=f"{elapsed:.1f}s", inline=True)
+            await message.edit(embed=embed)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to update progress message: %s", exc)
+
+    @staticmethod
+    def _format_progress(current: int, total: int, bar_length: int = 12) -> str:
+        clamped = max(0, min(current, total))
+        filled = int((clamped / total) * bar_length) if total else 0
+        bar = "█" * filled + "─" * (bar_length - filled)
+        return f"[{bar}] {clamped}/{total}"
 
     # ------------------------------------------------------------------
     # Utilities

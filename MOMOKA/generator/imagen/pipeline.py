@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Callable
 
 import torch
 from diffusers import StableDiffusionPipeline
@@ -88,7 +88,12 @@ class LocalTxt2ImgPipeline:
                 return
         logger.warning("Requested sampler '%s' not found. Using default scheduler.", sampler_name)
 
-    async def generate(self, model: ImageModelInfo, params: GenerationParams) -> bytes:
+    async def generate(
+        self,
+        model: ImageModelInfo,
+        params: GenerationParams,
+        progress_callback: Optional[Callable[[int, int, object], None]] = None,
+    ) -> bytes:
         async with self._lock:
             pipeline = self._load_pipeline(model)
             self._apply_sampler(pipeline, params.sampler_name)
@@ -111,9 +116,9 @@ class LocalTxt2ImgPipeline:
         )
 
         loop = asyncio.get_event_loop()
-        image: Image.Image = await loop.run_in_executor(
-            None,
-            lambda: pipeline(
+
+        def _run_pipeline() -> Image.Image:
+            invocation_kwargs = dict(
                 prompt=params.prompt,
                 negative_prompt=params.negative_prompt or None,
                 width=params.width,
@@ -121,8 +126,13 @@ class LocalTxt2ImgPipeline:
                 num_inference_steps=params.steps,
                 guidance_scale=params.cfg_scale,
                 generator=generator,
-            ).images[0],
-        )
+            )
+            if progress_callback:
+                invocation_kwargs["callback"] = progress_callback
+                invocation_kwargs["callback_steps"] = 1
+            return pipeline(**invocation_kwargs).images[0]
+
+        image: Image.Image = await loop.run_in_executor(None, _run_pipeline)
 
         buffer = BytesIO()
         await loop.run_in_executor(None, lambda: image.save(buffer, format="PNG"))
