@@ -74,19 +74,56 @@
 
 ### 3. 画像生成機能
 
-Stable Diffusionを使用して画像を生成できます。[Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)またはKoboldCPPと連携します。
+Stable Diffusionを使用して画像を生成できます。以下の2つのバックエンドから選択できます。
 
-**⚠️ セットアップ要件:**
-- [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)のインストールとセットアップが必要です
-- WebUI Forgeを起動する際に、**`--api`引数を指定する必要があります**：
-  ```bash
-  python webui.py --api
-  ```
+- **ローカル diffusers パイプライン** – `models/image-models/` 配下にモデルを配置し、完全に内製環境で推論
+- **Stable Diffusion WebUI Forge API** – 既存の Forge インスタンスを HTTP 経由で利用
+
+#### ローカル diffusers パイプライン
+
+1. モデルフォルダ（weights + 任意の VAE / LoRA）を以下の構成で配置します。
+   ```
+   models/image-models/<モデル名>/
+   ```
+   対応拡張子: `.safetensors`, `.ckpt`, `.pt`, `.bin`（VAE: `.vae`, `.safetensors`; LoRA: `.safetensors`, `.ckpt`, `.pt`）
+2. `config.yaml` を編集してローカル利用を有効化します。
+   ```yaml
+   llm:
+     image_generator:
+       provider: "local"
+       # 任意: 利用可能モデルを制限する場合
+       available_models:
+         - "my_model.safetensors"
+   ```
+3. 依存パッケージ（`torch`, `diffusers`, `accelerate`, `safetensors` など）を導入します。
+4. VRAM 8GB 環境向けに以下の最適化を推奨します。
+   - `pip install xformers` を実行してメモリ効率化
+   - `default_size`, `steps`, `cfg_scale` を調整して使用メモリを削減
+
+#### Stable Diffusion WebUI Forge
+
+1. `provider: "forge"` を設定します（デフォルト値）。
+2. Forge を `--api` オプション付きで起動します。
+   ```bash
+   python webui.py --api
+   ```
+3. Forge のエンドポイントやモデル名を `config.yaml` に記載します。
+   ```yaml
+   llm:
+     image_generator:
+       provider: "forge"
+       forge:
+         base_url: "http://127.0.0.1:7860"
+         txt2img_path: "/sdapi/v1/txt2img"
+       available_models:
+         - "sd_xl_base_1.0.safetensors"
+         - "v1-5-pruned-emaonly.safetensors"
+   ```
 
 #### 主な機能
 
 - プロンプトに基づく画像生成
-- 複数のモデル切り替え
+- チャンネルごとのモデル切り替えに対応
 - カスタムパラメータ設定
 - ネガティブプロンプト対応
 

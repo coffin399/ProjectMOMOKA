@@ -74,19 +74,56 @@ Play music in voice channels. Provides queue management, loop, shuffle, and othe
 
 ### 3. Image Generation Feature
 
-Generate images using Stable Diffusion. Integrates with [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) or KoboldCPP.
+Generate images using Stable Diffusion. You can now choose between:
 
-**⚠️ Setup Requirements:**
-- Installation and setup of [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is required
-- You **must start WebUI Forge with the `--api` flag**:
-  ```bash
-  python webui.py --api
-  ```
+- **Local Diffusers Pipeline** – run everything in-house using the bundled diffusers integration (place models under `models/image-models/`)
+- **Stable Diffusion WebUI Forge API** – keep using your existing Forge instance via HTTP
+
+#### Local Diffusers Pipeline
+
+1. Place your model folders (weights + optional VAE/LoRA) under:
+   ```
+   models/image-models/<model-name>/
+   ```
+   Supported extensions: `.safetensors`, `.ckpt`, `.pt`, `.bin` (VAE: `.vae`, `.safetensors`; LoRA: `.safetensors`, `.ckpt`, `.pt`)
+2. Update `config.yaml`:
+   ```yaml
+   llm:
+     image_generator:
+       provider: "local"
+       # Optional: restrict visible models
+       available_models:
+         - "my_model.safetensors"
+   ```
+3. Install GPU-friendly dependencies (already listed in `requirements.txt`): `torch`, `diffusers`, `accelerate`, `safetensors`
+4. Optional memory optimizations:
+   - Enable xFormers (`pip install xformers`) for reduced VRAM usage
+   - Adjust `default_size`, `steps`, and `cfg_scale` to fit an 8GB GPU
+
+#### Stable Diffusion WebUI Forge
+
+1. Keep `provider: "forge"` (default)
+2. Ensure Forge is running with the API enabled:
+   ```bash
+   python webui.py --api
+   ```
+3. Configure the Forge endpoint and models:
+   ```yaml
+   llm:
+     image_generator:
+       provider: "forge"
+       forge:
+         base_url: "http://127.0.0.1:7860"
+         txt2img_path: "/sdapi/v1/txt2img"
+       available_models:
+         - "sd_xl_base_1.0.safetensors"
+         - "v1-5-pruned-emaonly.safetensors"
+   ```
 
 #### Main Features
 
 - Image generation based on prompts
-- Multiple model switching
+- Multiple model switching (per-channel overrides supported)
 - Custom parameter settings
 - Negative prompt support
 

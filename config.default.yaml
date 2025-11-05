@@ -117,55 +117,57 @@ llm:
       # ツールが動作しない場合は false に設定すると、ツールなしで動作します
       supports_tools: true
 
-  # --- 画像生成設定 (Stable Diffusion WebUI Forge / KoboldCPP) ---
+  # --- 画像生成設定 (ローカルDiffusers / Stable Diffusion WebUI Forge) ---
   image_generator:
-    # KoboldCPP のURL (KoboldCPPを使用する場合はこちらを設定)
-    # koboldcpp_urlが設定されている場合は優先的に使用されます
-    # 例: "http://127.0.0.1:5001" または "http://localhost:5001"
-    # 注意: URLにはポート番号のみを指定し、パス(/sdapi/v1など)は含めないでください
-    # koboldcpp_url: "http://127.0.0.1:5001"
-    
-    # Forge WebUI のURL (koboldcpp_urlが設定されていない場合に使用)
-    # デフォルト: http://127.0.0.1:7860
-    # 注意: URLにはポート番号のみを指定し、パス(/sdapi/v1など)は含めないでください
-    forge_url: "http://127.0.0.1:7860"
+    # どの画像生成バックエンドを利用するか選択します。
+    #   "local" : Diffusers を利用した内製Stable Diffusionパイプライン
+    #   "forge" : Stable Diffusion WebUI Forge API
+    provider: "local"
 
-    # デフォルトモデル (Forge WebUI内のモデル名)
-    model: "sd_xl_base_1.0.safetensors"
+    # 共通設定 ------------------------------------------------------------
+    save_images: true                       # 生成結果をローカルに保存するかどうか
+    save_directory: "data/image"           # 保存先ディレクトリ
 
-    # デフォルト画像サイズ
+    # 生成サイズの制約（両プロバイダー共通）
     default_size: "1024x1024"
+    max_width: 2048
+    max_height: 2048
+    min_width: 256
+    min_height: 256
 
-    # タイムアウト設定(秒)
-    timeout: 180.0
-
-    # 利用可能なモデルリスト
-    # ※Forge WebUIのmodelsフォルダにあるモデル名を指定
+    # 利用可能なモデルリスト（ローカルの場合は自動検出されるため省略可能）
+    # Forge利用時はWebUIで読み込めるモデル名を記載してください。
     available_models:
-      # --- SDXL系モデル ---
       - "sd_xl_base_1.0.safetensors"
       - "sd_xl_turbo_1.0.safetensors"
-
-      # --- SD1.5系モデル ---
       - "v1-5-pruned-emaonly.safetensors"
 
-    # デフォルト生成パラメータ
+    # デフォルトで使用するモデル名
+    model: "sd_xl_base_1.0.safetensors"
+
+    # デフォルト生成パラメータ（プロバイダー共通で利用）
     default_params:
       steps: 20                      # サンプリングステップ数 (推奨: 20-30)
       cfg_scale: 7.0                 # CFG Scale (推奨: 7-11)
       sampler_name: "DPM++ 2M Karras" # サンプラー名
       seed: -1                       # シード値 (-1 = ランダム)
-      restore_faces: false           # 顔修復を有効化
-      tiling: false                  # タイリング生成
 
       # デフォルトネガティブプロンプト
       negative_prompt: "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry"
 
-      # 追加パラメータ (必要に応じて追加)
-      extra_params:
-        # clip_skip: 2
-        # denoising_strength: 0.7
-        # eta: 0.0
+    # Forge WebUI 設定 ----------------------------------------------------
+    forge:
+      base_url: "http://127.0.0.1:7860"   # WebUI Forge のベースURL
+      txt2img_path: "/sdapi/v1/txt2img"   # txt2img API エンドポイント
+      timeout: 180.0
+      override_settings_restore_afterwards: true
+
+      # Forge固有の追加パラメータを上書きしたい場合はここで指定
+      default_params:
+        sampler_name: "DPM++ 2M Karras"
+        steps: 20
+        cfg_scale: 7.0
+        seed: -1
 
   # --- パラメータ設定 ---
   extra_api_parameters:

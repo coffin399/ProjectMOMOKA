@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime
 import io
 import logging
@@ -12,6 +13,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
 
+import aiohttp
 import discord
 
 from MOMOKA.generator.imagen import (
@@ -35,41 +37,85 @@ class GenerationTask:
 
 
 class ImageGenerator:
-    """ローカル diffusers パイプラインを用いた画像生成プラグイン"""
+    """Stable Diffusion image generation plugin supporting local diffusers and WebUI Forge."""
 
     def __init__(self, bot):
         self.bot = bot
         self.config = bot.config.get("llm", {})
         self.image_gen_config = self.config.get("image_generator", {})
 
-        self.model_registry = ImageModelRegistry.from_default_root()
-        self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
+        self.provider = (self.image_gen_config.get("provider") or "local").lower()
+        if self.provider not in {"local", "forge"}:
+            logger.warning("Unknown image generator provider '%s'. Falling back to 'local'.", self.provider)
+            self.provider = "local"
 
-        discovered_models = sorted(self.model_registry.names())
-        if not discovered_models:
-            raise RuntimeError("No local image models found under models/image-models")
+        self.save_images = bool(self.image_gen_config.get("save_images", True))
+        self.save_directory = self.image_gen_config.get("save_directory", "data/image")
+        self.default_size = self.image_gen_config.get("default_size", "1024x1024")
+        self.max_width = int(self.image_gen_config.get("max_width", 2048))
+        self.max_height = int(self.image_gen_config.get("max_height", 2048))
+        self.min_width = int(self.image_gen_config.get("min_width", 256))
+        self.min_height = int(self.image_gen_config.get("min_height", 256))
 
-        configured_models = self.image_gen_config.get("available_models")
-        if configured_models:
-            available = [model for model in configured_models if model in discovered_models]
-            if not available:
-                logger.warning("Configured available_models not found locally. Using discovered models instead.")
+        base_default_params = dict(self.image_gen_config.get("default_params", {}))
+        if self.provider == "forge":
+            provider_defaults = self.image_gen_config.get("forge", {}).get("default_params", {}) or {}
+        else:
+            provider_defaults = self.image_gen_config.get("local", {}).get("default_params", {}) or {}
+        self.default_params = {**base_default_params, **provider_defaults}
+
+        self.model_registry: Optional[ImageModelRegistry]
+        self.pipeline: Optional[LocalTxt2ImgPipeline]
+        self.forge_config: Dict[str, Any] = {}
+
+        if self.provider == "local":
+            self.model_registry = ImageModelRegistry.from_default_root()
+            self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
+
+            discovered_models = sorted(self.model_registry.names())
+            if not discovered_models:
+                raise RuntimeError("No local image models found under models/image-models")
+
+            configured_models = self.image_gen_config.get("available_models")
+            if configured_models:
+                available = [model for model in configured_models if model in discovered_models]
+                if not available:
+                    logger.warning(
+                        "Configured available_models not found locally. Using discovered models instead."
+                    )
+                    available = discovered_models
+            else:
                 available = discovered_models
         else:
-            available = discovered_models
+            self.model_registry = None
+            self.pipeline = None
+            self.forge_config = self.image_gen_config.get("forge", {})
+            configured_models = self.image_gen_config.get("available_models") or []
+            if not configured_models:
+                configured_default = self.image_gen_config.get("model")
+                if configured_default:
+                    configured_models = [configured_default]
+            if not configured_models:
+                raise RuntimeError("No Forge models configured under image_generator.available_models")
+            available = configured_models
 
         self.available_models = available
         configured_default = self.image_gen_config.get("model")
-        self.default_model = configured_default if configured_default in self.available_models else self.available_models[0]
+        if configured_default in self.available_models:
+            self.default_model = configured_default
+        else:
+            self.default_model = self.available_models[0]
 
-        self.default_size = self.image_gen_config.get("default_size", "1024x1024")
-        self.save_images = self.image_gen_config.get("save_images", True)
-        self.save_directory = self.image_gen_config.get("save_directory", "data/image")
-        self.default_params = self.image_gen_config.get("default_params", {})
-        self.max_width = self.image_gen_config.get("max_width", 2048)
-        self.max_height = self.image_gen_config.get("max_height", 2048)
-        self.min_width = self.image_gen_config.get("min_width", 256)
-        self.min_height = self.image_gen_config.get("min_height", 256)
+        provider_labels = {
+            "local": "MOMOKA Local Diffusers",
+            "forge": "Stable Diffusion WebUI Forge",
+        }
+        self.provider_label = provider_labels.get(self.provider, self.provider.title())
+        self.footer_text = (
+            "Powered by MOMOKA Local Diffusers Pipeline"
+            if self.provider == "local"
+            else "Powered by Stable Diffusion WebUI Forge"
+        )
 
         self.channel_models_path = "data/channel_image_models.json"
         self.channel_models: Dict[str, str] = self._load_channel_models()
@@ -78,8 +124,13 @@ class ImageGenerator:
         self.queue_lock = asyncio.Lock()
         self.is_generating = False
         self.current_task: Optional[GenerationTask] = None
+        self.http_session: Optional[aiohttp.ClientSession] = None
 
-        logger.info("ImageGenerator initialised with %d local model(s)", len(self.available_models))
+        logger.info(
+            "ImageGenerator initialised with %d %s model(s)",
+            len(self.available_models),
+            self.provider,
+        )
         logger.info("Default model: %s", self.default_model)
 
     # ------------------------------------------------------------------
@@ -136,7 +187,7 @@ class ImageGenerator:
         return self.available_models.copy()
 
     def get_models_by_provider(self) -> Dict[str, List[str]]:
-        provider = "local"
+        provider = self.provider
         return {provider: [f"{provider}/{name}" for name in self.available_models]}
 
     # ------------------------------------------------------------------
@@ -152,8 +203,8 @@ class ImageGenerator:
             "type": "function",
             "name": self.name,
             "description": (
-                "Generate an image based on a text prompt using a locally hosted Stable Diffusion pipeline. "
-                "Use this when the user requests an image."
+                "Generate an image based on a text prompt using the configured Stable Diffusion backend. "
+                "Supports local diffusers pipeline or Stable Diffusion WebUI Forge depending on configuration."
             ),
             "parameters": {
                 "type": "object",
@@ -308,6 +359,8 @@ class ImageGenerator:
 
         prompt = task.arguments.get("prompt", "").strip()
         negative_prompt = task.arguments.get("negative_prompt", "").strip()
+        if not negative_prompt:
+            negative_prompt = str(self.default_params.get("negative_prompt", ""))
         size_input = task.arguments.get("size", self.default_size)
         width, height, adjusted_size = self._validate_and_adjust_size(size_input)
 
@@ -323,7 +376,6 @@ class ImageGenerator:
             if requested_model and requested_model not in self.available_models:
                 logger.warning("Requested model '%s' not available. Falling back to channel/default model.", requested_model)
             model_name = self.get_model_for_channel(task.channel_id)
-        model_info = self.model_registry.ensure_model(model_name)
 
         params = GenerationParams(
             prompt=prompt,
@@ -347,7 +399,13 @@ class ImageGenerator:
         )
 
         start_time = time.time()
-        image_bytes = await self.pipeline.generate(model_info, params)
+        if self.provider == "local":
+            if not self.model_registry or not self.pipeline:
+                raise RuntimeError("Local pipeline not initialised.")
+            model_info = self.model_registry.ensure_model(model_name)
+            image_bytes = await self.pipeline.generate(model_info, params)
+        else:
+            image_bytes = await self._generate_image_forge(model_name, params)
         elapsed_time = time.time() - start_time
 
         if self.save_images:
@@ -385,7 +443,7 @@ class ImageGenerator:
                     value=f"Requested: {size_input} → Used: {adjusted_size}",
                     inline=False,
                 )
-            embed.set_footer(text="Powered by MOMOKA Local Diffusers Pipeline")
+            embed.set_footer(text=self.footer_text)
 
             file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
             await channel.send(embed=embed, file=file)
@@ -514,7 +572,78 @@ class ImageGenerator:
             return None
 
     async def close(self) -> None:
-        logger.info("ImageGenerator local pipeline does not require explicit cleanup.")
+        if self.http_session and not self.http_session.closed:
+            await self.http_session.close()
+            self.http_session = None
+        logger.info("ImageGenerator resources cleaned up.")
+
+    # ------------------------------------------------------------------
+    # Provider helpers
+    # ------------------------------------------------------------------
+    def _get_http_session(self) -> aiohttp.ClientSession:
+        if self.http_session is None or self.http_session.closed:
+            self.http_session = aiohttp.ClientSession()
+        return self.http_session
+
+    async def _generate_image_forge(self, model_name: str, params: GenerationParams) -> bytes:
+        if not self.forge_config:
+            raise RuntimeError("Forge configuration is not available.")
+
+        base_url = self.forge_config.get("base_url")
+        if not base_url:
+            raise RuntimeError("Forge base_url is not configured.")
+
+        endpoint = base_url.rstrip("/") + str(self.forge_config.get("txt2img_path", "/sdapi/v1/txt2img"))
+        timeout_value = float(self.forge_config.get("timeout", 180.0))
+        session = self._get_http_session()
+
+        payload: Dict[str, Any] = {
+            "prompt": params.prompt,
+            "negative_prompt": params.negative_prompt or "",
+            "width": params.width,
+            "height": params.height,
+            "steps": params.steps,
+            "cfg_scale": params.cfg_scale,
+            "seed": params.seed if params.seed >= 0 else -1,
+        }
+
+        if params.sampler_name:
+            payload["sampler_name"] = params.sampler_name
+
+        for key, value in self.default_params.items():
+            if key in {"negative_prompt", "steps", "cfg_scale", "sampler_name", "seed"}:
+                continue
+            payload.setdefault(key, value)
+
+        payload["override_settings"] = {"sd_model_checkpoint": model_name}
+        if self.forge_config.get("override_settings_restore_afterwards", True):
+            payload["override_settings_restore_afterwards"] = True
+
+        logger.debug("Posting payload to Forge endpoint %s", endpoint)
+
+        timeout = aiohttp.ClientTimeout(total=timeout_value)
+        async with session.post(endpoint, json=payload, timeout=timeout) as response:
+            if response.status != 200:
+                body = await response.text()
+                raise RuntimeError(
+                    f"Forge txt2img failed with status {response.status}: {body[:500]}"
+                )
+            data = await response.json(content_type=None)
+
+        images = data.get("images") if isinstance(data, dict) else None
+        if not images:
+            raise RuntimeError("Forge txt2img response did not include any images.")
+
+        image_str = images[0]
+        if "," in image_str:
+            image_str = image_str.split(",", 1)[1]
+
+        try:
+            image_bytes = base64.b64decode(image_str)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Failed to decode Forge image payload: {exc}") from exc
+
+        return image_bytes
 
 
 class ImageModelSelect(discord.ui.Select):

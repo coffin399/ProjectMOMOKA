@@ -38,7 +38,9 @@
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
-- 🎨 **Image Generation** - Generate images using Stable Diffusion via [WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) (requires setup with `--api` flag)
+- 🎨 **Image Generation**
+  - **Local diffusers pipeline**: run Stable Diffusion fully in-house with models placed under `models/image-models/`
+  - **WebUI Forge integration**: continue using a remote WebUI instance if desired (requires `--api` flag)
 - 🗣️ **Text-to-Speech** - Convert text to speech with [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) (requires separate setup)
 - 📊 **Game Tracking** - Track stats for Rainbow Six Siege and VALORANT
 - 🔔 **Notifications** - Get notified about earthquakes and Twitch streams
@@ -60,6 +62,7 @@
 3. **Configure the bot**
    - Copy `config.default.yaml` to `config.yaml`
    - Fill in your bot token and API keys
+   - Configure local diffusers support by specifying the model path and other options in `config.yaml`
 
 4. **Run the bot**
    
@@ -73,12 +76,17 @@
    python main.py
    ```
 
-### 📚 Documentation
+### 📚 Documentation Highlights
 
 For detailed documentation, please check the language-specific README files:
 
 - [🇯🇵 日本語詳細ドキュメント (Japanese Detailed Documentation)](docs/README_ja.md)
 - [🇺🇸 English Detailed Documentation](docs/README_en.md)
+
+Key guides inside the docs include:
+- Setting up the **local diffusers image pipeline** (model placement, VRAM tips, optional xFormers)
+- Configuring **WebUI Forge** if you prefer the remote backend
+- Dependency list (torch, diffusers, accelerate, safetensors) now required for in-house generation
 
 ---
 
