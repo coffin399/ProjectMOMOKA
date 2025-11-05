@@ -22,8 +22,7 @@ pillow
 # Local image generation pipeline
 # Pin NumPy to 1.x for compatibility with torch 2.1.0
 numpy<2.0.0
-pyopenjtalk-plus==0.4.1.post4
-pyopenjtalk-plus[onnxruntime]
+
 
 # Style-Bert-VITS2 TTS engine dependencies
 # Note: The Style-Bert-VITS2 source code is integrated into this project.
@@ -34,6 +33,16 @@ pyworld>=0.3.0  # For voice processing (f0 extraction and synthesis)
 pyannote.audio>=3.0.0  # For style vector generation (wespeaker-voxceleb-resnet34-LM)
 sentencepiece>=0.1.99  # For BERT tokenization
 onnxruntime>=1.15.0  # Optional: for ONNX inference acceleration
+numba>=0.56.0  # For JIT compilation (used in monotonic_alignment.py)
+fastapi>=0.100.0  # For HTTP exception handling (used in user_dict module)
+num2words>=0.5.11  # For Japanese number normalization
+inflect>=6.0.0  # For English number normalization
+g2p-en>=2.1.0  # For English grapheme-to-phoneme conversion
+jieba>=0.42.1  # For Chinese word segmentation
+pypinyin>=0.49.0  # For Chinese pinyin conversion
+cn2an>=0.5.17  # For Chinese number normalization
+pyopenjtalk-plus==0.4.1.post4
+pyopenjtalk-plus[onnxruntime]
 
 # PyTorch related (CUDA 11.8)
 torch==2.1.0+cu118
