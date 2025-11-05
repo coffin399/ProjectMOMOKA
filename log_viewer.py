@@ -748,15 +748,24 @@ class LogViewerApp:
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM, ipady=2)
         
-    
-    # 既存のハンドラをクリア
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-            if widget:
-                widget.focus_set()
+        # 既存のハンドラをクリア
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            
+    def show_context_menu(self, event, widget=None):
+        """コンテキストメニューを表示する"""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="コピー", command=lambda: self.copy_text(widget or event.widget))
+        menu.add_separator()
+        menu.add_command(label="すべて選択", command=lambda: self.select_all(widget or event.widget))
+        menu.add_command(label="クリア", command=lambda: self.clear_log(widget or event.widget))
+        
+        try:
+            menu.tk.call('tk', 'windowingsystem') == 'aqua'  # For macOS
+            menu.tk.call('::tk::mac::OpenDocument', event.x_root, event.y_root)
+        except:
             menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
     
     def copy_text(self, widget):
         try:
