@@ -42,6 +42,8 @@ class ImageGenerator:
         self.bot = bot
         self.config = bot.config.get("llm", {})
         self.image_gen_config = self.config.get("image_generator", {})
+        self._last_progress_update = 0
+        self._update_interval = 1.0  # Minimum seconds between progress updates
 
         self.model_registry = ImageModelRegistry.from_default_root()
         self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
@@ -375,28 +377,30 @@ class ImageGenerator:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to send progress message: %s", exc)
 
-        def progress_callback(step: int, _timestep: int, _latents) -> None:
-            if not progress_message:
-                return
-            if step <= 0 or step <= progress_state["last_step"]:
-                return
-            progress_state["last_step"] = step
-            elapsed = time.time() - start_time
-            it_s = step / elapsed if elapsed > 0 else 0.0
-            loop.call_soon_threadsafe(
-                asyncio.create_task,
-                self._update_progress_message(
-                    progress_message,
-                    prompt,
-                    model_name,
-                    adjusted_size,
-                    steps,
-                    step,
-                    sampler_name or "default",
-                    elapsed,
-                    it_s,
-                    status="Generating",
-                ),
+        def progress_callback(step: int, _timestep: int, _latents):
+            nonlocal progress_state
+            current_time = time.time()
+            progress_state["last_step"] = step + 1
+            
+            # Only update if enough time has passed since the last update (at most once per second)
+            if current_time - progress_state.get("last_update", 0) >= 1.0:
+                progress_state["last_update"] = current_time
+                
+                # Only update the message if it's been at least 1 second since the last edit
+                if current_time - progress_state.get("last_message_edit", 0) >= 1.0:
+                    progress_state["last_message_edit"] = current_time
+                    asyncio.create_task(self._update_progress_message(
+                        progress_message,
+                        prompt,
+                        model_name,
+                        adjusted_size,
+                        steps,
+                        step + 1,
+                        sampler_name or "default",
+                        current_time - progress_state["start_time"],
+                        0.0,
+                        "Generating... / 生成中..."
+                    )),
             )
 
         try:
