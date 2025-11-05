@@ -8,7 +8,11 @@ from typing import Optional
 
 import torch
 from diffusers import StableDiffusionPipeline
-from diffusers.schedulers import SCHEDULER_MAP
+
+try:  # diffusers>=0.27 removed SCHEDULER_MAP
+    from diffusers.schedulers import SCHEDULER_MAP
+except ImportError:  # pragma: no cover - fallback when map is unavailable
+    SCHEDULER_MAP = {}
 from PIL import Image
 
 from .model_registry import ImageModelInfo
