@@ -30,7 +30,7 @@ torchaudio==2.1.0+cu118
 xformers==0.0.22.post7
 
 # 画像生成パイプライン（torch 2.1.0 と互換性のあるバージョン）
-diffusers==0.25.1
+diffusers==0.24.0
 transformers==4.36.2
 accelerate==0.25.0
 safetensors==0.4.1
