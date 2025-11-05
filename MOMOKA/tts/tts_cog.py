@@ -45,7 +45,19 @@ class TTSCog(commands.Cog, name="tts_cog"):
         self.bot = bot
         self.config = bot.config.get('tts', {})
 
-        self.api_url = self.config.get('api_server_url', 'http://127.0.0.1:5000')
+        # Internal TTS synthesizer configuration
+        from MOMOKA.generator.tts import StyleBertVITS2Synthesizer, SynthesizerConfig
+        tts_cfg = SynthesizerConfig(
+            model_root=self.config.get('model_root', 'models/tts-models'),
+            model_name=self.config.get('default_model_dir'),
+            dictionary_dir=self.config.get('pyopenjtalk_dict_dir'),
+            sample_rate=int(self.config.get('sample_rate', 22050)),
+            noise_scale=float(self.config.get('noise_scale', 0.667)),
+            noise_w=float(self.config.get('noise_w', 0.8)),
+            length_scale=float(self.config.get('length_scale', 1.0)),
+        )
+        self.synthesizer = StyleBertVITS2Synthesizer(tts_cfg)
+        self.api_url = self.config.get('api_server_url')  # optional legacy
         self.api_key = self.config.get('api_key')
 
         self.default_model_id = self.config.get('default_model_id', 0)
@@ -80,11 +92,11 @@ class TTSCog(commands.Cog, name="tts_cog"):
 
         self.llm_bot_ids = [1031673203774464160, 1311866016011124736]
 
-        print("TTSCog loaded (Style-Bert-VITS2 compatible, AudioMixer enabled)")
+        print("TTSCog loaded (Internal Style-Bert-VITS2 wrapper, AudioMixer enabled)")
 
     async def cog_load(self):
-        print("TTSCog loaded. Fetching available models...")
-        await self.fetch_available_models()
+        print("TTSCog loaded. Preparing internal synthesizer...")
+        await self.fetch_available_models()  # still useful for UI and IDs
 
     async def cog_unload(self):
         self._save_settings()
@@ -528,6 +540,24 @@ class TTSCog(commands.Cog, name="tts_cog"):
             return await self._play_tts_directly(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
 
     async def _api_call_to_audio_data(self, text: str, model_id: int, style: str, style_weight: float, speed: float) -> Optional[bytes]:
+        # Prefer internal synthesizer; fall back to legacy HTTP if configured
+        try:
+            wav = self.synthesizer.synthesize_to_wav(
+                text=text,
+                style=style,
+                style_weight=style_weight,
+                speed=speed,
+                noise_scale=self.config.get('noise_scale', 0.667),
+                noise_w=self.config.get('noise_w', 0.8),
+                length_scale=self.config.get('length_scale', 1.0),
+            )
+            return wav
+        except Exception as e:
+            print(f"✗ [TTSCog] 内製TTS処理エラー: {e}")
+
+        if not self.api_url:
+            return None
+
         endpoint = f"{self.api_url}/voice"
         params = {"text": text, "model_id": model_id, "style": style, "style_weight": style_weight, "speed": speed, "encoding": "wav"}
         try:

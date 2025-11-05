@@ -32,18 +32,18 @@
 
 ## ✨ What is MOMOKA?
 
-**MOMOKA** is your all-in-one Discord companion! 🎮✨ A feature-packed bot that combines the power of AI chat, seamless music playback, stunning image generation, and essential utility commands—all in one sleek package. Perfect for communities that want everything without the hassle of managing multiple bots!
+**MOMOKA** is your all-in-one Discord companion! 🎮✨ A feature-packed bot that combines the power of AI chat, seamless music playback, local image generation, and essential utility commands—all in one sleek package. Perfect for communities that want everything without the hassle of managing multiple bots!
 
-> **Bundled components:** This repository vendors the following upstream projects for out-of-the-box image generation and TTS capabilities:
-> - [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)
-> - [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)
+> **Built-ins:**
+> - Local image generation via diffusers (see `MOMOKA/generator/image`)
+> - Internal wrapper for Style-Bert-VITS2 TTS (see `MOMOKA/generator/tts`)
 
 ### 🚀 Key Features
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
-- 🎨 **Image Generation** - Generate images through Stable Diffusion WebUI Forge (requires `--api` flag)
-- 🗣️ **Text-to-Speech** - Convert text to speech with [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) (requires separate setup)
+- 🎨 **Image Generation (Local)** - Generate images via the built-in diffusers pipeline. Drop models under `models/image-models/<model_name>/` (single-file weights like `.safetensors`/`.ckpt` supported; optional VAE/LoRA and `model.json`).
+- 🗣️ **Text-to-Speech (Local)** - Internal Style-Bert-VITS2 wrapper. Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `.json`. Optional `pyopenjtalk` dictionary is supported.
 - 📊 **Game Tracking** - Track stats for Rainbow Six Siege and VALORANT
 - 🔔 **Notifications** - Get notified about earthquakes and Twitch streams
 - 🎲 **Utilities** - Dice rolls, timers, media downloads, and more!
@@ -64,7 +64,11 @@
 3. **Configure the bot**
    - Copy `config.default.yaml` to `config.yaml`
    - Fill in your bot token and API keys
-   - Configure local diffusers support by specifying the model path and other options in `config.yaml`
+   - (Optional) Place local models:
+     - Image: `models/image-models/<model_name>/` → weights (`.safetensors`/`.ckpt`), optional `model.json`, VAE, LoRA
+     - TTS: `models/tts-models/<model_name>/` → `<model_name>.safetensors` or `G_*.pth` + `.json`
+     - You can also specify `tts.pyopenjtalk_dict_dir` for a custom `pyopenjtalk` dictionary
+   - Configure options in `config.yaml` (e.g., default image model, TTS defaults)
 
 4. **Run the bot**
    

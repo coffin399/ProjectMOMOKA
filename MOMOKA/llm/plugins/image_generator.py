@@ -16,7 +16,7 @@ from typing import Any, Deque, Dict, List, Optional
 import discord
 from discord.abc import Messageable
 
-from MOMOKA.generator.imagen import (
+from MOMOKA.generator.image import (
     GenerationParams,
     ImageModelRegistry,
     LocalTxt2ImgPipeline,
