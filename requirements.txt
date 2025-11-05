@@ -30,6 +30,7 @@ pyopenjtalk-plus[onnxruntime]
 # See NOTICE file and MOMOKA/generator/tts/LICENSE_SBVITS2 for details.
 loguru>=0.7.0  # For logging (used by integrated style_bert_vits2 package)
 pydantic>=2.0.0  # For data validation (used by TTSModel)
+pyworld>=0.3.0  # For voice processing (f0 extraction and synthesis)
 pyannote.audio>=3.0.0  # For style vector generation (wespeaker-voxceleb-resnet34-LM)
 sentencepiece>=0.1.99  # For BERT tokenization
 onnxruntime>=1.15.0  # Optional: for ONNX inference acceleration
