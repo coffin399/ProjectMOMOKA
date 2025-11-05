@@ -358,7 +358,12 @@ class ImageGenerator:
         start_time = time.time()
         loop = asyncio.get_running_loop()
         progress_message: Optional[discord.Message] = None
-        progress_state = {"last_step": 0}
+        progress_state = {
+            "last_step": 0,
+            "start_time": start_time,
+            "last_update": 0,
+            "last_message_edit": 0
+        }
 
         channel = self.bot.get_channel(task.channel_id)
         if not channel:
