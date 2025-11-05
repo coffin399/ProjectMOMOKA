@@ -9,4 +9,5 @@ Project MOMOKA - NOTICE
 - Bumped `safetensors` to 0.5.2 across project and Forge manifests to use prebuilt wheels and eliminate Rust toolchain requirements.
 - Guarded `scikit-image==0.21.0` to only install on Python < 3.13 so newer interpreters skip building from source.
 - Updated `startMOMOKA.bat` to require the `py -3.10` launcher, ensuring the virtual environment is always created with Python 3.10.x.
+- Pinned `pyopenjtalk-dict==1.0.1` for Python 3.10 compatibility since newer releases require Python 3.11+.
 
