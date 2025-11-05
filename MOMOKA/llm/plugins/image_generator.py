@@ -401,7 +401,6 @@ class ImageGenerator:
                         0.0,
                         "Generating... / 生成中..."
                     ))
-            )
 
         try:
             image_bytes = await self.pipeline.generate(
