@@ -62,8 +62,21 @@ class StyleBertVITS2Synthesizer:
         self._maybe_warmup_model()
 
     def _discover_model_paths(self) -> None:
-        root = Path(self.config.model_root)
+        # Get project root directory (where main.py is located)
+        # synthesizer.py is at MOMOKA/generator/tts/synthesizer.py, so go up 3 levels
+        module_path = Path(__file__).resolve()
+        project_root = module_path.parents[3]
+        
+        # Use project root as base, then resolve model_root relative to it
+        if Path(self.config.model_root).is_absolute():
+            root = Path(self.config.model_root)
+        else:
+            root = project_root / self.config.model_root
+        
         if not root.exists():
+            logging.getLogger(__name__).warning(
+                f"Model root directory not found: {root}. Expected: {project_root / 'models' / 'tts-models'}"
+            )
             return
         target_dir: Optional[Path] = None
         if self.config.model_name:
@@ -102,7 +115,13 @@ class StyleBertVITS2Synthesizer:
             return
         if not (self._ckpt_path and self._json_path):
             self._model_ready = False
-            logging.getLogger(__name__).error("Model files not found. Please place Style-Bert-VITS2 model files in models/tts-models/<model_name>/")
+            # Get project root for error message
+            module_path = Path(__file__).resolve()
+            project_root = module_path.parents[3]
+            expected_path = project_root / "models" / "tts-models" / "<model_name>"
+            logging.getLogger(__name__).error(
+                f"Model files not found. Please place Style-Bert-VITS2 model files in: {expected_path}"
+            )
             return
 
         # Load config.json
