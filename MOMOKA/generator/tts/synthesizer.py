@@ -79,42 +79,81 @@ class StyleBertVITS2Synthesizer:
             )
             return
         
+        logging.getLogger(__name__).debug(f"Searching for models in: {root}")
+        
         target_dir: Optional[Path] = None
         
         if self.config.model_name:
             # Specific model name provided
             candidate = root / self.config.model_name
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Looking for specific model: {candidate}")
             if candidate.exists() and candidate.is_dir():
-                target_dir = candidate
+                # Verify it contains model files
+                has_checkpoint = False
+                has_config = False
+                for p in candidate.iterdir():
+                    if p.is_file():
+                        if p.suffix in ('.safetensors', '.pth'):
+                            has_checkpoint = True
+                            logger.debug(f"  Found checkpoint: {p.name}")
+                        elif p.name == 'config.json':
+                            has_config = True
+                            logger.debug(f"  Found config.json: {p.name}")
+                
+                if has_checkpoint and has_config:
+                    target_dir = candidate
+                    logger.info(f"Found specified model directory: {target_dir}")
+                else:
+                    logger.warning(
+                        f"Specified model directory found but incomplete (checkpoint={has_checkpoint}, config={has_config}): {candidate}"
+                    )
+            else:
+                logger.warning(f"Specified model directory not found: {candidate}")
         else:
             # Search all directories directly under models/tts-models/ for model files
-            # Check all subdirectories (foo, bar, hoge, fuga, etc.) in models/tts-models/
+            # Check all subdirectories (Custom_EN_V1, Custom_JP_V1, foo, bar, etc.) in models/tts-models/
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Scanning directories in {root}")
             for d in root.iterdir():
                 if not d.is_dir():
                     continue
+                logger.debug(f"Checking directory: {d.name}")
                 # Check if this directory contains model files
                 has_checkpoint = False
                 has_config = False
+                checkpoint_files = []
+                config_file = None
                 for p in d.iterdir():
                     if p.is_file():
                         if p.suffix in ('.safetensors', '.pth'):
-                            # Check if it's a valid checkpoint (starts with G_ or matches dir name)
-                            if p.stem.startswith('G_') or p.stem == d.name:
-                                has_checkpoint = True
+                            # Accept any checkpoint file - Style-Bert-VITS2 supports various naming conventions
+                            checkpoint_files.append(p)
+                            has_checkpoint = True
+                            logger.debug(f"  Found checkpoint: {p.name}")
                         elif p.name == 'config.json':
                             has_config = True
+                            config_file = p
+                            logger.debug(f"  Found config.json: {p.name}")
                 
                 # If both checkpoint and config found, this is a valid model directory
                 if has_checkpoint and has_config:
                     target_dir = d
-                    logging.getLogger(__name__).info(
-                        f"Found Style-Bert-VITS2 model at: {target_dir}"
+                    logger.info(
+                        f"Found Style-Bert-VITS2 model at: {target_dir} (checkpoints: {[f.name for f in checkpoint_files]})"
                     )
                     break
+                elif has_checkpoint or has_config:
+                    logger.debug(f"  Directory {d.name} has checkpoint={has_checkpoint}, config={has_config} (incomplete)")
         
         if not target_dir:
-            logging.getLogger(__name__).warning(
-                f"No valid model found in {root}. Searched all directories directly under models/tts-models/ for .safetensors/.pth and config.json"
+            logger = logging.getLogger(__name__)
+            # List all directories found for debugging
+            found_dirs = [d.name for d in root.iterdir() if d.is_dir()]
+            logger.warning(
+                f"No valid model found in {root}. "
+                f"Found directories: {found_dirs if found_dirs else 'none'}. "
+                f"Each directory must contain both a checkpoint file (.safetensors/.pth) and config.json"
             )
             return
         
@@ -122,15 +161,28 @@ class StyleBertVITS2Synthesizer:
         ckpt = None
         jsonf = None
         stylef = None
+        # Prefer .safetensors over .pth, and prefer G_*.pth or <model_name>.* over others
+        checkpoint_candidates = []
         for p in sorted(target_dir.iterdir()):
             if not p.is_file():
                 continue
-            if p.suffix in ('.safetensors', '.pth') and (p.stem.startswith('G_') or p.stem == target_dir.name):
-                ckpt = p
+            if p.suffix in ('.safetensors', '.pth'):
+                # Accept any checkpoint file - Style-Bert-VITS2 supports various naming conventions
+                checkpoint_candidates.append(p)
             if p.name == 'config.json':
                 jsonf = p
             if p.name == 'style_vectors.npy':
                 stylef = p
+        
+        # Select best checkpoint: prefer safetensors, then prefer G_*.pth or <model_name>.*
+        if checkpoint_candidates:
+            # Sort: safetensors first, then by name (G_*.pth or <model_name>.* preferred)
+            checkpoint_candidates.sort(key=lambda x: (
+                x.suffix != '.safetensors',  # safetensors first
+                not (x.stem.startswith('G_') or x.stem == target_dir.name),  # G_* or <model_name>.* preferred
+                x.name
+            ))
+            ckpt = checkpoint_candidates[0]
         
         self._model_dir = target_dir
         self._ckpt_path = ckpt
