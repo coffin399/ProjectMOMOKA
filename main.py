@@ -146,7 +146,6 @@ class Momoka(commands.Bot):
         self.config = None
         self.status_templates = []
         self.status_index = 0
-        self.log_viewer_started = False
         # ロードするCogのリスト
         self.cogs_to_load = [
             'MOMOKA.images.image_commands_cog',
@@ -169,11 +168,6 @@ class Momoka(commands.Bot):
 
     async def setup_hook(self):
         """Botの初期セットアップ（ログイン後、接続準備完了前）"""
-        global log_viewer_process
-        if not self.log_viewer_started:
-            log_viewer_process = run_log_viewer()
-            self.log_viewer_started = True
-
         # 設定ファイルの読み込み
         if not os.path.exists(CONFIG_FILE):
             if os.path.exists(DEFAULT_CONFIG_FILE):
@@ -307,7 +301,6 @@ DEFAULT_CONFIG_FILE = 'config.default.yaml'
 
 
 # ... (以下のコードは変更なし)
-
 def run_log_viewer():
     """ログビューアを別プロセスで起動"""
     try:
@@ -362,6 +355,10 @@ if __name__ == "__main__":
 ╚═╝     ╚═╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
     """
     print(momoka_art)
+    
+    # ログビューアを起動
+    log_viewer_process = run_log_viewer()
+
     initial_config = {}
     try:
         if not os.path.exists(CONFIG_FILE) and os.path.exists(DEFAULT_CONFIG_FILE):
@@ -398,9 +395,9 @@ if __name__ == "__main__":
                           allowed_mentions=allowed_mentions)
 
 
-    # ================================================================
-    # ===== Cogリロードコマンド ======================================
-    # ================================================================
+    # ===============================================================
+    # ===== Cogリロードコマンド =====================================
+    # ===============================================================
     @bot_instance.tree.command(name="reload_plana", description="🔄 Cogをリロードします（管理者専用）")
     async def reload_cog(interaction: discord.Interaction, cog_name: str = None):
         if not bot_instance.is_admin(interaction.user.id):
@@ -449,7 +446,7 @@ if __name__ == "__main__":
 
             result_msg = f"✅ {len(reloaded)}個のCogをリロード/ロードしました。"
             if failed:
-                result_msg += f"\\n❌ {len(failed)}個のCogでエラーが発生しました。"
+                result_msg += f"\n❌ {len(failed)}個のCogでエラーが発生しました。"
 
             await interaction.followup.send(result_msg, ephemeral=False)
             logging.info(
@@ -463,8 +460,8 @@ if __name__ == "__main__":
             await interaction.response.send_message("現在ロードされているCogはありません。", ephemeral=False)
             return
 
-        cog_list = "\\n".join([f"• `{ext}`" for ext in sorted(loaded_extensions)])
-        await interaction.response.send_message(f"**ロード済みCog一覧** ({len(loaded_extensions)}個):\\n{cog_list}",
+        cog_list = "\n".join([f"• `{ext}`" for ext in sorted(loaded_extensions)])
+        await interaction.response.send_message(f"**ロード済みCog一覧** ({len(loaded_extensions)}個):\n{cog_list}",
                                                 ephemeral=False)
 
 
