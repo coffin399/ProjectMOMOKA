@@ -262,6 +262,24 @@ class StyleBertVITS2Synthesizer:
             )
             logger.debug(f"TTSModel instance created. Loading model...")
             self._engine.load()  # Load the model
+            
+            # Pre-load Japanese BERT tokenizer from Hugging Face
+            # This is required because the default local path doesn't exist
+            # The model will be automatically downloaded from Hugging Face
+            try:
+                from style_bert_vits2.nlp import bert_models
+                from style_bert_vits2.constants import Languages
+                logger.debug("Pre-loading Japanese BERT tokenizer from Hugging Face...")
+                # Use Hugging Face model ID instead of local path
+                bert_models.load_tokenizer(
+                    Languages.JP,
+                    pretrained_model_name_or_path="ku-nlp/deberta-v2-large-japanese-char-wwm",
+                    cache_dir=None,  # Use default Hugging Face cache
+                )
+                logger.info("Japanese BERT tokenizer loaded successfully")
+            except Exception as e:
+                logger.warning(f"Failed to pre-load BERT tokenizer: {e}. It will be loaded on first inference.")
+            
             self._model_ready = True
             logger.info(
                 f"Loaded Style-Bert-VITS2 model from {self._ckpt_path} on {self._device}"
