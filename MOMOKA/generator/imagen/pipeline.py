@@ -8,7 +8,42 @@ from typing import Optional
 
 import torch
 from diffusers import StableDiffusionPipeline
-from diffusers.schedulers import SCHEDULER_MAP
+
+try:
+    from diffusers.schedulers import SCHEDULER_MAP
+except ImportError:  # diffusers >= 0.32 removed the public SCHEDULER_MAP
+    from diffusers import (
+        DDIMScheduler,
+        DPMSolverMultistepScheduler,
+        EulerAncestralDiscreteScheduler,
+        EulerDiscreteScheduler,
+        HeunDiscreteScheduler,
+        KDPM2AncestralDiscreteScheduler,
+        KDPM2DiscreteScheduler,
+        LMSDiscreteScheduler,
+        PNDMScheduler,
+        UniPCMultistepScheduler,
+    )
+
+    SCHEDULER_MAP = {
+        "ddim": DDIMScheduler,
+        "dpmsolvermultistep": DPMSolverMultistepScheduler,
+        "dpm++2m": DPMSolverMultistepScheduler,
+        "dpm++2mkarras": DPMSolverMultistepScheduler,
+        "dpmplusplus2m": DPMSolverMultistepScheduler,
+        "dpmplusplus2mkarras": DPMSolverMultistepScheduler,
+        "euler": EulerDiscreteScheduler,
+        "eulera": EulerAncestralDiscreteScheduler,
+        "eulerancestral": EulerAncestralDiscreteScheduler,
+        "heun": HeunDiscreteScheduler,
+        "karras": DPMSolverMultistepScheduler,
+        "kdpm2": KDPM2DiscreteScheduler,
+        "kdpm2ancestral": KDPM2AncestralDiscreteScheduler,
+        "lms": LMSDiscreteScheduler,
+        "pndm": PNDMScheduler,
+        "unipc": UniPCMultistepScheduler,
+        "unipcmultistep": UniPCMultistepScheduler,
+    }
 from PIL import Image
 
 from .model_registry import ImageModelInfo

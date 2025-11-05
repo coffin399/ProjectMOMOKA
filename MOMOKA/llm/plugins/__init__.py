@@ -44,6 +44,8 @@ def _discover_plugins():
                     if isinstance(attr, type) and attr.__module__ == module.__name__:
                         _plugin_classes.append(attr)
                         __all__.append(attr_name)
+                        globals()[attr_name] = attr
+
                         # print(f"Discovered plugin: {attr_name}") # for debugging
 
             except ImportError as e:
