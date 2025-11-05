@@ -7,4 +7,6 @@ Project MOMOKA - NOTICE
 - Consolidated `requirements.txt` for Python 3.10, pinning core bot, Forge API, and Style-Bert-VITS2 dependencies (including submodule needs) for reproducible installs.
 - Updated Pillow to 10.4.0 in both project and Forge requirements to avoid source builds failing under Python 3.10 on Windows.
 - Bumped `safetensors` to 0.5.2 across project and Forge manifests to use prebuilt wheels and eliminate Rust toolchain requirements.
+- Guarded `scikit-image==0.21.0` to only install on Python < 3.13 so newer interpreters skip building from source.
+- Updated `startMOMOKA.bat` to require the `py -3.10` launcher, ensuring the virtual environment is always created with Python 3.10.x.
 

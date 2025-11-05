@@ -52,7 +52,7 @@ pydantic==2.8.2
 pytorch-lightning==1.9.4
 resize-right==0.0.2
 safetensors==0.5.2
-scikit-image==0.21.0
+scikit-image==0.21.0; python_version < "3.13"
 setuptools==69.5.1
 spandrel==0.3.4
 spandrel-extra-arches==0.1.1
