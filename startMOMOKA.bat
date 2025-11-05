@@ -1,12 +1,23 @@
 @echo off
 chcp 65001 >nul
-title MOMOKA STARTER
+title MOMOKA 起動ツール
 
 set VENV_DIR=.venv
 set "PYTHON_CMD=py -3.10"
+set "START_DIR=%~dp0"
+
+:: 管理者権限で実行されているか確認
+net session >nul 2>&1
+if %errorLevel% == 0 (
+    set "ADMIN_MODE=1"
+    title [管理者] MOMOKA 起動ツール
+) else (
+    set "ADMIN_MODE=0"
+    title MOMOKA 起動ツール
+)
 
 echo ================================
-echo MOMOKA STARTER
+echo        MOMOKA 起動ツール
 echo ================================
 echo.
 
@@ -67,18 +78,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM パッケージのインストール/更新
-echo [INFO] Installing/Updating required packages...
-python -m pip install --upgrade pip
-python -m pip install -U -r requirements.txt
+REM 依存関係のインストール
+echo [INFO] 必要なパッケージをインストールしています...
+pip install -r requirements.txt
 if %errorlevel% neq 0 (
-    echo [ERROR] Failed to install packages.
-    echo [ERROR] Please check requirements.txt file.
+    echo [ERROR] パッケージのインストールに失敗しました。
     pause
     exit /b 1
 )
-echo [SUCCESS] All packages installed successfully.
+echo [SUCCESS] すべての依存関係が正常にインストールされました。
 echo.
+
+REM ログビューアの起動
+echo [INFO] ログビューアを起動しています...
+start "MOMOKA Log Viewer" %PYTHON_CMD% "%START_DIR%log_viewer.py"
 
 REM MOMOKAの起動
 echo ================================

@@ -6,13 +6,47 @@ import os
 import shutil
 import sys
 import json
+import queue
+import threading
+import tkinter as tk
+from tkinter import messagebox
+import subprocess
+import atexit
+from pathlib import Path
 
 # --- ロギング設定の初期化 ---
+# ルートロガーの設定
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# 特定のロガーのログレベル設定
 logging.getLogger('discord').setLevel(logging.WARNING)
 logging.getLogger('openai').setLevel(logging.WARNING)
 logging.getLogger('google.generativeai').setLevel(logging.WARNING)
 logging.getLogger('google.ai').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
+logging.getLogger('PIL').setLevel(logging.WARNING)
+
+# ログキューの作成（GUIログビューアと共有）
+log_queue = queue.Queue()
+
+class QueueHandler(logging.Handler):
+    """ログをキューに送信するハンドラ"""
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+        self.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    def emit(self, record):
+        try:
+            self.log_queue.put((record.name, record.levelname, self.format(record)))
+        except Exception:
+            self.handleError(record)
+
+# キューにログを送信するハンドラを追加
+queue_handler = QueueHandler(log_queue)
+root_logger.addHandler(queue_handler)
 
 from MOMOKA.services.discord_handler import DiscordLogHandler, DiscordLogFormatter
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
@@ -20,304 +54,42 @@ from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueErr
 CONFIG_FILE = 'config.yaml'
 DEFAULT_CONFIG_FILE = 'config.default.yaml'
 
+# ... (以下のコードは変更なし)
 
-async def mobile_identify(self):
-    """Botをモバイルとして識別させるためのカスタム関数"""
-    payload = {
-        'op': self.IDENTIFY,
-        'd': {
-            'token': self.token,
-            'properties': {
-                '$os': 'Discord Android',
-                '$browser': 'Discord Android',
-                '$device': 'Discord Android'
-            },
-            'compress': True,
-            'large_threshold': 250,
-            'intents': self._connection.intents.value
-        }
-    }
-    if self.shard_id is not None and self.shard_count is not None:
-        payload['d']['shard'] = [self.shard_id, self.shard_count]
-    state = self._connection
-    if state._activity is not None or state._status is not None:
-        payload['d']['presence'] = {
-            'status': state._status,
-            'game': state._activity,
-            'since': 0,
-            'afk': False
-        }
-    await self.call_hooks('before_identify', self.shard_id, initial=self._initial_identify)
-    await self.send_as_json(payload)
-
-
-class Momoka(commands.Bot):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.config = None
-        self.status_templates = []
-        self.status_index = 0
-        #ロードする順序を指定
-        self.cogs_to_load = [
-            'MOMOKA.images.image_commands_cog',
-            'MOMOKA.llm.llm_cog',
-            'MOMOKA.media_downloader.ytdlp_downloader_cog',
-            'MOMOKA.music.music_cog',
-            'MOMOKA.notifications.earthquake_notification_cog',
-            'MOMOKA.notifications.twitch_notification_cog',
-            'MOMOKA.timer.timer_cog',
-            'MOMOKA.tracker.r6s_tracker_cog',
-            'MOMOKA.tracker.valorant_tracker_cog',
-            'MOMOKA.tts.tts_cog',
-            'MOMOKA.utilities.slash_command_cog',
-        ]
-
-    def is_admin(self, user_id: int) -> bool:
-        """ユーザーが管理者かどうかをチェック"""
-        admin_ids = self.config.get('admin_user_ids', [])
-        return user_id in admin_ids
-
-    async def setup_hook(self):
-        """Botの初期セットアップ（ログイン後、接続準備完了前）"""
-        if not os.path.exists(CONFIG_FILE):
-            if os.path.exists(DEFAULT_CONFIG_FILE):
-                try:
-                    shutil.copyfile(DEFAULT_CONFIG_FILE, CONFIG_FILE)
-                    logging.info(
-                        f"{CONFIG_FILE} が見つからなかったため、{DEFAULT_CONFIG_FILE} をコピーして生成しました。")
-                    logging.warning(f"生成された {CONFIG_FILE} を確認し、ボットトークンやAPIキーを設定してください。")
-                except Exception as e_copy:
-                    print(
-                        f"CRITICAL: {DEFAULT_CONFIG_FILE} から {CONFIG_FILE} のコピー中にエラーが発生しました: {e_copy}")
-                    raise RuntimeError(f"{CONFIG_FILE} の生成に失敗しました。")
-            else:
-                print(f"CRITICAL: {CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。設定ファイルがありません。")
-                raise FileNotFoundError(f"{CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。")
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                self.config = yaml.safe_load(f)
-                if not self.config:
-                    print(f"CRITICAL: {CONFIG_FILE} が空または無効です。ボットを起動できません。")
-                    raise RuntimeError(f"{CONFIG_FILE} が空または無効です。")
-            logging.info(f"{CONFIG_FILE} を正常に読み込みました。")
-        except Exception as e:
-            print(f"CRITICAL: {CONFIG_FILE} の読み込みまたは解析中にエラーが発生しました: {e}")
-            raise
-
-        # ================================================================
-        # ===== ロギング設定 =============================================
-        # ================================================================
-        # コンソール用のフォーマッター
-        console_log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] %(message)s')
-
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        root_logger.handlers = []  # 既存のハンドラをクリア
-
-        # コンソールハンドラの設定
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(console_log_format)
-        root_logger.addHandler(console_handler)
-
-        log_channel_ids_from_config = self.config.get('log_channel_ids', [])
-        if not isinstance(log_channel_ids_from_config, list):
-            log_channel_ids_from_config = []
-            logging.warning("config.yaml の 'log_channel_ids' はリスト形式である必要があります。")
-
-        logging_json_path = "data/logging_channels.json"
-        log_channel_ids_from_file = []
-
-        try:
-            dir_path = os.path.dirname(logging_json_path)
-            os.makedirs(dir_path, exist_ok=True)
-            if not os.path.exists(logging_json_path):
-                with open(logging_json_path, 'w') as f:
-                    json.dump([], f)
-                logging.info(f"{logging_json_path} が見つからなかったため、新規作成しました。")
-
-            with open(logging_json_path, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, list) and all(isinstance(i, int) for i in data):
-                    log_channel_ids_from_file = data
-        except (json.JSONDecodeError, IOError) as e:
-            logging.error(f"{logging_json_path} の処理中にエラーが発生しました: {e}")
-
-        all_log_channel_ids = list(set(log_channel_ids_from_config + log_channel_ids_from_file))
-
-        if all_log_channel_ids:
+def run_log_viewer():
+    """ログビューアを別プロセスで起動"""
+    try:
+        # ログビューアのパスを取得
+        log_viewer_path = Path(__file__).parent / "log_viewer.py"
+        if not log_viewer_path.exists():
+            print("ログビューアが見つかりません。")
+            return None
+        
+        # 別プロセスでログビューアを起動
+        process = subprocess.Popen(
+            [sys.executable, str(log_viewer_path)],
+            creationflags=subprocess.CREATE_NEW_CONSOLE
+        )
+        
+        # 終了時にプロセスを確実に終了させる
+        def cleanup():
             try:
-                discord_handler = DiscordLogHandler(bot=self, channel_ids=all_log_channel_ids, interval=6.0)
-                discord_handler.setLevel(logging.INFO)
-
-                # Discordに送信するログ用のフォーマッターを新しく作成
-                discord_formatter = DiscordLogFormatter('%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
-                discord_handler.setFormatter(discord_formatter)
-
-                root_logger.addHandler(discord_handler)
-                logging.info(f"DiscordへのロギングをチャンネルID {all_log_channel_ids} で有効化しました。")
+                if process.poll() is None:  # プロセスがまだ実行中の場合
+                    process.terminate()
+                    process.wait(timeout=3)
             except Exception as e:
-                logging.error(f"DiscordLogHandler の初期化中にエラーが発生しました: {e}")
-        else:
-            logging.warning("ログ送信先のDiscordチャンネルが設定されていません。")
-        # ================================================================
-        # ===== ロギング設定ここまで =====================================
-        # ================================================================
-
-        logging.info("Cogのロードを開始します...")
-        loaded_cogs_count = 0
-        for module_path in self.cogs_to_load:
-            try:
-                await self.load_extension(module_path)
-                logging.info(f"  > Cog '{module_path}' のロードに成功しました。")
-                loaded_cogs_count += 1
-            except commands.ExtensionAlreadyLoaded:
-                logging.debug(f"Cog '{module_path}' は既にロードされています。")
-            except commands.ExtensionNotFound:
-                logging.error(f"  > Cog '{module_path}' が見つかりません。ファイルパスを確認してください。")
-            except commands.NoEntryPointError:
-                logging.error(f"  > Cog '{module_path}' に setup 関数が見つかりません。Cogとして正しく実装されていますか？")
-            except Exception as e:
-                logging.error(f"  > Cog '{module_path}' のロード中に予期しないエラーが発生しました: {e}", exc_info=True)
-        logging.info(f"Cogのロードが完了しました。合計 {loaded_cogs_count} 個のCogをロードしました。")
-
-        if self.config.get('sync_slash_commands', True):
-            try:
-                test_guild_id = self.config.get('test_guild_id')
-                if test_guild_id:
-                    guild_obj = discord.Object(id=int(test_guild_id))
-                    synced_commands = await self.tree.sync(guild=guild_obj)
-                    logging.info(
-                        f"{len(synced_commands)}個のスラッシュコマンドをテストギルド {test_guild_id} に同期しました。")
-                else:
-                    synced_commands = await self.tree.sync()
-                    logging.info(f"{len(synced_commands)}個のグローバルスラッシュコマンドを同期しました。")
-            except Exception as e:
-                logging.error(f"スラッシュコマンドの同期中にエラーが発生しました: {e}", exc_info=True)
-        else:
-            logging.info("スラッシュコマンドの同期は設定で無効化されています。")
-        self.tree.on_error = self.on_app_command_error
-
-    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-        original_error = getattr(error, 'original', error)
-        logging.error(f"コマンド '{interaction.command.name}' でエラーが発生しました。", exc_info=error)
-        if isinstance(original_error, (InvalidDiceNotationError, DiceValueError)):
-            error_message = f"エラー: {original_error.message}"
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(error_message, ephemeral=False)
-                else:
-                    await interaction.followup.send(error_message, ephemeral=False)
-            except discord.HTTPException as e:
-                logging.error(f"エラーメッセージの送信に失敗しました: {e}")
-            return
-        if isinstance(error, discord.app_commands.MissingPermissions):
-            error_message = "エラー: このコマンドを実行する権限がありません。\nError: You do not have the required permissions to run this command."
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(error_message, ephemeral=False)
-                else:
-                    await interaction.followup.send(error_message, ephemeral=False)
-            except discord.HTTPException as e:
-                logging.error(f"権限エラーメッセージの送信に失敗しました: {e}")
-            return
-        try:
-            error_message = ("コマンドの実行中に予期しないエラーが発生しました。開発者に連絡してください。\n"
-                             "An unexpected error occurred while executing the command. Please contact the developer.")
-            if not interaction.response.is_done():
-                await interaction.response.send_message(error_message, ephemeral=False)
-            else:
-                await interaction.followup.send(error_message, ephemeral=False)
-        except discord.HTTPException as e:
-            logging.error(f"最終的なエラーメッセージの送信に失敗しました: {e}")
-
-    @tasks.loop(seconds=10)
-    async def rotate_status(self):
-        # ボットが完全に準備完了しているか、ステータステンプレートが存在するかを確認
-        # これにより、再接続中の実行や設定不備を防ぐ
-        if not self.is_ready() or not self.status_templates:
-            return
-
-        current_template = self.status_templates[self.status_index]
-        status_text = current_template.format(guild_count=len(self.guilds), prefix=self.config.get('prefix', '!!'))
-        activity_type_str = self.config.get('status_activity_type', 'playing').lower()
-        activity_type_map = {
-            'playing': discord.ActivityType.playing,
-            'streaming': discord.ActivityType.streaming,
-            'listening': discord.ActivityType.listening,
-            'watching': discord.ActivityType.watching,
-            'competing': discord.ActivityType.competing
-        }
-        selected_activity_type = activity_type_map.get(activity_type_str, discord.ActivityType.streaming)
-
-        if selected_activity_type == discord.ActivityType.streaming:
-            stream_url = self.config.get('status_stream_url', 'https://www.twitch.tv/coffinnoob299')
-            activity = discord.Streaming(name=status_text, url=stream_url)
-        else:
-            activity = discord.Activity(type=selected_activity_type, name=status_text)
-
-        try:
-            await self.change_presence(activity=activity, status=discord.Status.online)
-        except Exception as e:
-            logging.warning(f"ステータスの更新中に一時的なエラーが発生しました: {e}")
-
-        self.status_index = (self.status_index + 1) % len(self.status_templates)
-
-    @rotate_status.before_loop
-    async def before_rotate_status(self):
-        await self.wait_until_ready()
-
-    async def on_ready(self):
-        if not self.user:
-            logging.error("on_ready: self.user が None です。処理をスキップします。")
-            return
-        logging.info(f'{self.user.name} ({self.user.id}) としてDiscordにログインし、準備が完了しました！')
-        logging.info(f"現在 {len(self.guilds)} サーバーに参加しています。")
-        logging.info("📱 モバイルステータスで表示されています")
-        self.status_templates = self.config.get('status_rotation', [
-                                                                    "Ask @MOMOKA for command help",
-                                                                    "operating on {guild_count} servers",
-                                                                    "MOMOKA Ver.2025-11-03",
-                                                                    "Ask @MOMOKA <image generation>",
-                                                                    "/say <audio generation>"
-                                                                    ])
-        self.rotate_status.start()
-
-    async def on_guild_join(self, guild: discord.Guild):
-        logging.info(
-            f"新しいサーバー '{guild.name}' (ID: {guild.id}) に参加しました。現在のサーバー数: {len(self.guilds)}")
-
-    async def on_guild_remove(self, guild: discord.Guild):
-        logging.info(f"サーバー '{guild.name}' (ID: {guild.id}) から退出しました。現在のサーバー数: {len(self.guilds)}")
-
-    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
-        if isinstance(error, commands.CommandNotFound):
-            return
-        elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(
-                f"引数が不足しています: `{error.param.name}`\n`{ctx.prefix}{ctx.command.qualified_name} {ctx.command.signature}`")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send(
-                f"引数の型が正しくありません。\n`{ctx.prefix}{ctx.command.qualified_name} {ctx.command.signature}`")
-        elif isinstance(error, commands.CheckFailure):
-            await ctx.send("このコマンドを実行する権限がありません。")
-        elif isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(f"このコマンドはクールダウン中です。あと {error.retry_after:.2f} 秒お待ちください。")
-        elif isinstance(error, commands.ExtensionError):
-            logging.error(
-                f"Cog関連のエラーが発生しました ({ctx.command.cog_name if ctx.command else 'UnknownCog'}): {error}",
-                exc_info=error)
-            await ctx.send("コマンドの処理中にCogエラーが発生しました。管理者に報告してください。")
-        else:
-            logging.error(
-                f"コマンド '{ctx.command.qualified_name if ctx.command else ctx.invoked_with}' の実行中に予期しないエラーが発生しました:",
-                exc_info=error)
-            try:
-                await ctx.send("コマンドの実行中に予期しないエラーが発生しました。")
-            except discord.errors.Forbidden:
-                logging.warning(f"エラーメッセージを送信できませんでした ({ctx.channel.id}): 権限不足")
-
+                print(f"ログビューアの終了中にエラーが発生しました: {e}")
+        
+        atexit.register(cleanup)
+        return process
+    except Exception as e:
+        print(f"ログビューアの起動中にエラーが発生しました: {e}")
+        return None
 
 if __name__ == "__main__":
+    # ログビューアを起動
+    log_viewer_process = run_log_viewer()
+    
     momoka_art = r"""
 ███╗   ███╗ ██████╗ ███╗   ███╗ ██████╗ ██╗  ██╗ █████╗ 
 ████╗ ████║██╔═══██╗████╗ ████║██╔═══██╗██║ ██╔╝██╔══██╗

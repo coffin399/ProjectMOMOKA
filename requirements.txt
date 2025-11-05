@@ -39,3 +39,8 @@ omegaconf>=2.2.0
 
 # セルフホストがめんどくさい人向けのリリース用
 nuitka
+
+# GUIログビューア用
+tk
+pillow  # 既に存在しますが、念のため明記
+ttkthemes
