@@ -1,4 +1,6 @@
 # Project MOMOKA requirements (legacy local pipeline)
+--extra-index-url https://download.pytorch.org/whl/cu118
+
 discord.py
 discord.py[voice]
 aiohttp
@@ -17,11 +19,12 @@ cartopy
 langdetect
 pillow
 # Local image generation pipeline
-torch
+torch==2.1.2+cu118
 diffusers
 accelerate
 safetensors
 transformers
+xformers==0.0.22.post7
 
 #セルフホストがめんどくさい人向けのリリース用
 nuitka
