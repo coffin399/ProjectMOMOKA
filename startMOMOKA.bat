@@ -89,10 +89,6 @@ if %errorlevel% neq 0 (
 echo [SUCCESS] すべての依存関係が正常にインストールされました。
 echo.
 
-REM ログビューアの起動
-echo [INFO] ログビューアを起動しています...
-start "MOMOKA Log Viewer" %PYTHON_CMD% "%START_DIR%log_viewer.py"
-
 REM MOMOKAの起動
 echo ================================
 echo Starting MOMOKA...
