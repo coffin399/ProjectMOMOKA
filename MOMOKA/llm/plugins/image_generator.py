@@ -150,54 +150,55 @@ class ImageGenerator:
     def tool_spec(self) -> Dict[str, Any]:
         return {
             "type": "function",
-            "name": self.name,
-            "description": (
-                "Generate an image based on a text prompt using a locally hosted Stable Diffusion pipeline. "
-                "Use this when the user requests an image."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {
-                        "type": "string",
-                        "description": (
-                            "A detailed description of the desired image. Include style, mood, colours, etc."
-                        ),
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Generate an image via local Stable Diffusion pipeline using the provided text prompt."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": (
+                                "A detailed description of the desired image. Include style, mood, colours, etc."
+                            ),
+                        },
+                        "negative_prompt": {
+                            "type": "string",
+                            "description": "Elements to avoid (optional).",
+                        },
+                        "size": {
+                            "type": "string",
+                            "description": (
+                                f"Image size in WIDTHxHEIGHT format. Allowed range: {self.min_width}x{self.min_height} to "
+                                f"{self.max_width}x{self.max_height}. Automatically rounded to multiples of 8."
+                            ),
+                            "pattern": "^[0-9]+x[0-9]+$",
+                        },
+                        "steps": {
+                            "type": "integer",
+                            "description": "Number of sampling steps (optional).",
+                            "minimum": 1,
+                            "maximum": 150,
+                        },
+                        "cfg_scale": {
+                            "type": "number",
+                            "description": "CFG scale / prompt adherence (optional).",
+                            "minimum": 1.0,
+                            "maximum": 30.0,
+                        },
+                        "sampler_name": {
+                            "type": "string",
+                            "description": "Sampler name (optional).",
+                        },
+                        "seed": {
+                            "type": "integer",
+                            "description": "Seed for reproducibility (optional, -1 for random).",
+                        },
                     },
-                    "negative_prompt": {
-                        "type": "string",
-                        "description": "Elements to avoid (optional).",
-                    },
-                    "size": {
-                        "type": "string",
-                        "description": (
-                            f"Image size in WIDTHxHEIGHT format. Allowed range: {self.min_width}x{self.min_height} to "
-                            f"{self.max_width}x{self.max_height}. Automatically rounded to multiples of 8."
-                        ),
-                        "pattern": "^[0-9]+x[0-9]+$",
-                    },
-                    "steps": {
-                        "type": "integer",
-                        "description": "Number of sampling steps (optional).",
-                        "minimum": 1,
-                        "maximum": 150,
-                    },
-                    "cfg_scale": {
-                        "type": "number",
-                        "description": "CFG scale / prompt adherence (optional).",
-                        "minimum": 1.0,
-                        "maximum": 30.0,
-                    },
-                    "sampler_name": {
-                        "type": "string",
-                        "description": "Sampler name (optional).",
-                    },
-                    "seed": {
-                        "type": "integer",
-                        "description": "Seed for reproducibility (optional, -1 for random).",
-                    },
+                    "required": ["prompt"],
                 },
-                "required": ["prompt"],
             },
         }
 
