@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .preprocess import normalize_text
-from .wav import encode_wav_from_floats, generate_placeholder_tone
-from .core.engine import SBVITS2LiteEngine
+from .wav import encode_wav_from_floats
 
 try:
     import torch  # type: ignore
@@ -36,15 +35,14 @@ class SynthesizerConfig:
 
 
 class StyleBertVITS2Synthesizer:
-    """Thin wrapper that discovers Style-Bert-VITS2 model artifacts and performs synthesis.
+    """Wrapper for Style-Bert-VITS2 TTS engine.
 
     Notes:
-        - This implementation provides a minimal interface and a robust fallback tone
-          to keep the bot functional even without GPU / model present in releases.
-        - If `torch` or expected model files are missing, a short tone WAV is returned.
+        - Requires Style-Bert-VITS2 model files to be present.
         - Expected model directory structure:
             models/tts-models/<model_name>/<model_name>.safetensors or G_*.pth
-            and an accompanying JSON config file in the same directory.
+            and an accompanying config.json file in the same directory.
+        - Optional: style_vectors.npy for style-based synthesis.
     """
 
     def __init__(self, config: SynthesizerConfig):
@@ -58,8 +56,7 @@ class StyleBertVITS2Synthesizer:
         self._style_vectors_path: Optional[Path] = None
         self._config_data: Optional[dict] = None
         self._style_vectors: Optional[object] = None
-        self._engine = None  # external engine object if available
-        self._lite = SBVITS2LiteEngine(sample_rate=self._sample_rate)
+        self._engine = None  # Style-Bert-VITS2 TTSModel instance
 
         self._discover_model_paths()
         self._maybe_warmup_model()
@@ -101,11 +98,11 @@ class StyleBertVITS2Synthesizer:
         """Style-Bert-VITS2モデルをロードします。"""
         if torch is None:
             self._model_ready = False
-            logging.getLogger(__name__).warning("PyTorch not available, using fallback engine")
+            logging.getLogger(__name__).error("PyTorch not available. Style-Bert-VITS2 requires PyTorch.")
             return
         if not (self._ckpt_path and self._json_path):
             self._model_ready = False
-            logging.getLogger(__name__).warning("Model files not found, using fallback engine")
+            logging.getLogger(__name__).error("Model files not found. Please place Style-Bert-VITS2 model files in models/tts-models/<model_name>/")
             return
 
         # Load config.json
@@ -206,10 +203,10 @@ class StyleBertVITS2Synthesizer:
                     f"Failed to import SBVITS2 module '{module_path}': {e}"
                 )
 
-        # No model loaded, use fallback
+        # No model loaded
         self._model_ready = False
-        logging.getLogger(__name__).info(
-            "Style-Bert-VITS2 model not available, using fallback DSP engine"
+        logging.getLogger(__name__).error(
+            "Style-Bert-VITS2 model could not be loaded. Please ensure style_bert_vits2 package is installed and model files are present."
         )
 
     def synthesize_to_wav(self, text: str, style: Optional[str] = None,
@@ -217,7 +214,12 @@ class StyleBertVITS2Synthesizer:
                            noise_scale: Optional[float] = None,
                            noise_w: Optional[float] = None,
                            length_scale: Optional[float] = None) -> bytes:
-        """テキストを音声に変換します。Style-Bert-VITS2が利用可能な場合はそれを使用し、そうでない場合はフォールバックエンジンを使用します。"""
+        """テキストを音声に変換します。Style-Bert-VITS2モデルが必要です。"""
+        if not self._model_ready or self._engine is None:
+            error_msg = "Style-Bert-VITS2 model not loaded. Cannot synthesize audio."
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg)
+        
         processed = normalize_text(text, self.config.dictionary_dir)
         if not processed:
             return encode_wav_from_floats([], self._sample_rate)
@@ -227,67 +229,55 @@ class StyleBertVITS2Synthesizer:
         nw = self.config.noise_w if noise_w is None else float(noise_w)
         ls = self.config.length_scale if length_scale is None else float(length_scale)
 
-        # Use Style-Bert-VITS2 if available
-        if self._model_ready and self._engine is not None:
-            try:
-                # Style-Bert-VITS2 TTSModel.infer() signature:
-                # infer(text, language, speaker_id, reference_audio_path, sdp_ratio, noise, noise_w, length, ...)
-                # For our use case, we'll use default speaker_id=0 and language=JP
-                from style_bert_vits2.constants import Languages
-                
-                # Determine style ID
-                style_id = 0
-                if style and hasattr(self._engine, 'style2id'):
-                    style_id = self._engine.style2id.get(style, 0)
-                
-                # Perform inference
-                sr, audio = self._engine.infer(
-                    text=processed,
-                    language=Languages.JP,
-                    speaker_id=0,  # Default speaker
-                    reference_audio_path=None,
-                    sdp_ratio=0.2,  # Default SDP ratio
-                    noise=ns,
-                    noise_w=nw,
-                    length=ls / speed if speed != 1.0 else ls,
-                    line_split=False,
-                    split_interval=0.0,
-                    assist_text=None,
-                    assist_text_weight=0.0,
-                    use_assist_text=False,
-                    style=style or 'Neutral',
-                    style_weight=style_weight,
-                )
-                
-                # Convert numpy array to WAV bytes
-                if np is not None and isinstance(audio, np.ndarray):
-                    # Ensure audio is in the right format
-                    audio = audio.astype(np.float32)
-                    # Normalize to [-1, 1] range
-                    if audio.max() > 1.0 or audio.min() < -1.0:
-                        audio = audio / max(abs(audio.max()), abs(audio.min()))
-                    return encode_wav_from_floats(audio, sample_rate=int(sr))
-                else:
-                    # Fallback: try to encode as-is
-                    return encode_wav_from_floats(audio, sample_rate=int(sr) if hasattr(sr, '__int__') else self._sample_rate)
-            except ImportError:
-                # style_bert_vits2.constants not available, try generic inference
-                pass
-            except Exception as e:
-                logging.getLogger(__name__).error(f"Style-Bert-VITS2 inference failed: {e}")
-                # Fall through to fallback engine
-
-        # Fallback: Use lightweight DSP engine
-        samples = self._lite.synthesize(
-            text=processed,
-            style=style,
-            style_vector=self._style_vectors,
-            style_weight=style_weight,
-            speed=speed,
-            noise_scale=ns,
-            noise_w=nw,
-            length_scale=ls,
-        )
-        return encode_wav_from_floats(samples, sample_rate=self._sample_rate)
+        # Use Style-Bert-VITS2
+        try:
+            # Style-Bert-VITS2 TTSModel.infer() signature:
+            # infer(text, language, speaker_id, reference_audio_path, sdp_ratio, noise, noise_w, length, ...)
+            # For our use case, we'll use default speaker_id=0 and language=JP
+            from style_bert_vits2.constants import Languages
+            
+            # Determine style ID
+            style_id = 0
+            if style and hasattr(self._engine, 'style2id'):
+                style_id = self._engine.style2id.get(style, 0)
+            
+            # Perform inference
+            sr, audio = self._engine.infer(
+                text=processed,
+                language=Languages.JP,
+                speaker_id=0,  # Default speaker
+                reference_audio_path=None,
+                sdp_ratio=0.2,  # Default SDP ratio
+                noise=ns,
+                noise_w=nw,
+                length=ls / speed if speed != 1.0 else ls,
+                line_split=False,
+                split_interval=0.0,
+                assist_text=None,
+                assist_text_weight=0.0,
+                use_assist_text=False,
+                style=style or 'Neutral',
+                style_weight=style_weight,
+            )
+            
+            # Convert numpy array to WAV bytes
+            if np is not None and isinstance(audio, np.ndarray):
+                # Ensure audio is in the right format
+                audio = audio.astype(np.float32)
+                # Normalize to [-1, 1] range
+                if audio.max() > 1.0 or audio.min() < -1.0:
+                    audio = audio / max(abs(audio.max()), abs(audio.min()))
+                return encode_wav_from_floats(audio, sample_rate=int(sr))
+            else:
+                # Fallback: try to encode as-is
+                return encode_wav_from_floats(audio, sample_rate=int(sr) if hasattr(sr, '__int__') else self._sample_rate)
+        except ImportError as e:
+            error_msg = f"Style-Bert-VITS2 package not available: {e}"
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg)
+        except Exception as e:
+            error_msg = f"Style-Bert-VITS2 inference failed: {e}"
+            logging.getLogger(__name__).error(error_msg)
+            raise RuntimeError(error_msg)
 
 

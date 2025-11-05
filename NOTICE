@@ -13,7 +13,7 @@ Style-Bert-VITS2 統合に関する改変内容
      * Style-Bert-VITS2のTTSModelクラスを直接使用するように変更
      * style_bert_vits2.tts_model.TTSModelをインポートしてモデルをロード
      * モデルが利用可能な場合は実際のニューラルネットワークベースの合成を使用
-     * モデルが利用できない場合は、フォールバック用の軽量DSPエンジンを使用
+     * モデルが利用できない場合はエラーを発生させる
 
 2. モデルローディングの改善
    - 変更内容:
@@ -27,21 +27,14 @@ Style-Bert-VITS2 統合に関する改変内容
      * synthesize_to_wav()メソッドを更新
      * Style-Bert-VITS2のinfer()メソッドを直接呼び出すように変更
      * パラメータ（noise_scale, noise_w, length_scale, style, style_weight）を適切にマッピング
-     * フォールバックエンジンとの統一されたインターフェースを維持
+     * モデルが利用できない場合はRuntimeErrorを発生させる
 
-4. フォールバックエンジンの保持
-   - ファイル: MOMOKA/generator/tts/core/engine.py
-   - 変更内容:
-     * SBVITS2LiteEngineをフォールバック用に保持
-     * Style-Bert-VITS2モデルが利用できない場合の代替として機能
-     * 音声品質の改善（ノイズ削減、フォルマント合成の強化など）を実施
-
-5. サンプルレートの最適化
+4. サンプルレートの最適化
    - 変更内容:
      * デフォルトサンプルレートを22.05kHzから48kHz（Discord標準）に変更
      * Discord向けの最適化を実施
 
-6. ライセンスファイルの追加
+5. ライセンスファイルの追加
    - 追加ファイル:
      * MOMOKA/generator/tts/LICENSE_SBVITS2 (説明ファイル)
      * MOMOKA/generator/tts/LICENSE_SBVITS2_AGPL.txt (AGPL-3.0)
@@ -55,9 +48,9 @@ Style-Bert-VITS2 統合に関する改変内容
    - 以前は複数の候補から動的にエンジンを検索していましたが、
      Style-Bert-VITS2のTTSModelを直接使用するように変更
 
-2. プレースホルダー音声の改善
-   - 単純なビープ音から、より自然な音声に近いDSPベースの合成に変更
-   - フォルマント合成、ピッチ変動、エンベロープ処理を実装
+2. フォールバックエンジンの削除
+   - SBVITS2LiteEngine（MOMOKA/generator/tts/core/engine.py）を削除
+   - モデルが利用できない場合はエラーを発生させるように変更
 
 =============================================================================
 Style-Bert-VITS2 のライセンス
