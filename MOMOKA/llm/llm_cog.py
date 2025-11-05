@@ -1010,6 +1010,20 @@ class LLMCog(commands.Cog, name="LLM"):
         max_iterations = self.llm_config.get('max_tool_iterations', 5)
         extra_params = self.llm_config.get('extra_api_parameters', {})
 
+        provider_name = getattr(client, 'provider_name', None)
+        if not provider_name:
+            if model_string and '/' in model_string:
+                provider_name = model_string.split('/', 1)[0]
+                logger.debug(
+                    "Provider name missing on client; inferring from model string as '%s'", provider_name
+                )
+            else:
+                provider_name = "unknown"
+                logger.warning(
+                    "Provider name missing on client and could not be inferred from model string."
+                )
+            client.provider_name = provider_name
+
         for iteration in range(max_iterations):
             logger.debug(f"Starting LLM API call (iteration {iteration + 1}/{max_iterations})")
             tools_def = self.get_tools_definition()
@@ -1044,7 +1058,6 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.warning(f"⚠️ [TOOLS] No tools available to pass to API")
 
             stream = None
-            provider_name = client.provider_name
             api_keys = self.provider_api_keys.get(client.provider_name, [])
             num_keys = len(api_keys)
 
