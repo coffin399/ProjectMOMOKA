@@ -236,27 +236,48 @@ class StyleBertVITS2Synthesizer:
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         # First, try direct import of style_bert_vits2 (integrated package)
+        logger = logging.getLogger(__name__)
         try:
-            from .style_bert_vits2.tts_model import TTSModel
+            logger.debug(f"Attempting to import TTSModel from integrated package")
+            # Add parent directory to sys.path so that style_bert_vits2 can be imported as absolute import
+            # The integrated package uses absolute imports (from style_bert_vits2.xxx)
+            import sys
+            tts_dir = Path(__file__).parent
+            if str(tts_dir) not in sys.path:
+                sys.path.insert(0, str(tts_dir))
+                logger.debug(f"Added {tts_dir} to sys.path for style_bert_vits2 imports")
+            
+            # Now import using absolute import path
+            from style_bert_vits2.tts_model import TTSModel
+            logger.debug(f"TTSModel imported successfully. Initializing with: model_path={self._ckpt_path}, config_path={self._json_path}")
             self._engine = TTSModel(
                 model_path=str(self._ckpt_path),
                 config_path=str(self._json_path),
                 style_vec_path=str(self._style_vectors_path) if self._style_vectors_path else None,
                 device=self._device,
             )
+            logger.debug(f"TTSModel instance created. Loading model...")
             self._engine.load()  # Load the model
             self._model_ready = True
-            logging.getLogger(__name__).info(
+            logger.info(
                 f"Loaded Style-Bert-VITS2 model from {self._ckpt_path} on {self._device}"
             )
             return
-        except ImportError:
+        except ImportError as e:
             # style_bert_vits2 not available, try module path
-            pass
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                f"Failed to load Style-Bert-VITS2 model: {e}"
+            logger.error(
+                f"Failed to import TTSModel from integrated package: {e}. "
+                f"This may indicate missing dependencies or import path issues."
             )
+            import traceback
+            logger.debug(f"ImportError traceback: {traceback.format_exc()}")
+        except Exception as e:
+            logger.error(
+                f"Failed to load Style-Bert-VITS2 model: {e}. "
+                f"Model path: {self._ckpt_path}, Config path: {self._json_path}"
+            )
+            import traceback
+            logger.debug(f"Exception traceback: {traceback.format_exc()}")
 
         # Fallback: try custom module path if provided
         module_path = self.config.sbvits2_module_path
@@ -311,11 +332,15 @@ class StyleBertVITS2Synthesizer:
                     f"Failed to import SBVITS2 module '{module_path}': {e}"
                 )
 
-        # No model loaded
-        self._model_ready = False
-        logging.getLogger(__name__).error(
-            "Style-Bert-VITS2 model could not be loaded. Please ensure style_bert_vits2 package is installed and model files are present."
-        )
+                # No model loaded
+                self._model_ready = False
+                logger = logging.getLogger(__name__)
+                logger.error(
+                    f"Style-Bert-VITS2 model could not be loaded. "
+                    f"Checkpoint: {self._ckpt_path}, Config: {self._json_path}, "
+                    f"Style vectors: {self._style_vectors_path}. "
+                    f"Please ensure all dependencies are installed and model files are valid."
+                )
 
     def synthesize_to_wav(self, text: str, style: Optional[str] = None,
                            style_weight: float = 5.0, speed: float = 1.0,
@@ -342,7 +367,8 @@ class StyleBertVITS2Synthesizer:
             # Style-Bert-VITS2 TTSModel.infer() signature:
             # infer(text, language, speaker_id, reference_audio_path, sdp_ratio, noise, noise_w, length, ...)
             # For our use case, we'll use default speaker_id=0 and language=JP
-            from .style_bert_vits2.constants import Languages
+            # Import using absolute import (package is in sys.path)
+            from style_bert_vits2.constants import Languages
             
             # Determine style ID
             style_id = 0
