@@ -78,30 +78,60 @@ class StyleBertVITS2Synthesizer:
                 f"Model root directory not found: {root}. Expected: {project_root / 'models' / 'tts-models'}"
             )
             return
+        
         target_dir: Optional[Path] = None
+        
         if self.config.model_name:
+            # Specific model name provided
             candidate = root / self.config.model_name
             if candidate.exists() and candidate.is_dir():
                 target_dir = candidate
         else:
-            # pick first model dir that contains a checkpoint
+            # Search all directories directly under models/tts-models/ for model files
+            # Check all subdirectories (foo, bar, hoge, fuga, etc.) in models/tts-models/
             for d in root.iterdir():
-                if d.is_dir():
-                    if any(p.suffix in ('.safetensors', '.pth') for p in d.iterdir()):
-                        target_dir = d
-                        break
+                if not d.is_dir():
+                    continue
+                # Check if this directory contains model files
+                has_checkpoint = False
+                has_config = False
+                for p in d.iterdir():
+                    if p.is_file():
+                        if p.suffix in ('.safetensors', '.pth'):
+                            # Check if it's a valid checkpoint (starts with G_ or matches dir name)
+                            if p.stem.startswith('G_') or p.stem == d.name:
+                                has_checkpoint = True
+                        elif p.name == 'config.json':
+                            has_config = True
+                
+                # If both checkpoint and config found, this is a valid model directory
+                if has_checkpoint and has_config:
+                    target_dir = d
+                    logging.getLogger(__name__).info(
+                        f"Found Style-Bert-VITS2 model at: {target_dir}"
+                    )
+                    break
+        
         if not target_dir:
+            logging.getLogger(__name__).warning(
+                f"No valid model found in {root}. Searched all directories directly under models/tts-models/ for .safetensors/.pth and config.json"
+            )
             return
+        
+        # Extract model files from the target directory
         ckpt = None
         jsonf = None
         stylef = None
         for p in sorted(target_dir.iterdir()):
+            if not p.is_file():
+                continue
             if p.suffix in ('.safetensors', '.pth') and (p.stem.startswith('G_') or p.stem == target_dir.name):
                 ckpt = p
             if p.name == 'config.json':
                 jsonf = p
             if p.name == 'style_vectors.npy':
                 stylef = p
+        
         self._model_dir = target_dir
         self._ckpt_path = ckpt
         self._json_path = jsonf
