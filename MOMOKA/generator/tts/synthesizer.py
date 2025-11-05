@@ -158,31 +158,38 @@ class StyleBertVITS2Synthesizer:
             return
         
         # Extract model files from the target directory
+        # Expected structure:
+        #   tts-models/モデル名/モデル名.safetensors (or .pth)
+        #   tts-models/モデル名/config.json
+        #   tts-models/モデル名/style_vectors.npy (optional)
         ckpt = None
         jsonf = None
         stylef = None
-        # Prefer .safetensors over .pth, and prefer G_*.pth or <model_name>.* over others
         checkpoint_candidates = []
         for p in sorted(target_dir.iterdir()):
             if not p.is_file():
                 continue
             if p.suffix in ('.safetensors', '.pth'):
-                # Accept any checkpoint file - Style-Bert-VITS2 supports various naming conventions
+                # Accept any checkpoint file - typically named as <model_name>.safetensors or G_*.pth
                 checkpoint_candidates.append(p)
             if p.name == 'config.json':
                 jsonf = p
             if p.name == 'style_vectors.npy':
                 stylef = p
         
-        # Select best checkpoint: prefer safetensors, then prefer G_*.pth or <model_name>.*
+        # Select best checkpoint: prefer safetensors, then prefer <model_name>.* or G_*.pth
         if checkpoint_candidates:
-            # Sort: safetensors first, then by name (G_*.pth or <model_name>.* preferred)
+            # Sort: safetensors first, then prefer files matching model name, then G_*.pth
             checkpoint_candidates.sort(key=lambda x: (
-                x.suffix != '.safetensors',  # safetensors first
-                not (x.stem.startswith('G_') or x.stem == target_dir.name),  # G_* or <model_name>.* preferred
+                x.suffix != '.safetensors',  # .safetensors first
+                x.stem != target_dir.name,  # <model_name>.* preferred (e.g., Custom_EN_V1.safetensors)
+                not x.stem.startswith('G_'),  # G_*.pth as fallback
                 x.name
             ))
             ckpt = checkpoint_candidates[0]
+            logging.getLogger(__name__).debug(
+                f"Selected checkpoint: {ckpt.name} from candidates: {[f.name for f in checkpoint_candidates]}"
+            )
         
         self._model_dir = target_dir
         self._ckpt_path = ckpt
