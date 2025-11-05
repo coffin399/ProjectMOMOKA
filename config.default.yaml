@@ -342,7 +342,8 @@ tts:
   pyopenjtalk_dict_dir: null
 
   # サンプリング周波数とノイズ制御パラメータ
-  sample_rate: 22050
+  # Discord標準: 48kHz (Discordが自動的にOpusで約64kbpsにエンコード)
+  sample_rate: 48000
   noise_scale: 0.667
   noise_w: 0.8
   length_scale: 1.0

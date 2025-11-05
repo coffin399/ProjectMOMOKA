@@ -21,7 +21,8 @@ class SBVITS2LiteEngine:
     excitation with basic envelopes so users have audible feedback without external deps.
     """
 
-    def __init__(self, sample_rate: int = 22050, prefer_gpu: bool = True) -> None:
+    def __init__(self, sample_rate: int = 48000, prefer_gpu: bool = True) -> None:
+        # Discord standard: 48kHz, but we'll accept any rate
         self.sample_rate = int(sample_rate)
         self.logger = logging.getLogger(__name__)
         self._device = 'cpu'
@@ -72,20 +73,23 @@ class SBVITS2LiteEngine:
             duration_sec = max(0.4, min(6.0, (len(text) / 14.0) * float(length_scale) / max(1e-3, float(speed))))
             total = int(self.sample_rate * duration_sec)
             base_freq = 180.0
-            freq_jitter = 40.0 * float(noise_w)
+            freq_jitter = 20.0 * float(noise_w)  # Reduced jitter
             amp_env = self._build_envelope(total, style_vector, style_weight)
-            noise_amount = max(0.0, min(1.0, float(noise_scale)))
+            # noise_scale is now used as a subtle variation parameter, not direct mix ratio
+            noise_amount = max(0.0, min(0.15, float(noise_scale) * 0.15))  # Max 15% noise
             phase = 0.0
             out = []
             for i in range(total):
                 t = i / self.sample_rate
-                freq = base_freq + freq_jitter * math.sin(2 * math.pi * 1.3 * t) + 10.0 * math.sin(2 * math.pi * 7.0 * t)
+                freq = base_freq + freq_jitter * math.sin(2 * math.pi * 1.3 * t) + 5.0 * math.sin(2 * math.pi * 7.0 * t)
                 phase += (2 * math.pi * freq) / self.sample_rate
-                voiced = math.sin(phase) + 0.5 * math.sin(2 * phase)
-                noise = (2.0 * self._rand(i) - 1.0) * 0.7
+                # Stronger voiced component with harmonics
+                voiced = math.sin(phase) + 0.6 * math.sin(2 * phase) + 0.3 * math.sin(3 * phase)
+                # Subtle noise for breathiness, not dominant
+                noise = (2.0 * self._rand(i) - 1.0) * 0.3
                 sample = (1.0 - noise_amount) * voiced + noise_amount * noise
                 a = amp_env[i] if 0 <= i < len(amp_env) else 1.0
-                out.append(0.25 * a * sample)
+                out.append(0.35 * a * sample)  # Increased amplitude
             return out
 
     # ------------------------- phoneme-based core -------------------------
@@ -139,8 +143,9 @@ class SBVITS2LiteEngine:
             phone_specs.append((is_vowel, v, nsamp))
 
         amp_env = self._build_phrase_envelope(total_samples, style_vector, style_weight, phonemes)
-        noise_amount = max(0.0, min(1.0, float(noise_scale)))
-        jitter = float(noise_w)
+        # noise_scale is now a subtle variation parameter (0.0-0.15 max mix)
+        noise_amount = max(0.0, min(0.15, float(noise_scale) * 0.15))
+        jitter = float(noise_w) * 0.5  # Reduced jitter for smoother pitch
 
         # Base F0 contour with accent phrases from full-context if available
         accent_curve = self._build_accent_curve(labels, total_samples)
@@ -148,7 +153,8 @@ class SBVITS2LiteEngine:
             if 0 <= n < len(accent_curve):
                 return accent_curve[n]
             t = n / max(1, total_samples)
-            base = 170.0 + 45.0 * (4.0 * t * (1.0 - t))
+            # More natural pitch contour
+            base = 180.0 + 30.0 * (4.0 * t * (1.0 - t))
             return base
 
         # Oversampling (x2) for crude anti-aliasing
@@ -170,23 +176,33 @@ class SBVITS2LiteEngine:
                 base_idx = n_global + (i // os)
                 t = base_idx / self.sample_rate
                 f0 = f0_at(base_idx)
-                f0 += 20.0 * jitter * math.sin(2 * math.pi * 2.2 * t)
+                # Reduced jitter for smoother pitch
+                f0 += 10.0 * jitter * math.sin(2 * math.pi * 2.2 * t)
                 if is_vowel:
                     phase += (2 * math.pi * f0) / sr_os
-                    exc = math.sin(phase)
+                    # Richer excitation with harmonics for vowels
+                    exc = math.sin(phase) + 0.3 * math.sin(2 * phase)
                 else:
-                    exc = (2.0 * self._rand(base_idx * 7 + 11) - 1.0)
+                    # Consonants: less random noise, more structured
+                    exc = (2.0 * self._rand(base_idx * 7 + 11) - 1.0) * 0.7
 
                 # Bandpass chain for vowels, light filtering for consonants
                 if is_vowel:
-                    s = 0.9 * bp1.process(exc) + 0.6 * bp2.process(exc) + 0.5 * bp3.process(exc)
+                    # Stronger formant synthesis for vowels
+                    s = 1.0 * bp1.process(exc) + 0.7 * bp2.process(exc) + 0.5 * bp3.process(exc)
+                    # Add subtle harmonics for richer sound
+                    s += 0.2 * math.sin(phase * 2) * bp2.process(exc)
                 else:
-                    s = 0.5 * bp1.process(exc)
+                    # Consonants: less noise, more filtered excitation
+                    s = 0.6 * bp1.process(exc)
+                    # Add subtle high-frequency component for clarity
+                    s += 0.3 * (exc - bp1.process(exc))
 
-                noise = (2.0 * self._rand(base_idx * 13 + 3) - 1.0) * 0.6
+                # Subtle noise for breathiness (much reduced)
+                noise = (2.0 * self._rand(base_idx * 13 + 3) - 1.0) * 0.25
                 mix = (1.0 - noise_amount) * s + noise_amount * noise
                 a = amp_env[base_idx] if 0 <= base_idx < len(amp_env) else 1.0
-                out_os.append(0.22 * a * mix)
+                out_os.append(0.3 * a * mix)  # Increased amplitude for better audibility
             n_global += nsamp
 
         # Downsample by 2 with simple lowpass
@@ -257,8 +273,8 @@ class SBVITS2LiteEngine:
         # Parse A (accent type) and F (position in accent phrase) if available.
         import re
         if not labels or total_samples <= 0:
-            # fallback base
-            return [170.0] * total_samples
+            # fallback base - more natural pitch
+            return [180.0] * total_samples
         accent_marks: List[Tuple[int, int]] = []  # (start_idx, end_idx)
         phrase_len = max(1, total_samples // max(1, len(labels)))
         for i, lab in enumerate(labels):
@@ -275,13 +291,14 @@ class SBVITS2LiteEngine:
                         accent_marks.append((start, end))
             except Exception:
                 continue
-        curve = [170.0] * total_samples
+        curve = [180.0] * total_samples  # Higher base pitch
         for start, end in accent_marks:
             for n in range(start, min(end, total_samples)):
                 t = (n - start) / max(1, end - start)
-                base = 185.0 - 35.0 * t  # falling within the accent phrase
+                # More natural pitch fall
+                base = 195.0 - 25.0 * t  # gentler fall
                 curve[n] = base
-        # Smooth with simple 5-tap
+        # Smooth with simple 5-tap for natural transitions
         smoothed: List[float] = []
         z = [curve[0]] * 4
         for v in curve:

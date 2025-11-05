@@ -28,7 +28,7 @@ class SynthesizerConfig:
     model_root: str = "models/tts-models"
     model_name: Optional[str] = None  # e.g. "my-voice"
     dictionary_dir: Optional[str] = None  # path to pyopenjtalk-dict
-    sample_rate: int = 22050
+    sample_rate: int = 48000  # Discord standard: 48kHz
     noise_scale: float = 0.667
     noise_w: float = 0.8
     length_scale: float = 1.0

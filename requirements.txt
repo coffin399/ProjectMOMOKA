@@ -23,6 +23,7 @@ pillow
 # Pin NumPy to 1.x for compatibility with torch 2.1.0
 numpy<2.0.0
 pyopenjtalk-plus==0.4.1.post4
+pyopenjtalk-plus[onnxruntime]
 
 # PyTorch related (CUDA 11.8)
 torch==2.1.0+cu118
