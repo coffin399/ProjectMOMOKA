@@ -14,6 +14,7 @@ import subprocess
 import atexit
 from pathlib import Path
 import ctypes
+from logging.handlers import SocketHandler
 
 # --- グローバル変数 ---
 log_viewer_process = None
@@ -133,6 +134,16 @@ class QueueHandler(logging.Handler):
 # キューにログを送信するハンドラを追加
 queue_handler = QueueHandler(log_queue)
 root_logger.addHandler(queue_handler)
+
+# GUIログビューア（別プロセス）へのソケット送信ハンドラを追加
+try:
+    socket_handler = SocketHandler('127.0.0.1', 9020)
+    socket_handler.setLevel(logging.DEBUG)
+    # SocketHandler はレコードをピックル化して送るため、フォーマッタは受信側で適用
+    root_logger.addHandler(socket_handler)
+except Exception as e:
+    # 起動順により接続できない場合があるが、その場合もアプリ自体は継続
+    root_logger.warning(f"SocketHandler の初期化に失敗しました: {e}")
 
 from MOMOKA.services.discord_handler import DiscordLogHandler, DiscordLogFormatter
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError

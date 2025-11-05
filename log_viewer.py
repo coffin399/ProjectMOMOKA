@@ -8,6 +8,11 @@ import os
 import json
 import ctypes
 import platform
+import socket
+import socketserver
+import struct
+import pickle
+from logging import handlers as logging_handlers
 
 def is_dark_mode():
     """OSのダークモード設定を検出"""
@@ -133,6 +138,11 @@ class LogViewerApp:
         
         # ログキュー
         self.log_queue = queue.Queue()
+
+        # ソケットレシーバ（別プロセスからのログ取り込み）
+        self.socket_server = None
+        self.socket_thread = None
+        self.start_socket_receiver()
         
         # メニューバーの作成
         self.create_menu()
@@ -150,6 +160,45 @@ class LogViewerApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         self.root.deiconify() # ウィンドウを再表示
+
+    def start_socket_receiver(self, host='127.0.0.1', port=9020):
+        """SocketHandler からのログレコードを受け取るサーバーを起動"""
+        class LogRecordStreamHandler(socketserver.StreamRequestHandler):
+            def handle(self_inner):
+                while True:
+                    chunk = self_inner.connection.recv(4)
+                    if len(chunk) < 4:
+                        break
+                    slen = struct.unpack('>L', chunk)[0]
+                    data = b''
+                    while len(data) < slen:
+                        received = self_inner.connection.recv(slen - len(data))
+                        if not received:
+                            break
+                        data += received
+                    if not data:
+                        break
+                    try:
+                        obj = pickle.loads(data)
+                        record = logging.makeLogRecord(obj)
+                        # 受信したレコードをGUI用キューに流す（整形はGUI側で実施）
+                        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                        formatted = formatter.format(record)
+                        self.log_queue.put((record.name, record.levelname, formatted))
+                    except Exception as e:
+                        # 受信エラーはGUIのエラーログに流す
+                        self.log_queue.put((__name__, 'ERROR', f'SocketReceiver error: {e}'))
+
+        class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+
+        try:
+            self.socket_server = LogRecordSocketReceiver((host, port), LogRecordStreamHandler)
+            self.socket_thread = threading.Thread(target=self.socket_server.serve_forever, daemon=True)
+            self.socket_thread.start()
+        except Exception as e:
+            # サーバー起動に失敗した場合もGUIは継続
+            self.log_queue.put((__name__, 'ERROR', f'ログソケット受信サーバー起動失敗: {e}'))
     
     def apply_windows_dark_mode(self):
         """Windowsのダークモード設定を適用"""
@@ -782,6 +831,13 @@ class LogViewerApp:
         """ウィンドウを閉じる時の処理"""
         # 設定を保存
         self.save_config()
+        # ソケットサーバーを停止
+        try:
+            if self.socket_server:
+                self.socket_server.shutdown()
+                self.socket_server.server_close()
+        except Exception:
+            pass
         self.root.destroy()
 
 def main():
