@@ -515,7 +515,7 @@ class ImageGenerator:
 
         try:
             if not interaction.response.is_done():
-                await interaction.response.defer(ephemeral=True, thinking=True)
+                await interaction.response.defer(ephemeral=False, thinking=True)
         except discord.HTTPException as exc:  # noqa: BLE001
             logger.warning("Failed to defer modal interaction: %s", exc)
 
@@ -527,7 +527,7 @@ class ImageGenerator:
         )
 
         try:
-            await interaction.followup.send(result, ephemeral=True)
+            await interaction.followup.send(result, ephemeral=False)
         except discord.HTTPException as exc:  # noqa: BLE001
             logger.error("Failed to send modal follow-up message: %s", exc)
 
@@ -675,7 +675,7 @@ class ImageModelSelect(discord.ui.Select):
         if not self.parent_view._is_authorized(interaction):
             await interaction.response.send_message(
                 "❌ Only the original requester can change the model selection. / 元のリクエストしたユーザーのみ変更できます。",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         self.parent_view.selected_model = self.values[0]
@@ -740,7 +740,7 @@ class ImageGenerationModal(discord.ui.Modal, title="Configure Image Generation /
         if not self.parent_view._is_authorized(interaction):
             await interaction.response.send_message(
                 "❌ Only the original requester can configure image generation. / 元のリクエストしたユーザーのみ設定できます。",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
 
@@ -781,7 +781,7 @@ class ImageGenerationModal(discord.ui.Modal, title="Configure Image Generation /
         if errors:
             await interaction.response.send_message(
                 "❌ Invalid input:\n" + "\n".join(errors),
-                ephemeral=True,
+                ephemeral=False,
             )
             return
 
@@ -862,7 +862,7 @@ class ImageGenerationSetupView(discord.ui.View):
         if not self._is_authorized(interaction):
             await interaction.response.send_message(
                 "❌ Only the original requester can configure image generation. / 元のリクエストしたユーザーのみ設定できます。",
-                ephemeral=True,
+                ephemeral=False,
             )
             return
         await interaction.response.send_modal(ImageGenerationModal(self))
