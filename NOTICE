@@ -5,4 +5,5 @@ Project MOMOKA - NOTICE
 - Pruned diffusers-only dependencies (`torch`, `accelerate`, `safetensors`, `diffusers`) from `requirements.txt` to eliminate unused installs.
 - Deleted Stable Diffusion Forge UI assets under `lib/stable-diffusion-webui-forge/javascript/` which were only required for the Gradio WebUI and not for API operation.
 - Consolidated `requirements.txt` for Python 3.10, pinning core bot, Forge API, and Style-Bert-VITS2 dependencies (including submodule needs) for reproducible installs.
+- Updated Pillow to 10.4.0 in both project and Forge requirements to avoid source builds failing under Python 3.10 on Windows.
 
