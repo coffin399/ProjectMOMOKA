@@ -883,9 +883,21 @@ class LogViewerApp:
         self.root.destroy()
 
 def main():
-    root = tk.Tk()
-    app = LogViewerApp(root)
-    root.mainloop()
+    try:
+        print("ログビューアを起動しています...")
+        root = tk.Tk()
+        print("Tkインスタンスを作成しました")
+        app = LogViewerApp(root)
+        print("LogViewerAppの初期化が完了しました")
+        print("メインループを開始します...")
+        root.mainloop()
+        print("メインループが終了しました")
+    except Exception as e:
+        print(f"ログビューアでエラーが発生しました: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # エラーが発生した場合、ユーザーがエラーメッセージを確認できるように一時停止
+        input("エラーが発生しました。エラーメッセージを確認するにはEnterキーを押してください...")
 
 if __name__ == "__main__":
     main()

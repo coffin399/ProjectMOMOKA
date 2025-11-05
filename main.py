@@ -292,16 +292,27 @@ def run_log_viewer():
             print("ログビューアが見つかりません。")
             return None
         
-        # 別プロセスでログビューアを起動
+        # 別プロセスでログビューアを起動（新しいウィンドウで）
         process = subprocess.Popen(
             [sys.executable, str(log_viewer_path)],
-            creationflags=subprocess.CREATE_NEW_CONSOLE
+            creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
         )
+        
+        # 少し待機してプロセスが起動するのを待つ
+        import time
+        time.sleep(2)
+        
+        # プロセスがまだ実行中か確認
+        if process.poll() is not None:
+            print("ログビューアの起動に失敗しました。")
+            return None
+            
+        print("ログビューアを起動しました。")
         
         # 終了時にプロセスを確実に終了させる
         def cleanup():
             try:
-                if process.poll() is None:  # プロセスがまだ実行中の場合
+                if process and process.poll() is None:  # プロセスがまだ実行中の場合
                     process.terminate()
                     process.wait(timeout=3)
             except Exception as e:
@@ -311,6 +322,8 @@ def run_log_viewer():
         return process
     except Exception as e:
         print(f"ログビューアの起動中にエラーが発生しました: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 if __name__ == "__main__":
