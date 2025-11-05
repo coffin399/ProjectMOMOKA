@@ -15,6 +15,9 @@ import atexit
 from pathlib import Path
 import ctypes
 
+# --- グローバル変数 ---
+log_viewer_process = None
+
 # モバイルアプリとして識別するための関数
 async def mobile_identify(self):
     """Discordのモバイルアプリとして識別するための関数"""
@@ -135,6 +138,7 @@ class Momoka(commands.Bot):
         self.config = None
         self.status_templates = []
         self.status_index = 0
+        self.log_viewer_started = False
         # ロードするCogのリスト
         self.cogs_to_load = [
             'MOMOKA.images.image_commands_cog',
@@ -157,6 +161,11 @@ class Momoka(commands.Bot):
     
     async def setup_hook(self):
         """Botの初期セットアップ（ログイン後、接続準備完了前）"""
+        global log_viewer_process
+        if not self.log_viewer_started:
+            log_viewer_process = run_log_viewer()
+            self.log_viewer_started = True
+
         # 設定ファイルの読み込み
         if not os.path.exists(CONFIG_FILE):
             if os.path.exists(DEFAULT_CONFIG_FILE):
@@ -327,9 +336,6 @@ def run_log_viewer():
         return None
 
 if __name__ == "__main__":
-    # ログビューアを起動
-    log_viewer_process = run_log_viewer()
-    
     momoka_art = r"""
 ███╗   ███╗ ██████╗ ███╗   ███╗ ██████╗ ██╗  ██╗ █████╗ 
 ████╗ ████║██╔═══██╗████╗ ████║██╔═══██╗██║ ██╔╝██╔══██╗

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import json
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
@@ -891,7 +892,3 @@ class ImageGenerationSetupView(discord.ui.View):
             )
             return
         await interaction.response.send_modal(ImageGenerationModal(self))
-
-
-# Local imports that require json
-import json  # noqa: E402

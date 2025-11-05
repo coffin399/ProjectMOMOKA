@@ -7,20 +7,16 @@ classes.
 
 Attributes:
     __all__: A list of discovered plugin class names for 'from . import *'.
-    ImageGenerator
 """
 
 import importlib
 import os
-from typing import List, Type, Any, Optional
+from typing import List, Type, Any
 
 # --- Globals ---
 # A list to hold the discovered plugin classes.
 _plugin_classes: List[Type[Any]] = []
 __all__: List[str] = []
-
-# Explicitly import ImageGenerator to make it available for direct import
-ImageGenerator: Optional[Type[Any]] = None
 
 
 def _discover_plugins():
@@ -41,16 +37,14 @@ def _discover_plugins():
                 module = importlib.import_module(f'.{module_name}', package=__name__)
 
                 # Find classes within the module that are likely plugins.
+                # This example assumes plugin classes are named like 'MyPlugin'
+                # and are not imported from other modules.
                 for attr_name in dir(module):
                     attr = getattr(module, attr_name)
                     if isinstance(attr, type) and attr.__module__ == module.__name__:
                         _plugin_classes.append(attr)
                         __all__.append(attr_name)
                         globals()[attr_name] = attr
-                        
-                        # Special handling for ImageGenerator
-                        if attr_name == 'ImageGenerator':
-                            globals()['ImageGenerator'] = attr
 
                         # print(f"Discovered plugin: {attr_name}") # for debugging
 
