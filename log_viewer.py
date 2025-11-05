@@ -579,6 +579,8 @@ class LogViewerApp:
         self.root.option_add('*Menu*activeBackground', self.theme['select_bg'])
         self.root.option_add('*Menu*activeForeground', self.theme['select_fg'])
         
+        # メニューの境界線設定
+        self.style.configure('TMenubutton',
                            borderwidth=2)
         
         self.style.configure('TLabelframe.Label',
