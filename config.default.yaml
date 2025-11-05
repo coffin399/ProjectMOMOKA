@@ -5,8 +5,8 @@ bot_token: YOUR_BOT_TOKEN_HERE
 client_id: YOUR_CLIENT_ID_HERE
 allowed_channel_ids: []
 bot_invite_url: https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot
-music_cog_prefix:
-llm_cog_prefix: PLANA!
+music_cog_prefix: ""
+llm_cog_prefix: ""
 
 # 管理者ユーザーID
 admin_user_ids:
