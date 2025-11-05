@@ -9,7 +9,7 @@ from google import genai
 from google.genai import errors, types
 
 # カスタム例外をインポート
-from PLANA.llm.error.errors import (
+from MOMOKA.llm.error.errors import (
     SearchAPIRateLimitError,
     SearchAPIServerError,
     SearchAPIError,
