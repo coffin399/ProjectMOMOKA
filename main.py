@@ -24,9 +24,9 @@ async def mobile_identify(self):
         'd': {
             'token': self.token,
             'properties': {
-                '$os': sys.platform,
-                '$browser': 'Discord iOS',  # モバイルアプリとして識別
-                '$device': 'discord.py',
+                '$os': 'iOS',  # モバイルアプリとして識別
+                '$browser': 'Discord iOS',
+                '$device': 'iPhone',
                 '$referrer': '',
                 '$referring_domain': ''
             },
@@ -37,31 +37,27 @@ async def mobile_identify(self):
     }
     
     # 必要に応じてintentsを追加
-    if self._connection.intents is not None:
+    if hasattr(self._connection, 'intents') and self._connection.intents is not None:
         payload['d']['intents'] = self._connection.intents.value
     
-    # セッションIDを追加（存在する場合）
-    if self._connection.session_id is not None:
-        payload['d']['session_id'] = self._connection.session_id
-    
-    # セッションIDを追加（存在する場合）
-    if self._connection._activity is not None or self._connection._status is not None:
-        payload['d']['presence'] = {
-            'status': self._connection._status or 'online',
-            'game': self._connection._activity,
-            'since': 0,
-            'afk': False
-        }
-    
-    # プロパティを上書きしてモバイルアプリとして識別
-    payload['d']['properties']['$os'] = 'iOS'
-    payload['d']['properties']['$browser'] = 'Discord iOS'
-    payload['d']['properties']['$device'] = 'iPhone'
-    payload['d']['properties']['$referrer'] = ''
-    payload['d']['properties']['$referring_domain'] = ''
+    # プレゼンス情報を追加（存在する場合）
+    if hasattr(self._connection, '_activity') or hasattr(self._connection, '_status'):
+        presence = {}
+        if hasattr(self._connection, '_status'):
+            presence['status'] = self._connection._status or 'online'
+        if hasattr(self._connection, '_activity'):
+            presence['game'] = self._connection._activity
+        
+        if presence:
+            presence.update({
+                'since': 0,
+                'afk': False
+            })
+            payload['d']['presence'] = presence
     
     # 識別情報を送信
-    await self.call_hooks('before_identify', self.shard_id, initial=self._initial_identify)
+    if hasattr(self, 'call_hooks'):
+        await self.call_hooks('before_identify', self.shard_id, initial=getattr(self, '_initial_identify', False))
     await self.send_as_json(payload)
 
 def set_dark_mode():
