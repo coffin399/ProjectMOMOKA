@@ -18,13 +18,17 @@ japanize-matplotlib
 cartopy
 langdetect
 pillow
+
 # Local image generation pipeline
-torch==2.1.2+cu118
+# xformersと互換性のあるバージョンに統一
+torch==2.1.0+cu118
+torchvision==0.16.0+cu118
+torchaudio==2.1.0+cu118
+xformers==0.0.22.post7
 diffusers
 accelerate
 safetensors
 transformers
-xformers==0.0.22.post7
 
-#セルフホストがめんどくさい人向けのリリース用
+# セルフホストがめんどくさい人向けのリリース用
 nuitka
