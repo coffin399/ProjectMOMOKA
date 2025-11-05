@@ -52,11 +52,8 @@ echo [SUCCESS] Virtual environment activated.
 echo.
 
 REM Verify active Python version is 3.10.x
-for /f "skip=1 tokens=*" %%A in ('python - <<^"PYENV^"
-import sys
-print(sys.version.split()[0])
-PYENV
-^" 2^>nul') do set "ACTIVE_PY_VERSION=%%A"
+set "ACTIVE_PY_VERSION="
+for /f "tokens=2 delims= " %%A in ('python --version 2^>nul') do set "ACTIVE_PY_VERSION=%%A"
 if not defined ACTIVE_PY_VERSION (
     echo [ERROR] Unable to determine Python version inside virtual environment.
     pause
