@@ -1,0 +1,13 @@
+                   GNU LESSER GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+[This is the LGPL-3.0 license text. The full text is available at:
+https://www.gnu.org/licenses/lgpl-3.0.html]
+
+The text/user_dict module from Style-Bert-VITS2 is licensed under LGPL-3.0.
+Original repository: https://github.com/litagin02/Style-Bert-VITS2
+

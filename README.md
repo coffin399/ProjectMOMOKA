@@ -36,14 +36,14 @@
 
 > **Built-ins:**
 > - Local image generation via diffusers (see `MOMOKA/generator/image`)
-> - Internal wrapper for Style-Bert-VITS2 TTS (see `MOMOKA/generator/tts`)
+> - **Style-Bert-VITS2 TTS engine integrated** - The source code from [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is integrated into this project. See `MOMOKA/generator/tts` and `NOTICE` for details.
 
 ### 🚀 Key Features
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
 - 🎨 **Image Generation (Local)** - Generate images via the built-in diffusers pipeline. Drop models under `models/image-models/<model_name>/` (single-file weights like `.safetensors`/`.ckpt` supported; optional VAE/LoRA and `model.json`).
-- 🗣️ **Text-to-Speech (Local)** - Internal Style-Bert-VITS2 wrapper. Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `.json`. Optional `pyopenjtalk` dictionary is supported.
+- 🗣️ **Text-to-Speech (Local)** - **Style-Bert-VITS2 engine integrated** - The [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`. Optional `pyopenjtalk` dictionary and `style_vectors.npy` are supported. See `NOTICE` for integration details.
 - 📊 **Game Tracking** - Track stats for Rainbow Six Siege and VALORANT
 - 🔔 **Notifications** - Get notified about earthquakes and Twitch streams
 - 🎲 **Utilities** - Dice rolls, timers, media downloads, and more!
@@ -92,6 +92,12 @@ For detailed documentation, please check the language-specific README files:
 Key guides inside the docs include:
 - Configuring **WebUI Forge** and model management
 - Tips for Stable Diffusion prompt crafting
+
+### 🔧 Third-Party Integrations
+
+This project integrates source code from the following open-source projects:
+
+- **[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)** - Text-to-speech engine integrated into `MOMOKA/generator/tts`. The Style-Bert-VITS2 source code is built into this project under AGPL-3.0 and LGPL-3.0 licenses. See `NOTICE` and `MOMOKA/generator/tts/LICENSE_SBVITS2*` for details.
 
 ---
 

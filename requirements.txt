@@ -25,6 +25,13 @@ numpy<2.0.0
 pyopenjtalk-plus==0.4.1.post4
 pyopenjtalk-plus[onnxruntime]
 
+# Style-Bert-VITS2 TTS engine dependencies
+# Note: The Style-Bert-VITS2 source code is integrated into this project.
+# See NOTICE file and MOMOKA/generator/tts/LICENSE_SBVITS2 for details.
+pyannote.audio>=3.0.0  # For style vector generation (wespeaker-voxceleb-resnet34-LM)
+sentencepiece>=0.1.99  # For BERT tokenization
+onnxruntime>=1.15.0  # Optional: for ONNX inference acceleration
+
 # PyTorch related (CUDA 11.8)
 torch==2.1.0+cu118
 torchvision==0.16.0+cu118
