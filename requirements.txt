@@ -21,6 +21,7 @@ torch
 diffusers
 accelerate
 safetensors
+transformers
 
 #セルフホストがめんどくさい人向けのリリース用
 nuitka
