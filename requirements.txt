@@ -30,11 +30,11 @@ torchaudio==2.1.0+cu118
 xformers==0.0.22.post7
 
 # 画像生成パイプライン（torch 2.1.0 と互換性のあるバージョン）
-diffusers==0.24.0
-transformers==4.36.2
+diffusers==0.23.0
+transformers==4.35.2
 accelerate==0.25.0
 safetensors==0.4.1
-huggingface-hub==0.16.4
+huggingface-hub==0.19.4
 
 # セルフホストがめんどくさい人向けのリリース用
 nuitka
