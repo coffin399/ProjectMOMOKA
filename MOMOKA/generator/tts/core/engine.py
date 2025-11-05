@@ -11,18 +11,16 @@ except Exception:  # pragma: no cover
 
 
 class SBVITS2LiteEngine:
-    """A lightweight, SBVITS2-like placeholder engine.
-
-    Goals:
-      - Provide deterministic, speech-like audio (not a single beep)
-      - Honor noise parameters (noise_scale, noise_w) and length_scale
-      - Accept optional style vector to shape envelope
-    This is NOT a neural TTS; it's a DSP stub that generates a voiced/unvoiced
-    excitation with basic envelopes so users have audible feedback without external deps.
+    """改善版: より人間らしい音声合成エンジン
+    
+    主な改善点:
+    - フォルマント合成の強化
+    - ピッチ変動の自然化
+    - 子音の改善
+    - より滑らかな音素遷移
     """
 
     def __init__(self, sample_rate: int = 48000, prefer_gpu: bool = True) -> None:
-        # Discord standard: 48kHz, but we'll accept any rate
         self.sample_rate = int(sample_rate)
         self.logger = logging.getLogger(__name__)
         self._device = 'cpu'
@@ -45,7 +43,6 @@ class SBVITS2LiteEngine:
         noise_w: float = 0.8,
         length_scale: float = 1.0,
     ) -> Iterable[float]:
-        # If pyopenjtalk is available, use phoneme-based source-filter synthesis
         try:
             import pyopenjtalk  # type: ignore
             phonemes = pyopenjtalk.g2p(text, kana=False).split()
@@ -69,30 +66,38 @@ class SBVITS2LiteEngine:
                 labels=labels,
             )
         else:
-            # Fallback to character-based contour if g2p unavailable
+            # Fallback
             duration_sec = max(0.4, min(6.0, (len(text) / 14.0) * float(length_scale) / max(1e-3, float(speed))))
             total = int(self.sample_rate * duration_sec)
-            base_freq = 180.0
-            freq_jitter = 20.0 * float(noise_w)  # Reduced jitter
-            amp_env = self._build_envelope(total, style_vector, style_weight)
-            # noise_scale is now used as a subtle variation parameter, not direct mix ratio
-            noise_amount = max(0.0, min(0.15, float(noise_scale) * 0.15))  # Max 15% noise
-            phase = 0.0
-            out = []
-            for i in range(total):
-                t = i / self.sample_rate
-                freq = base_freq + freq_jitter * math.sin(2 * math.pi * 1.3 * t) + 5.0 * math.sin(2 * math.pi * 7.0 * t)
-                phase += (2 * math.pi * freq) / self.sample_rate
-                # Stronger voiced component with harmonics
-                voiced = math.sin(phase) + 0.6 * math.sin(2 * phase) + 0.3 * math.sin(3 * phase)
-                # Subtle noise for breathiness, not dominant
-                noise = (2.0 * self._rand(i) - 1.0) * 0.3
-                sample = (1.0 - noise_amount) * voiced + noise_amount * noise
-                a = amp_env[i] if 0 <= i < len(amp_env) else 1.0
-                out.append(0.35 * a * sample)  # Increased amplitude
-            return out
+            return self._simple_synthesis(total, noise_scale, noise_w, style_vector, style_weight)
 
-    # ------------------------- phoneme-based core -------------------------
+    def _simple_synthesis(self, total: int, noise_scale: float, noise_w: float, 
+                          style_vector: Optional[object], style_weight: float) -> List[float]:
+        """シンプルな合成（フォールバック用）"""
+        base_freq = 200.0
+        amp_env = self._build_envelope(total, style_vector, style_weight)
+        
+        phase = 0.0
+        out = []
+        for i in range(total):
+            t = i / self.sample_rate
+            # より自然なピッチ変動
+            pitch_var = 15.0 * math.sin(2 * math.pi * 2.5 * t) + 8.0 * math.sin(2 * math.pi * 5.3 * t)
+            freq = base_freq + pitch_var
+            phase += (2 * math.pi * freq) / self.sample_rate
+            
+            # 豊かな倍音構造
+            h1 = math.sin(phase)
+            h2 = 0.4 * math.sin(2 * phase)
+            h3 = 0.2 * math.sin(3 * phase)
+            h4 = 0.1 * math.sin(4 * phase)
+            voiced = h1 + h2 + h3 + h4
+            
+            a = amp_env[i] if 0 <= i < len(amp_env) else 1.0
+            out.append(0.4 * a * voiced)
+        
+        return self._apply_smoothing(out)
+
     def _synthesize_phoneme_based(
         self,
         phonemes: List[str],
@@ -104,114 +109,365 @@ class SBVITS2LiteEngine:
         length_scale: float,
         labels: List[str],
     ) -> List[float]:
-        # Simple JP vowel formants (Hz): a, i, u, e, o
+        """音素ベースの高品質合成"""
+        
+        # 改善された日本語フォルマント (F1, F2, F3, bandwidth)
         vowel_formants = {
-            'a': (800, 1150, 2900),
-            'i': (350, 2000, 2800),
-            'u': (325,  700, 2700),
-            'e': (500, 1750, 2500),
-            'o': (450,  800, 2830),
+            'a': [(730, 1090, 2440), (80, 90, 120)],
+            'i': [(270, 2290, 3010), (60, 90, 100)],
+            'u': [(300, 870, 2240), (70, 80, 100)],
+            'e': [(530, 1840, 2480), (70, 100, 120)],
+            'o': [(570, 840, 2410), (80, 80, 100)],
         }
         vowels = set(vowel_formants.keys())
 
-        # Map phoneme token to vowel/consonant and target F0
-        def token_info(p: str) -> Tuple[bool, str]:
-            v = p.lower()[0]
-            if v in vowels:
-                return True, v
-            return False, 'a'
+        # 子音タイプの定義
+        consonant_types = {
+            'fricative': ['s', 'sh', 'h', 'f', 'z'],
+            'stop': ['k', 't', 'p', 'g', 'd', 'b'],
+            'nasal': ['n', 'm', 'ng'],
+            'liquid': ['r', 'l', 'y', 'w'],
+        }
 
-        # Durations (heuristic mora-based)
-        base_phone_ms = 85.0 / max(0.5, float(speed)) * float(length_scale)
+        def get_phoneme_info(p: str) -> Tuple[bool, str, str]:
+            """音素の情報を取得"""
+            p_lower = p.lower()
+            for v in vowels:
+                if v in p_lower:
+                    return True, v, 'vowel'
+            for ctype, consonants in consonant_types.items():
+                for c in consonants:
+                    if c in p_lower:
+                        return False, 'a', ctype
+            return False, 'a', 'stop'
+
+        # 音素継続時間の計算（より自然な長さ）
+        base_phone_ms = 100.0 / max(0.5, float(speed)) * float(length_scale)
         total_samples = 0
         phone_specs = []
-        for p in phonemes:
-            is_vowel, v = token_info(p)
-            # longer for vowels, shorter for consonants; pauses on punctuations
+        
+        for i, p in enumerate(phonemes):
+            is_vowel, v, ptype = get_phoneme_info(p)
+            
             if p in {',', '、'}:
-                dur = 80.0
+                dur = 120.0
                 is_vowel = False
                 v = 'a'
+                ptype = 'pause'
             elif p in {'.', '。', '!', '?'}:
-                dur = 140.0
+                dur = 200.0
                 is_vowel = False
                 v = 'a'
+                ptype = 'pause'
             else:
-                dur = base_phone_ms * (1.25 if is_vowel else 0.55)
+                if is_vowel:
+                    dur = base_phone_ms * 1.4
+                elif ptype == 'fricative':
+                    dur = base_phone_ms * 0.9
+                elif ptype == 'stop':
+                    dur = base_phone_ms * 0.5
+                elif ptype == 'nasal':
+                    dur = base_phone_ms * 0.8
+                else:
+                    dur = base_phone_ms * 0.7
+            
             nsamp = int(self.sample_rate * dur / 1000.0)
             total_samples += nsamp
-            phone_specs.append((is_vowel, v, nsamp))
+            phone_specs.append((is_vowel, v, ptype, nsamp))
 
+        # エンベロープとピッチカーブの生成
         amp_env = self._build_phrase_envelope(total_samples, style_vector, style_weight, phonemes)
-        # noise_scale is now a subtle variation parameter (0.0-0.15 max mix)
-        noise_amount = max(0.0, min(0.15, float(noise_scale) * 0.15))
-        jitter = float(noise_w) * 0.5  # Reduced jitter for smoother pitch
-
-        # Base F0 contour with accent phrases from full-context if available
-        accent_curve = self._build_accent_curve(labels, total_samples)
-        def f0_at(n: int) -> float:
-            if 0 <= n < len(accent_curve):
-                return accent_curve[n]
-            t = n / max(1, total_samples)
-            # More natural pitch contour
-            base = 180.0 + 30.0 * (4.0 * t * (1.0 - t))
-            return base
-
-        # Oversampling (x2) for crude anti-aliasing
-        os = 2
-        sr_os = self.sample_rate * os
-        out_os: List[float] = []
+        f0_curve = self._build_natural_f0_curve(labels, total_samples, noise_w)
+        
+        # 音声合成
+        out: List[float] = []
         n_global = 0
         phase = 0.0
-        for is_vowel, v, nsamp in phone_specs:
-            f1, f2, f3 = vowel_formants.get(v, vowel_formants['a'])
-            # Biquad bandpass filters per formant
-            bp1 = self._biquad_bandpass(f1, q=10.0, sr=sr_os)
-            bp2 = self._biquad_bandpass(f2, q=7.0, sr=sr_os)
-            bp3 = self._biquad_bandpass(f3, q=5.0, sr=sr_os)
-            # Per-phoneme oversampled synthesis
-            nsamp_os = nsamp * os
-            for i in range(nsamp_os):
-                # map oversampled index to base sample idx for envelopes/F0
-                base_idx = n_global + (i // os)
-                t = base_idx / self.sample_rate
-                f0 = f0_at(base_idx)
-                # Reduced jitter for smoother pitch
-                f0 += 10.0 * jitter * math.sin(2 * math.pi * 2.2 * t)
-                if is_vowel:
-                    phase += (2 * math.pi * f0) / sr_os
-                    # Richer excitation with harmonics for vowels
-                    exc = math.sin(phase) + 0.3 * math.sin(2 * phase)
+        prev_formants = None
+        
+        for idx, (is_vowel, v, ptype, nsamp) in enumerate(phone_specs):
+            if ptype == 'pause':
+                # 無音区間
+                out.extend([0.0] * nsamp)
+                n_global += nsamp
+                continue
+            
+            if is_vowel:
+                formants, bandwidths = vowel_formants[v]
+                # フォルマント間の補間（滑らかな遷移）
+                if prev_formants is not None:
+                    formants = self._interpolate_formants(prev_formants, formants, nsamp)
                 else:
-                    # Consonants: less random noise, more structured
-                    exc = (2.0 * self._rand(base_idx * 7 + 11) - 1.0) * 0.7
-
-                # Bandpass chain for vowels, light filtering for consonants
-                if is_vowel:
-                    # Stronger formant synthesis for vowels
-                    s = 1.0 * bp1.process(exc) + 0.7 * bp2.process(exc) + 0.5 * bp3.process(exc)
-                    # Add subtle harmonics for richer sound
-                    s += 0.2 * math.sin(phase * 2) * bp2.process(exc)
-                else:
-                    # Consonants: less noise, more filtered excitation
-                    s = 0.6 * bp1.process(exc)
-                    # Add subtle high-frequency component for clarity
-                    s += 0.3 * (exc - bp1.process(exc))
-
-                # Subtle noise for breathiness (much reduced)
-                noise = (2.0 * self._rand(base_idx * 13 + 3) - 1.0) * 0.25
-                mix = (1.0 - noise_amount) * s + noise_amount * noise
-                a = amp_env[base_idx] if 0 <= base_idx < len(amp_env) else 1.0
-                out_os.append(0.3 * a * mix)  # Increased amplitude for better audibility
+                    formants = [formants] * nsamp
+                prev_formants = vowel_formants[v][0]
+                
+                # 母音の合成
+                segment = self._synthesize_vowel(
+                    nsamp, formants, bandwidths, f0_curve[n_global:n_global+nsamp],
+                    amp_env[n_global:n_global+nsamp], phase
+                )
+                # 位相の更新
+                for i in range(nsamp):
+                    f0 = f0_curve[min(n_global + i, len(f0_curve) - 1)]
+                    phase += (2 * math.pi * f0) / self.sample_rate
+            else:
+                # 子音の合成
+                segment = self._synthesize_consonant(
+                    nsamp, ptype, amp_env[n_global:n_global+nsamp],
+                    f0_curve[n_global:n_global+nsamp], n_global
+                )
+            
+            out.extend(segment)
             n_global += nsamp
 
-        # Downsample by 2 with simple lowpass
-        out = self._decimate_by_2(out_os)
+        # 後処理
+        out = self._apply_smoothing(out)
+        out = self._normalize_audio(out)
+        
         return out
 
-    # ------------------------- helpers -------------------------
-    class _Biquad:
-        def __init__(self, b0, b1, b2, a0, a1, a2):
+    def _synthesize_vowel(self, nsamp: int, formants: List[Tuple[float, float, float]], 
+                          bandwidths: Tuple[int, int, int], f0_curve: List[float],
+                          amp_env: List[float], initial_phase: float) -> List[float]:
+        """母音の高品質合成"""
+        out = []
+        phase = initial_phase
+        
+        # フォルマントフィルタの初期化
+        filters = []
+        for i in range(3):
+            if isinstance(formants[0], tuple):
+                fc = formants[0][i]
+            else:
+                fc = formants[i]
+            bw = bandwidths[i]
+            filters.append(self._resonator(fc, bw, self.sample_rate))
+        
+        for i in range(nsamp):
+            # 現在のF0
+            f0 = f0_curve[i] if i < len(f0_curve) else 200.0
+            phase += (2 * math.pi * f0) / self.sample_rate
+            
+            # 豊かな声帯音源（パルス列 + 倍音）
+            glottal = self._glottal_pulse(phase)
+            
+            # フォルマントフィルタリング
+            signal = 0.0
+            gains = [1.0, 0.6, 0.3]  # フォルマントごとのゲイン
+            
+            # フォルマント補間の処理
+            if isinstance(formants[i] if i < len(formants) else formants[-1], tuple):
+                current_formants = formants[i] if i < len(formants) else formants[-1]
+                for j, filt in enumerate(filters):
+                    filt.update_params(current_formants[j], bandwidths[j], self.sample_rate)
+                    signal += gains[j] * filt.process(glottal)
+            else:
+                for j, filt in enumerate(filters):
+                    signal += gains[j] * filt.process(glottal)
+            
+            # 振幅エンベロープの適用
+            a = amp_env[i] if i < len(amp_env) else 1.0
+            out.append(signal * a * 0.5)
+        
+        return out
+
+    def _synthesize_consonant(self, nsamp: int, ctype: str, amp_env: List[float],
+                              f0_curve: List[float], seed: int) -> List[float]:
+        """子音の合成"""
+        out = []
+        
+        if ctype == 'fricative':
+            # 摩擦音（ホワイトノイズをフィルタリング）
+            hp_filter = self._highpass_filter(3000, self.sample_rate)
+            for i in range(nsamp):
+                noise = (2.0 * self._rand(seed + i) - 1.0)
+                filtered = hp_filter.process(noise)
+                a = amp_env[i] if i < len(amp_env) else 1.0
+                out.append(filtered * a * 0.4)
+        
+        elif ctype == 'stop':
+            # 破裂音（短いバースト）
+            burst_len = min(nsamp, int(0.02 * self.sample_rate))
+            for i in range(nsamp):
+                if i < burst_len:
+                    noise = (2.0 * self._rand(seed + i) - 1.0)
+                    envelope = math.exp(-10.0 * i / max(1, burst_len))
+                    out.append(noise * envelope * 0.6)
+                else:
+                    out.append(0.0)
+        
+        elif ctype == 'nasal':
+            # 鼻音（低いフォルマント）
+            resonator = self._resonator(250, 100, self.sample_rate)
+            phase = 0.0
+            for i in range(nsamp):
+                f0 = f0_curve[i] if i < len(f0_curve) else 150.0
+                phase += (2 * math.pi * f0) / self.sample_rate
+                glottal = self._glottal_pulse(phase)
+                signal = resonator.process(glottal)
+                a = amp_env[i] if i < len(amp_env) else 1.0
+                out.append(signal * a * 0.5)
+        
+        else:  # liquid
+            # 流音（弱い母音的性質）
+            resonator = self._resonator(500, 150, self.sample_rate)
+            phase = 0.0
+            for i in range(nsamp):
+                f0 = f0_curve[i] if i < len(f0_curve) else 180.0
+                phase += (2 * math.pi * f0) / self.sample_rate
+                glottal = self._glottal_pulse(phase)
+                signal = resonator.process(glottal)
+                a = amp_env[i] if i < len(amp_env) else 1.0
+                out.append(signal * a * 0.4)
+        
+        return out
+
+    def _glottal_pulse(self, phase: float) -> float:
+        """より自然な声帯パルス波形（LF model簡易版）"""
+        phase_norm = (phase % (2 * math.pi)) / (2 * math.pi)
+        
+        if phase_norm < 0.5:
+            # 開放相（正弦波）
+            t = phase_norm / 0.5
+            return math.sin(math.pi * t)
+        else:
+            # 閉鎖相（急速な減衰）
+            t = (phase_norm - 0.5) / 0.5
+            return -0.3 * math.exp(-5.0 * t)
+
+    def _interpolate_formants(self, f1: Tuple[float, float, float], 
+                              f2: Tuple[float, float, float], 
+                              nsamp: int) -> List[Tuple[float, float, float]]:
+        """フォルマント周波数の滑らかな補間"""
+        result = []
+        for i in range(nsamp):
+            t = i / max(1, nsamp - 1)
+            # Cosine補間（より滑らか）
+            t_smooth = (1 - math.cos(t * math.pi)) / 2
+            interpolated = tuple(
+                f1[j] * (1 - t_smooth) + f2[j] * t_smooth
+                for j in range(3)
+            )
+            result.append(interpolated)
+        return result
+
+    def _build_natural_f0_curve(self, labels: List[str], total_samples: int, 
+                                noise_w: float) -> List[float]:
+        """より自然なF0カーブの生成"""
+        base_f0 = 200.0  # 女性的な基本周波数
+        curve = [base_f0] * total_samples
+        
+        # アクセント情報からの変動
+        if labels:
+            import re
+            for i, lab in enumerate(labels):
+                try:
+                    a_match = re.search(r"/A:([\-\d]+)\+", lab)
+                    if a_match:
+                        a_val = int(a_match.group(1))
+                        if a_val > 0:
+                            pos = int(i / max(1, len(labels)) * total_samples)
+                            length = int(total_samples / max(1, len(labels)) * a_val)
+                            for j in range(pos, min(pos + length, total_samples)):
+                                t = (j - pos) / max(1, length)
+                                # アクセント核での下降
+                                curve[j] = base_f0 - 30.0 * t
+                except Exception:
+                    continue
+        
+        # 自然なマイクロプロソディ
+        for i in range(total_samples):
+            t = i / self.sample_rate
+            # 複数の周期的変動を重ね合わせ
+            micro = 5.0 * math.sin(2 * math.pi * 3.0 * t)
+            micro += 3.0 * math.sin(2 * math.pi * 7.5 * t)
+            micro += 2.0 * math.sin(2 * math.pi * 12.0 * t)
+            curve[i] += micro * noise_w * 0.5
+        
+        # 滑らか化
+        return self._smooth_curve(curve, window=15)
+
+    def _smooth_curve(self, curve: List[float], window: int = 5) -> List[float]:
+        """移動平均による平滑化"""
+        if len(curve) < window:
+            return curve
+        
+        smoothed = []
+        half_window = window // 2
+        for i in range(len(curve)):
+            start = max(0, i - half_window)
+            end = min(len(curve), i + half_window + 1)
+            smoothed.append(sum(curve[start:end]) / (end - start))
+        return smoothed
+
+    def _apply_smoothing(self, audio: List[float]) -> List[float]:
+        """音声の平滑化（クリック音除去）"""
+        if len(audio) < 3:
+            return audio
+        
+        smoothed = [audio[0]]
+        for i in range(1, len(audio) - 1):
+            smoothed.append((audio[i-1] + 2*audio[i] + audio[i+1]) / 4.0)
+        smoothed.append(audio[-1])
+        return smoothed
+
+    def _normalize_audio(self, audio: List[float], target_peak: float = 0.8) -> List[float]:
+        """音声の正規化"""
+        if not audio:
+            return audio
+        
+        peak = max(abs(x) for x in audio)
+        if peak > 1e-6:
+            scale = target_peak / peak
+            return [x * scale for x in audio]
+        return audio
+
+    class _Resonator:
+        """共鳴フィルタ（2次IIR）"""
+        def __init__(self, fc: float, bw: float, sr: int):
+            self.fc = fc
+            self.bw = bw
+            self.sr = sr
+            self.z1 = 0.0
+            self.z2 = 0.0
+            self._update_coeffs()
+        
+        def _update_coeffs(self):
+            r = math.exp(-math.pi * self.bw / self.sr)
+            theta = 2 * math.pi * self.fc / self.sr
+            self.a1 = -2 * r * math.cos(theta)
+            self.a2 = r * r
+            self.b0 = 1 - r * r
+        
+        def update_params(self, fc: float, bw: float, sr: int):
+            """パラメータの動的更新"""
+            self.fc = fc
+            self.bw = bw
+            self.sr = sr
+            self._update_coeffs()
+        
+        def process(self, x: float) -> float:
+            y = self.b0 * x - self.a1 * self.z1 - self.a2 * self.z2
+            self.z2 = self.z1
+            self.z1 = y
+            return y
+
+    def _resonator(self, fc: float, bw: float, sr: int) -> "_Resonator":
+        return self._Resonator(fc, bw, sr)
+
+    class _HighpassFilter:
+        """ハイパスフィルタ"""
+        def __init__(self, fc: float, sr: int):
+            w0 = 2 * math.pi * fc / sr
+            alpha = math.sin(w0) / (2 * 0.707)
+            
+            b0 = (1 + math.cos(w0)) / 2
+            b1 = -(1 + math.cos(w0))
+            b2 = (1 + math.cos(w0)) / 2
+            a0 = 1 + alpha
+            a1 = -2 * math.cos(w0)
+            a2 = 1 - alpha
+            
             self.b0 = b0 / a0
             self.b1 = b1 / a0
             self.b2 = b2 / a0
@@ -219,134 +475,79 @@ class SBVITS2LiteEngine:
             self.a2 = a2 / a0
             self.z1 = 0.0
             self.z2 = 0.0
-
+        
         def process(self, x: float) -> float:
             y = self.b0 * x + self.z1
             self.z1 = self.b1 * x - self.a1 * y + self.z2
             self.z2 = self.b2 * x - self.a2 * y
             return y
 
-    def _biquad_bandpass(self, fc: float, q: float, sr: int) -> "SBVITS2LiteEngine._Biquad":
-        # Cookbook bandpass (constant skirt gain, peak gain = Q)
-        w0 = 2.0 * math.pi * fc / sr
-        alpha = math.sin(w0) / (2.0 * q)
-        b0 = q * alpha
-        b1 = 0.0
-        b2 = -q * alpha
-        a0 = 1.0 + alpha
-        a1 = -2.0 * math.cos(w0)
-        a2 = 1.0 - alpha
-        return self._Biquad(b0, b1, b2, a0, a1, a2)
+    def _highpass_filter(self, fc: float, sr: int) -> "_HighpassFilter":
+        return self._HighpassFilter(fc, sr)
 
-    def _decimate_by_2(self, data: List[float]) -> List[float]:
-        if len(data) < 4:
-            return data[::2]
-        # Simple 3-tap lowpass then decimate
-        out: List[float] = []
-        z1 = 0.0
-        z2 = 0.0
-        for i, x in enumerate(data):
-            y = 0.25 * x + 0.5 * z1 + 0.25 * z2
-            z2 = z1
-            z1 = x
-            if i % 2 == 0:
-                out.append(y)
-        return out
-
-    def _build_phrase_envelope(self, total: int, style_vector: Optional[object], style_weight: float, phonemes: List[str]):
-        # Start with style-based envelope
+    def _build_phrase_envelope(self, total: int, style_vector: Optional[object], 
+                               style_weight: float, phonemes: List[str]) -> List[float]:
+        """フレーズレベルのエンベロープ生成"""
         env = self._build_envelope(total, style_vector, style_weight)
-        # Phrase-level shaping: rise then fall per chunk separated by punctuation
-        if total <= 0:
-            return env
-        # Build chunk map roughly splitting in 2-3 segments
-        num_chunks = 3
-        seg_len = max(1, total // num_chunks)
-        for i in range(total):
-            pos = (i % seg_len) / seg_len
-            # light emphasis near early in each chunk
-            env[i] *= 0.85 + 0.3 * (4.0 * pos * (1.0 - pos))
+        
+        # より自然な強弱パターン
+        if total > 0:
+            for i in range(total):
+                t = i / total
+                # フレーズ全体の抑揚
+                phrase_contour = 0.7 + 0.3 * math.sin(math.pi * t)
+                env[i] *= phrase_contour
+        
         return env
 
-    def _build_accent_curve(self, labels: List[str], total_samples: int) -> List[float]:
-        # Heuristic accent curve from full-context labels.
-        # Parse A (accent type) and F (position in accent phrase) if available.
-        import re
-        if not labels or total_samples <= 0:
-            # fallback base - more natural pitch
-            return [180.0] * total_samples
-        accent_marks: List[Tuple[int, int]] = []  # (start_idx, end_idx)
-        phrase_len = max(1, total_samples // max(1, len(labels)))
-        for i, lab in enumerate(labels):
-            try:
-                a = re.search(r"/A:([\-\d]+)\+", lab)
-                f = re.search(r"/F:([\-\d]+)\+", lab)
-                if a and f:
-                    a_val = int(a.group(1))
-                    f_val = int(f.group(1))
-                    # Approximate accent: when F==1 in phrase with a_val>0, create a drop
-                    if a_val > 0 and f_val == 1:
-                        start = i * phrase_len
-                        end = min(total_samples, start + phrase_len * max(1, a_val))
-                        accent_marks.append((start, end))
-            except Exception:
-                continue
-        curve = [180.0] * total_samples  # Higher base pitch
-        for start, end in accent_marks:
-            for n in range(start, min(end, total_samples)):
-                t = (n - start) / max(1, end - start)
-                # More natural pitch fall
-                base = 195.0 - 25.0 * t  # gentler fall
-                curve[n] = base
-        # Smooth with simple 5-tap for natural transitions
-        smoothed: List[float] = []
-        z = [curve[0]] * 4
-        for v in curve:
-            z = [v] + z[:4]
-            smoothed.append((z[0] + z[1] + z[2] + z[3] + z[4]) / 5.0 if len(z) >= 5 else v)
-        return smoothed
-
-    def _build_envelope(self, total: int, style_vector: Optional[object], style_weight: float):
+    def _build_envelope(self, total: int, style_vector: Optional[object], 
+                        style_weight: float) -> List[float]:
+        """基本エンベロープの生成"""
         if np is None or style_vector is None:
-            # Fallback ADSR
-            attack = int(0.05 * total)
-            release = int(0.15 * total)
-            sustain = total - attack - release
-            env = [0.0] * total
+            # 改善されたADSR
+            attack = int(0.08 * total)
+            decay = int(0.1 * total)
+            sustain_samples = total - attack - decay - int(0.15 * total)
+            release = total - attack - decay - sustain_samples
+            
+            env = []
             for i in range(total):
                 if i < attack:
-                    env[i] = i / max(1, attack)
-                elif i < attack + sustain:
-                    env[i] = 1.0
+                    # 滑らかなアタック
+                    t = i / max(1, attack)
+                    env.append(t * t * (3 - 2 * t))  # Smoothstep
+                elif i < attack + decay:
+                    # ディケイ
+                    t = (i - attack) / max(1, decay)
+                    env.append(1.0 - 0.2 * t)
+                elif i < attack + decay + sustain_samples:
+                    # サステイン
+                    env.append(0.8)
                 else:
-                    env[i] = max(0.0, 1.0 - (i - attack - sustain) / max(1, release))
+                    # リリース
+                    t = (i - attack - decay - sustain_samples) / max(1, release)
+                    env.append(0.8 * (1 - t * t))
             return env
-
+        
+        # スタイルベクトルを使用
         try:
             vec = np.array(style_vector).astype(float).flatten()
             if vec.size < 8:
                 return [1.0] * total
-            # Use first 8 dims to define slow envelope via cosine basis
+            
             t = np.linspace(0.0, 1.0, total, dtype=float)
-            env = np.zeros_like(t)
-            for k in range(8):
-                env += float(vec[k]) * np.cos(2.0 * math.pi * (k + 1) * t)
-            env = env - env.min()
-            vmax = env.max() if env.max() > 0 else 1.0
-            env = env / vmax
-            # Style weight shapes dynamic range
-            w = max(0.1, min(10.0, float(style_weight)))
-            env = np.power(env, 1.0 / w)
-            env = 0.3 + 0.7 * env
+            env = np.ones_like(t) * 0.8
+            
+            for k in range(min(8, vec.size)):
+                env += 0.1 * float(vec[k]) * np.cos(2.0 * math.pi * (k + 1) * t)
+            
+            env = np.clip(env, 0.3, 1.0)
             return env.tolist()
         except Exception:
             return [1.0] * total
 
     @staticmethod
     def _rand(i: int) -> float:
-        # Deterministic LCG for reproducibility
-        # Not cryptographic quality; sufficient for noise shaping here
+        """決定論的疑似乱数"""
         x = (1103515245 * (i + 12345) + 12345) & 0x7FFFFFFF
-        return (x / 0x7FFFFFFF)
-
-
+        return x / 0x7FFFFFFF
