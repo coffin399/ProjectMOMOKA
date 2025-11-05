@@ -122,6 +122,28 @@ class ImageModelRegistry:
     @classmethod
     def from_default_root(cls) -> "ImageModelRegistry":
         module_path = Path(__file__).resolve()
-        # .../ProjectMOMOKA/MOMOKA/generator/imagen/model_registry.py -> parents[4] == ProjectMOMOKA
-        project_root = module_path.parents[4]
-        return cls(project_root / "models" / "image-models")
+        candidates: List[Path] = []
+
+        for ancestor in module_path.parents:
+            name = ancestor.name.lower()
+            if name in {"projectmomoka", "project-momoka"}:
+                candidates.append(ancestor / "models" / "image-models")
+
+            project_variant = ancestor / "ProjectMOMOKA"
+            if project_variant.exists():
+                candidates.append(project_variant / "models" / "image-models")
+
+            candidates.append(ancestor / "models" / "image-models")
+
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if candidate.exists():
+                logger.debug("Using image model root %s", candidate)
+                return cls(candidate)
+
+        default_root = module_path.parents[3] / "models" / "image-models"
+        logger.debug("Using default image model root %s", default_root)
+        return cls(default_root)
