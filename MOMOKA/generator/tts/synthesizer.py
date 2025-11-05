@@ -8,6 +8,7 @@ from typing import Optional
 
 from .preprocess import normalize_text
 from .wav import encode_wav_from_floats, generate_placeholder_tone
+from .core.engine import SBVITS2LiteEngine
 
 try:
     import torch  # type: ignore
@@ -58,6 +59,7 @@ class StyleBertVITS2Synthesizer:
         self._config_data: Optional[dict] = None
         self._style_vectors: Optional[object] = None
         self._engine = None  # external engine object if available
+        self._lite = SBVITS2LiteEngine(sample_rate=self._sample_rate)
 
         self._discover_model_paths()
         self._maybe_warmup_model()
@@ -180,13 +182,18 @@ class StyleBertVITS2Synthesizer:
         _ = (style, style_weight, speed, ns, nw, ls)  # reserved for real model
 
         if not self._model_ready:
-            # Fallback placeholder tone (audible cue, avoids total failure in release builds)
-            return encode_wav_from_floats(
-                generate_placeholder_tone(duration_sec=max(0.25, min(0.8, len(processed) / 40.0)),
-                                           sample_rate=self._sample_rate,
-                                           freq=880.0),
-                sample_rate=self._sample_rate,
+            # Use lightweight internal engine to generate speech-like audio
+            samples = self._lite.synthesize(
+                text=processed,
+                style=style,
+                style_vector=self._style_vectors,
+                style_weight=style_weight,
+                speed=speed,
+                noise_scale=ns,
+                noise_w=nw,
+                length_scale=ls,
             )
+            return encode_wav_from_floats(samples, sample_rate=self._sample_rate)
         # Attempt generic engine inference
         try:
             style_vec = None

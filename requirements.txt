@@ -22,6 +22,7 @@ pillow
 # Local image generation pipeline
 # Pin NumPy to 1.x for compatibility with torch 2.1.0
 numpy<2.0.0
+pyopenjtalk>=0.3.3; platform_system == "Windows" or platform_system == "Linux" or platform_system == "Darwin"
 
 # PyTorch related (CUDA 11.8)
 torch==2.1.0+cu118
