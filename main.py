@@ -195,6 +195,16 @@ class Momoka(commands.Bot):
             print(f"CRITICAL: {CONFIG_FILE} の読み込みまたは解析中にエラーが発生しました: {e}")
             raise
 
+        # ステータスローテーションの設定
+        self.status_templates = self.config.get('status_rotation', [
+            "Ask @PLANA for command help",
+            "operating on {guild_count} servers",
+            "PLANA Ver.2025-11-03",
+            "Ask @PLANA <image generation>",
+            "/say <audio generation>"
+        ])
+        self.rotate_status.start()
+
         # ロギング設定
         logging_json_path = "data/logging_channels.json"
         log_channel_ids_from_config = self.config.get('log_channel_ids', [])
@@ -271,6 +281,30 @@ class Momoka(commands.Bot):
 
         # エラーハンドラの設定
         self.tree.on_error = self.on_app_command_error
+
+    @tasks.loop(seconds=15)
+    async def rotate_status(self):
+        """ボットのステータスを定期的に変更する"""
+        if not self.status_templates:
+            return
+
+        # 次のステータスを選択
+        status_template = self.status_templates[self.status_index]
+        self.status_index = (self.status_index + 1) % len(self.status_templates)
+
+        # プレースホルダーを置換
+        try:
+            status_text = status_template.format(guild_count=len(self.guilds))
+        except KeyError:
+            status_text = status_template  # プレースホルダーがない場合はそのまま使用
+
+        # ステータスを更新
+        await self.change_presence(activity=discord.Game(name=status_text))
+
+    @rotate_status.before_loop
+    async def before_rotate_status(self):
+        """ステータスローテーションタスクの開始を待機"""
+        await self.wait_until_ready()
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
         """スラッシュコマンドのエラーハンドリング"""
