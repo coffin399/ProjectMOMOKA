@@ -1116,6 +1116,40 @@ class LLMCog(commands.Cog, name="LLM"):
                     client = new_client
                     self.llm_clients[f"{provider_name}/{client.model_name_for_api_calls}"] = new_client
                     await asyncio.sleep(1)
+                except (openai.BadRequestError, openai.APIStatusError) as e:
+                    status_code = getattr(e, 'status_code', None)
+                    if isinstance(status_code, int) and status_code >= 500:
+                        logger.warning(
+                            f"⚠️ Server-like status error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                    elif isinstance(status_code, int) and status_code >= 400:
+                        logger.warning(
+                            f"⚠️ Client error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                    else:
+                        logger.warning(
+                            f"⚠️ Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+
+                    if attempt + 1 >= num_keys:
+                        logger.error(f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting.")
+                        raise e
+
+                    next_key_index = (current_key_index + 1) % num_keys
+                    self.provider_key_index[provider_name] = next_key_index
+                    next_key = api_keys[next_key_index]
+                    logger.info(
+                        f"🔄 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) after error and retrying.")
+                    provider_config = self.llm_config.get('providers', {}).get(provider_name, {})
+                    is_koboldcpp = provider_name.lower() == 'koboldcpp'
+                    timeout = provider_config.get('timeout', 300.0) if is_koboldcpp else None
+                    new_client = openai.AsyncOpenAI(base_url=client.base_url, api_key=next_key, timeout=timeout)
+                    new_client.model_name_for_api_calls = client.model_name_for_api_calls
+                    new_client.provider_name = client.provider_name
+                    if is_koboldcpp:
+                        new_client.supports_tools = getattr(client, 'supports_tools', provider_config.get('supports_tools', True))
+                    else:
+                        new_client.supports_tools = getattr(client, 'supports_tools', True)
+                    client = new_client
+                    self.llm_clients[f"{provider_name}/{client.model_name_for_api_calls}"] = new_client
+                    await asyncio.sleep(1)
                 except Exception as e:
                     logger.error(f"❌ Unhandled error calling LLM API: {e}", exc_info=True)
                     raise

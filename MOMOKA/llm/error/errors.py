@@ -57,6 +57,15 @@ class LLMExceptionHandler:
             status_code = exception.status_code
             try:
                 error_body = exception.response.json()
+
+                if isinstance(error_body, list):
+                    error_body = error_body[0] if error_body else {}
+
+                if not isinstance(error_body, dict):
+                    logger.error(f"LLM API status error: {status_code} - {error_body}")
+                    return self.config.get('api_status_error', "APIから予期せぬエラーが返されました。").format(
+                        status_code=status_code, detail=str(error_body))
+
                 error_data = error_body.get('error')
 
                 if isinstance(error_data, list) and error_data:
