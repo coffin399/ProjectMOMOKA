@@ -383,7 +383,7 @@ class ImageGenerator:
             logger.warning("Failed to send progress message: %s", exc)
 
         def progress_callback(step: int, _timestep: int, _latents):
-            nonlocal progress_state
+            nonlocal progress_state, loop
             current_time = time.time()
             progress_state["last_step"] = step + 1
             
@@ -394,18 +394,30 @@ class ImageGenerator:
                 # Only update the message if it's been at least 1 second since the last edit
                 if current_time - progress_state.get("last_message_edit", 0) >= 1.0:
                     progress_state["last_message_edit"] = current_time
-                    asyncio.create_task(self._update_progress_message(
-                        progress_message,
-                        prompt,
-                        model_name,
-                        adjusted_size,
-                        steps,
-                        step + 1,
-                        sampler_name or "default",
-                        current_time - progress_state["start_time"],
-                        0.0,
-                        "Generating... / 生成中..."
-                    ))
+                    
+                    # Create a coroutine for the progress update
+                    async def update_progress():
+                        try:
+                            await self._update_progress_message(
+                                progress_message,
+                                prompt,
+                                model_name,
+                                adjusted_size,
+                                steps,
+                                step + 1,
+                                sampler_name or "default",
+                                current_time - progress_state["start_time"],
+                                0.0,
+                                "Generating... / 生成中..."
+                            )
+                        except Exception as e:
+                            logger.warning(f"Error in progress update: {e}")
+                    
+                    # Schedule the update on the main event loop
+                    if loop.is_running():
+                        asyncio.run_coroutine_threadsafe(update_progress(), loop)
+                    else:
+                        logger.warning("Event loop is not running, skipping progress update")
 
         try:
             image_bytes = await self.pipeline.generate(
