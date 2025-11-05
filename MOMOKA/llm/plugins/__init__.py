@@ -7,6 +7,7 @@ classes.
 
 Attributes:
     __all__: A list of discovered plugin class names for 'from . import *'.
+    ImageGenerator
 """
 
 import importlib
