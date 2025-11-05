@@ -3,6 +3,6 @@ Project MOMOKA - NOTICE
 2025-11-05
 - Removed legacy local diffusers pipeline directory `MOMOKA/generator/imagen/` and associated tooling. Forge API now handles all image generation.
 - Pruned diffusers-only dependencies (`torch`, `accelerate`, `safetensors`, `diffusers`) from `requirements.txt` to eliminate unused installs.
-- Deleted Stable Diffusion Forge UI assets under `submodule/stable-diffusion-webui-forge/javascript/` which were only required for the Gradio WebUI and not for API operation.
+- Deleted Stable Diffusion Forge UI assets under `lib/stable-diffusion-webui-forge/javascript/` which were only required for the Gradio WebUI and not for API operation.
 - Consolidated `requirements.txt` for Python 3.10, pinning core bot, Forge API, and Style-Bert-VITS2 dependencies (including submodule needs) for reproducible installs.
 
