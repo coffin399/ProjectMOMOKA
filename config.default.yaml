@@ -154,10 +154,19 @@ llm:
 
     # Forge WebUI 設定 ----------------------------------------------------
     forge:
-      base_url: "http://127.0.0.1:7860"   # WebUI Forge のベースURL
+      base_url: "http://127.0.0.1:7861"   # WebUI Forge のベースURL (start-api.bat のデフォルトポート)
       txt2img_path: "/sdapi/v1/txt2img"   # txt2img API エンドポイント
       timeout: 180.0
+      startup_timeout: 240.0              # 自動起動時にAPIが起動するまで待機する最大秒数
       override_settings_restore_afterwards: true
+
+      # Forge プロセスの自動起動設定 ------------------------------------
+      auto_start: false                    # true にすると起動時にForgeをsubprocessで起動
+      start_script: "submodule/stable-diffusion-webui-forge/start-api.bat"  # 実行するバッチ/シェル
+      skip_pip_install: true               # start-api.batでpip installをスキップ（初回のみfalse推奨）
+      api_port: 7861                       # Forge APIポート（auto_start有効時のみ）
+      commandline_args: null               # 追加の起動引数を指定したい場合に設定（未設定ならデフォルト）
+      env: {}                              # Forge起動用に追加する環境変数があれば設定
 
       # Forge固有の追加パラメータを上書きしたい場合はここで指定
       default_params:

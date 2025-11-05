@@ -12,10 +12,13 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import aiohttp
 import discord
+
+from MOMOKA.generator.forge_launcher import ForgeLaunchConfig, get_forge_process_manager
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,18 @@ class GenerationTask:
     arguments: Dict[str, Any]
     position: int = 0
     queue_message: Optional[discord.Message] = None
+
+
+@dataclass(slots=True)
+class GenerationParams:
+    prompt: str
+    negative_prompt: str
+    width: int
+    height: int
+    steps: int
+    cfg_scale: float
+    seed: int
+    sampler_name: Optional[str]
 
 
 class ImageGenerator:
@@ -50,6 +65,9 @@ class ImageGenerator:
         self.default_params = self.image_gen_config.get("default_params", {})
 
         self.forge_config: Dict[str, Any] = self.image_gen_config.get("forge", {})
+        self.forge_base_url = str(self.forge_config.get("base_url", "http://127.0.0.1:7861"))
+        self.forge_startup_timeout = float(self.forge_config.get("startup_timeout", 240.0))
+        self.forge_manager = self._initialize_forge_manager()
         configured_models = self.image_gen_config.get("available_models") or []
         if not configured_models:
             configured_default = self.image_gen_config.get("model")
@@ -532,14 +550,10 @@ class ImageGenerator:
         return self.http_session
 
     async def _generate_image_forge(self, model_name: str, params: GenerationParams) -> bytes:
-        if not self.forge_config:
-            raise RuntimeError("Forge configuration is not available.")
+        if self.forge_manager:
+            await self.forge_manager.ensure_running(timeout=self.forge_startup_timeout)
 
-        base_url = self.forge_config.get("base_url")
-        if not base_url:
-            raise RuntimeError("Forge base_url is not configured.")
-
-        endpoint = base_url.rstrip("/") + str(self.forge_config.get("txt2img_path", "/sdapi/v1/txt2img"))
+        endpoint = self.forge_base_url.rstrip("/") + str(self.forge_config.get("txt2img_path", "/sdapi/v1/txt2img"))
         timeout_value = float(self.forge_config.get("timeout", 180.0))
         session = self._get_http_session()
 
@@ -591,6 +605,53 @@ class ImageGenerator:
             raise RuntimeError(f"Failed to decode Forge image payload: {exc}") from exc
 
         return image_bytes
+
+    # ------------------------------------------------------------------
+    # Forge process helpers
+    # ------------------------------------------------------------------
+    def _initialize_forge_manager(self):
+        auto_start = bool(self.forge_config.get("auto_start", False))
+        start_script = self.forge_config.get("start_script")
+        if not auto_start:
+            return None
+        if not start_script:
+            logger.warning("Forge auto_start enabled but no start_script configured.")
+            return None
+
+        script_path = Path(start_script)
+        if not script_path.is_absolute():
+            project_root = Path(__file__).resolve().parents[2]
+            script_path = (project_root / script_path).resolve()
+
+        if not script_path.exists():
+            logger.error("Forge start script not found at %s", script_path)
+            return None
+
+        skip_pip_install = bool(self.forge_config.get("skip_pip_install", True))
+        commandline_args = self.forge_config.get("commandline_args")
+        api_port = self.forge_config.get("api_port")
+        try:
+            api_port_int = int(api_port) if api_port is not None else None
+        except (ValueError, TypeError):
+            logger.warning("Invalid Forge api_port %s; ignoring", api_port)
+            api_port_int = None
+
+        extra_env = self.forge_config.get("env")
+        if extra_env is not None and not isinstance(extra_env, dict):
+            logger.warning("Forge env configuration must be a mapping; ignoring invalid value.")
+            extra_env = None
+
+        launch_config = ForgeLaunchConfig(
+            base_url=self.forge_base_url,
+            start_script=script_path,
+            skip_pip_install=skip_pip_install,
+            commandline_args=commandline_args,
+            api_port=api_port_int,
+            extra_env=extra_env,
+        )
+
+        logger.info("Forge auto start enabled. Managing process via %s", script_path)
+        return get_forge_process_manager(launch_config)
 
 
 class ImageModelSelect(discord.ui.Select):

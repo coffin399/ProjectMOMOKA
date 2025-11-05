@@ -34,6 +34,10 @@
 
 **MOMOKA** is your all-in-one Discord companion! 🎮✨ A feature-packed bot that combines the power of AI chat, seamless music playback, stunning image generation, and essential utility commands—all in one sleek package. Perfect for communities that want everything without the hassle of managing multiple bots!
 
+> **Bundled components:** This repository vendors the following upstream projects for out-of-the-box image generation and TTS capabilities:
+> - [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)
+> - [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)
+
 ### 🚀 Key Features
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
