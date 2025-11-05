@@ -34,7 +34,7 @@ diffusers==0.25.1
 transformers==4.36.2
 accelerate==0.25.0
 safetensors==0.4.1
-huggingface-hub>=0.20.2
+huggingface-hub==0.16.4
 
 # セルフホストがめんどくさい人向けのリリース用
 nuitka
