@@ -113,6 +113,8 @@ class LogViewerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MOMOKA ログビューア")
+        self.root.withdraw()  # ウィンドウを非表示にする
+        self.apply_windows_dark_mode() # 先にダークモードを適用
         self.root.geometry("1200x800")
         
         # テーマカラーを取得
@@ -147,8 +149,7 @@ class LogViewerApp:
         # ウィンドウクローズ時の処理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Windowsのダークモード設定を適用
-        self.apply_windows_dark_mode()
+        self.root.deiconify() # ウィンドウを再表示
     
     def apply_windows_dark_mode(self):
         """Windowsのダークモード設定を適用"""
