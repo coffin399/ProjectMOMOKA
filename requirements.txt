@@ -85,7 +85,7 @@ onnxsim-prebuilt>=0.4.33
 punctuators>=0.0.5
 pyannote.audio>=3.1.0
 pyloudnorm>=0.1.0
-pyopenjtalk-dict==1.0.1
+pyopenjtalk-dict==0.3.4.dev2
 pypinyin>=0.48.0
 pyworld-prebuilt>=0.3.4
 stable-ts>=2.0.0
