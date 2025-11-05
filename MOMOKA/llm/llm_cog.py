@@ -25,36 +25,13 @@ from MOMOKA.llm.error.errors import (
     SearchAPIRateLimitError,
     SearchAPIServerError
 )
-
-try:
-    from MOMOKA.llm.plugins.search_agent import SearchAgent
-except ImportError:
-    logging.error("Could not import SearchAgent. Search functionality will be disabled.")
-    SearchAgent = None
-
-try:
-    from MOMOKA.llm.plugins.bio_manager import BioManager
-except ImportError:
-    logging.error("Could not import BioManager. Bio functionality will be disabled.")
-    BioManager = None
-
-try:
-    from MOMOKA.llm.plugins.memory_manager import MemoryManager
-except ImportError:
-    logging.error("Could not import MemoryManager. Memory functionality will be disabled.")
-    MemoryManager = None
-
-try:
-    from MOMOKA.llm.plugins.commands_manager import CommandInfoManager
-except ImportError:
-    logging.error("Could not import CommandInfoManager. Command suggestions will be disabled.")
-    CommandInfoManager = None
-
-try:
-    from MOMOKA.llm.plugins.image_generator import ImageGenerator
-except ImportError:
-    logging.error("Could not import ImageGenerator. Image generation will be disabled.")
-    ImageGenerator = None
+from MOMOKA.llm.plugins import (
+    SearchAgent,
+    BioManager,
+    MemoryManager,
+    CommandInfoManager,
+    ImageGenerator
+)
 
 try:
     from MOMOKA.llm.utils.tips import TipsManager
@@ -287,7 +264,7 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.info(
             f"Loaded {len(self.channel_models)} channel-specific model settings from '{self.channel_settings_path}'.")
         self.jst = timezone(timedelta(hours=+9))
-        self.search_agent, self.bio_manager, self.memory_manager, self.command_manager, self.image_generator, self.tips_manager = self._initialize_search_agent(), self._initialize_bio_manager(), self._initialize_memory_manager(), self._initialize_command_manager(), self._initialize_image_generator(), self._initialize_tips_manager()
+        self.search_agent, self.bio_manager, self.memory_manager, self.command_manager, self.image_generator, self.tips_manager = self._initialize_plugins()
         default_model_string = self.llm_config.get('model')
         if default_model_string:
             main_llm_client = self._initialize_llm_client(default_model_string)
@@ -298,6 +275,49 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.error("Failed to initialize main LLM client. Core functionality may be disabled.")
         else:
             logger.error("Default LLM model is not configured in config.yaml.")
+
+    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[TipsManager]]:
+        """Initializes and returns all registered plugins."""
+        plugins = {
+            "SearchAgent": None,
+            "BioManager": None,
+            "MemoryManager": None,
+            "CommandInfoManager": None,
+            "ImageGenerator": None,
+            "TipsManager": None
+        }
+
+        # Initialize plugins that are always needed or don't have a specific config toggle
+        if BioManager: plugins["BioManager"] = BioManager(self.bot)
+        if MemoryManager: plugins["MemoryManager"] = MemoryManager(self.bot)
+        if TipsManager: plugins["TipsManager"] = TipsManager()
+
+        # Initialize plugins based on config
+        active_tools = self.llm_config.get('active_tools', [])
+        if 'search' in active_tools and SearchAgent:
+            plugins["SearchAgent"] = SearchAgent(self.bot)
+        
+        if self.llm_config.get('commands_manager', True) and CommandInfoManager:
+            plugins["CommandInfoManager"] = CommandInfoManager(self.bot)
+
+        if 'image_generator' in active_tools and ImageGenerator:
+            plugins["ImageGenerator"] = ImageGenerator(self.bot)
+
+        # Log initialized plugins
+        for name, instance in plugins.items():
+            if instance:
+                logger.info(f"{name} initialized successfully.")
+            else:
+                logger.info(f"{name} is not active or failed to initialize.")
+
+        return (
+            plugins["SearchAgent"],
+            plugins["BioManager"],
+            plugins["MemoryManager"],
+            plugins["CommandInfoManager"],
+            plugins["ImageGenerator"],
+            plugins["TipsManager"]
+        )
 
     async def cog_unload(self):
         await self.http_session.close()
@@ -410,83 +430,6 @@ class LLMCog(commands.Cog, name="LLM"):
         client = self._initialize_llm_client(model_string)
         if client: self.llm_clients[model_string] = client
         return client
-
-    def _initialize_search_agent(self) -> Optional[SearchAgent]:
-        if 'search' not in self.llm_config.get('active_tools', []) or not SearchAgent:
-            return None
-
-        search_config = self.llm_config.get('search_agent', {})
-
-        # 複数のAPIキー (api_key1, api_key2, ...) に対応
-        api_keys = []
-        i = 1
-        while True:
-            key = search_config.get(f'api_key{i}')
-            if key:
-                api_keys.append(key)
-                i += 1
-            else:
-                break
-
-        # フォールバック: api_key1 がない場合は api_key を確認
-        if not api_keys and search_config.get('api_key'):
-            api_keys.append(search_config['api_key'])
-
-        if not api_keys:
-            logger.error("SearchAgent config (api_key/api_key1) is missing. Search will be disabled.")
-            return None
-
-        logger.info(f"Loaded {len(api_keys)} API key(s) for SearchAgent.")
-
-        try:
-            return SearchAgent(self.bot)
-        except Exception as e:
-            logger.error(f"Failed to initialize SearchAgent: {e}", exc_info=True)
-            return None
-
-    def _initialize_bio_manager(self) -> Optional[BioManager]:
-        if not BioManager: return None
-        try:
-            return BioManager(self.bot)
-        except Exception as e:
-            logger.error(f"Failed to initialize BioManager: {e}", exc_info=True)
-            return None
-
-    def _initialize_memory_manager(self) -> Optional[MemoryManager]:
-        if not MemoryManager: return None
-        try:
-            return MemoryManager(self.bot)
-        except Exception as e:
-            logger.error(f"Failed to initialize MemoryManager: {e}", exc_info=True)
-            return None
-
-    def _initialize_command_manager(self) -> Optional[CommandInfoManager]:
-        # 設定でcommands_managerがfalseの場合は初期化しない
-        if not self.llm_config.get('commands_manager', True):
-            logger.info("commands_manager is disabled in config. CommandInfoManager will not be initialized.")
-            return None
-        if not CommandInfoManager: return None
-        try:
-            return CommandInfoManager(self.bot)
-        except Exception as e:
-            logger.error(f"Failed to initialize CommandInfoManager: {e}", exc_info=True)
-            return None
-
-    def _initialize_image_generator(self) -> Optional[ImageGenerator]:
-        if not ImageGenerator: return None
-        try:
-            return ImageGenerator(self.bot)
-        except Exception as e:
-            logger.error(f"Failed to initialize ImageGenerator: {e}", exc_info=True)
-            return None
-
-    def _initialize_tips_manager(self) -> Optional[TipsManager]:
-        if not TipsManager: return None
-        try:
-            return TipsManager()
-        except Exception as e:
-            logger.error(f"Failed to initialize TipsManager: {e}", exc_info=True)
-            return None
 
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
         if not self.bio_manager or not self.memory_manager:

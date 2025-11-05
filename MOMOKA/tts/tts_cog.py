@@ -12,15 +12,15 @@ from typing import Dict, Optional, List, Any
 import time
 
 try:
-    from PLANA.music.music_cog import MusicCog
-    from PLANA.music.plugins.audio_mixer import TTSAudioSource, MusicAudioSource
+    from MOMOKA.music.music_cog import MusicCog
+    from MOMOKA.music.plugins.audio_mixer import TTSAudioSource, MusicAudioSource
 except ImportError:
     MusicCog = None
     TTSAudioSource = None
     MusicAudioSource = None
 
 try:
-    from PLANA.tts.error.errors import TTSCogExceptionHandler
+    from MOMOKA.tts.error.errors import TTSCogExceptionHandler
 except ImportError as e:
     print(f"[CRITICAL] TTSCog: 必須コンポーネントのインポートに失敗しました。エラー: {e}")
     TTSCogExceptionHandler = None

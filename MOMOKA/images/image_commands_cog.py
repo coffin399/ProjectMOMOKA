@@ -7,7 +7,7 @@ import random
 from discord import app_commands
 from discord.ext import commands
 
-from PLANA.images.error import errors
+from MOMOKA.images.error import errors
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ from discord import app_commands
 from discord.ext import commands
 
 # ユーザー指定のエラークラスをインポート
-from PLANA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
+from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
 
 logger = logging.getLogger(__name__)
 
