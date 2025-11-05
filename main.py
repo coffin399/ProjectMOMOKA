@@ -132,6 +132,156 @@ root_logger.addHandler(queue_handler)
 from MOMOKA.services.discord_handler import DiscordLogHandler, DiscordLogFormatter
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
 
+class Momoka(commands.Bot):
+    """MOMOKA Botのメインクラス"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config = None
+        self.status_templates = []
+        self.status_index = 0
+        # ロードするCogのリスト
+        self.cogs_to_load = [
+            'MOMOKA.images.image_commands_cog',
+            'MOMOKA.llm.llm_cog',
+            'MOMOKA.media_downloader.ytdlp_downloader_cog',
+            'MOMOKA.music.music_cog',
+            'MOMOKA.notifications.earthquake_notification_cog',
+            'MOMOKA.notifications.twitch_notification_cog',
+            'MOMOKA.timer.timer_cog',
+            'MOMOKA.tracker.r6s_tracker_cog',
+            'MOMOKA.tracker.valorant_tracker_cog',
+            'MOMOKA.tts.tts_cog',
+            'MOMOKA.utilities.slash_command_cog',
+        ]
+    
+    def is_admin(self, user_id: int) -> bool:
+        """ユーザーが管理者かどうかをチェック"""
+        admin_ids = self.config.get('admin_user_ids', [])
+        return user_id in admin_ids
+    
+    async def setup_hook(self):
+        """Botの初期セットアップ（ログイン後、接続準備完了前）"""
+        # 設定ファイルの読み込み
+        if not os.path.exists(CONFIG_FILE):
+            if os.path.exists(DEFAULT_CONFIG_FILE):
+                try:
+                    shutil.copyfile(DEFAULT_CONFIG_FILE, CONFIG_FILE)
+                    logging.info(f"{CONFIG_FILE} が見つからなかったため、{DEFAULT_CONFIG_FILE} からコピーして生成しました。")
+                    logging.warning(f"生成された {CONFIG_FILE} を確認し、ボットトークンやAPIキーを設定してください。")
+                except Exception as e_copy:
+                    print(f"CRITICAL: {DEFAULT_CONFIG_FILE} から {CONFIG_FILE} のコピー中にエラーが発生しました: {e_copy}")
+                    raise RuntimeError(f"{CONFIG_FILE} の生成に失敗しました。")
+            else:
+                print(f"CRITICAL: {CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。設定ファイルがありません。")
+                raise FileNotFoundError(f"{CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。")
+        
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+                if not self.config:
+                    print(f"CRITICAL: {CONFIG_FILE} が空または無効です。ボットを起動できません。")
+                    raise RuntimeError(f"{CONFIG_FILE} が空または無効です。")
+            logging.info(f"{CONFIG_FILE} を正常に読み込みました。")
+        except Exception as e:
+            print(f"CRITICAL: {CONFIG_FILE} の読み込みまたは解析中にエラーが発生しました: {e}")
+            raise
+        
+        # ロギング設定
+        logging_json_path = "data/logging_channels.json"
+        log_channel_ids_from_config = self.config.get('log_channel_ids', [])
+        if not isinstance(log_channel_ids_from_config, list):
+            log_channel_ids_from_config = []
+            logging.warning("config.yaml の 'log_channel_ids' はリスト形式である必要があります。")
+        
+        log_channel_ids_from_file = []
+        try:
+            dir_path = os.path.dirname(logging_json_path)
+            os.makedirs(dir_path, exist_ok=True)
+            if not os.path.exists(logging_json_path):
+                with open(logging_json_path, 'w') as f:
+                    json.dump([], f)
+                logging.info(f"{logging_json_path} が見つからなかったため、新規作成しました。")
+            
+            with open(logging_json_path, 'r') as f:
+                data = json.load(f)
+                if isinstance(data, list) and all(isinstance(i, int) for i in data):
+                    log_channel_ids_from_file = data
+        except (json.JSONDecodeError, IOError) as e:
+            logging.error(f"{logging_json_path} の処理中にエラーが発生しました: {e}")
+        
+        all_log_channel_ids = list(set(log_channel_ids_from_config + log_channel_ids_from_file))
+        
+        if all_log_channel_ids:
+            try:
+                discord_handler = DiscordLogHandler(bot=self, channel_ids=all_log_channel_ids, interval=6.0)
+                discord_handler.setLevel(logging.INFO)
+                discord_formatter = DiscordLogFormatter('%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
+                discord_handler.setFormatter(discord_formatter)
+                root_logger.addHandler(discord_handler)
+                logging.info(f"DiscordへのロギングをチャンネルID {all_log_channel_ids} で有効化しました。")
+            except Exception as e:
+                logging.error(f"DiscordLogHandler の初期化中にエラーが発生しました: {e}")
+        else:
+            logging.warning("ログ送信先のDiscordチャンネルが設定されていません。")
+        
+        # Cogのロード
+        logging.info("Cogのロードを開始します...")
+        loaded_cogs_count = 0
+        for module_path in self.cogs_to_load:
+            try:
+                await self.load_extension(module_path)
+                logging.info(f"  > Cog '{module_path}' のロードに成功しました。")
+                loaded_cogs_count += 1
+            except commands.ExtensionAlreadyLoaded:
+                logging.debug(f"Cog '{module_path}' は既にロードされています。")
+            except commands.ExtensionNotFound:
+                logging.error(f"  > Cog '{module_path}' が見つかりません。ファイルパスを確認してください。")
+            except commands.NoEntryPointError:
+                logging.error(f"  > Cog '{module_path}' に setup 関数が見つかりません。Cogとして正しく実装されていますか？")
+            except Exception as e:
+                logging.error(f"  > Cog '{module_path}' のロード中に予期しないエラーが発生しました: {e}", exc_info=True)
+        logging.info(f"Cogのロードが完了しました。合計 {loaded_cogs_count} 個のCogをロードしました。")
+        
+        # スラッシュコマンドの同期
+        if self.config.get('sync_slash_commands', True):
+            try:
+                test_guild_id = self.config.get('test_guild_id')
+                if test_guild_id:
+                    guild_obj = discord.Object(id=int(test_guild_id))
+                    synced_commands = await self.tree.sync(guild=guild_obj)
+                    logging.info(f"{len(synced_commands)}個のスラッシュコマンドをテストギルド {test_guild_id} に同期しました。")
+                else:
+                    synced_commands = await self.tree.sync()
+                    logging.info(f"{len(synced_commands)}個のグローバルスラッシュコマンドを同期しました。")
+            except Exception as e:
+                logging.error(f"スラッシュコマンドの同期中にエラーが発生しました: {e}", exc_info=True)
+        else:
+            logging.info("スラッシュコマンドの同期は設定で無効化されています。")
+        
+        # エラーハンドラの設定
+        self.tree.on_error = self.on_app_command_error
+    
+    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+        """スラッシュコマンドのエラーハンドリング"""
+        if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
+            return  # 無視するエラー
+            
+        if isinstance(error, commands.MissingPermissions):
+            await interaction.response.send_message("❌ このコマンドを実行する権限がありません。", ephemeral=True)
+        elif isinstance(error, (commands.BotMissingPermissions, discord.Forbidden)):
+            await interaction.response.send_message("❌ ボットに必要な権限がありません。管理者に連絡してください。", ephemeral=True)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await interaction.response.send_message(f"⏳ このコマンドは {error.retry_after:.1f} 秒後に再試行できます。", ephemeral=True)
+        elif isinstance(error, (InvalidDiceNotationError, DiceValueError)):
+            await interaction.response.send_message(f"❌ {str(error)}", ephemeral=True)
+        else:
+            # その他のエラーはログに記録
+            logging.error(f"コマンドエラー: {error}", exc_info=error)
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ コマンドの実行中にエラーが発生しました。", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ コマンドの実行中にエラーが発生しました。", ephemeral=True)
+
 CONFIG_FILE = 'config.yaml'
 DEFAULT_CONFIG_FILE = 'config.default.yaml'
 
