@@ -20,16 +20,16 @@ langdetect
 pillow
 
 # Local image generation pipeline
-# NumPy 1.x に固定（torch 2.1.0 との互換性のため）
+# Pin NumPy to 1.x for compatibility with torch 2.1.0
 numpy<2.0.0
 
-# PyTorch関連（CUDA 11.8）
+# PyTorch related (CUDA 11.8)
 torch==2.1.0+cu118
 torchvision==0.16.0+cu118
 torchaudio==2.1.0+cu118
 xformers==0.0.22.post7
 
-# 画像生成パイプライン（torch 2.1.0 と互換性のあるバージョン）
+# Image generation pipeline (versions compatible with torch 2.1.0)
 diffusers==0.23.0
 transformers==4.35.2
 accelerate==0.25.0
@@ -37,11 +37,11 @@ safetensors==0.4.1
 huggingface-hub==0.19.4
 omegaconf>=2.2.0
 
-# セルフホストがめんどくさい人向けのリリース用
+# For release for those who find self-hosting troublesome
 nuitka
 
-# GUIログビューア用
+# For GUI Log Viewer
 tk
-pillow  # 既に存在しますが、念のため明記
+pillow  # Already exists, but specified just in case
 ttkthemes
 darkdetect>=0.8.0
