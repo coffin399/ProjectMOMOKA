@@ -122,6 +122,6 @@ class ImageModelRegistry:
     @classmethod
     def from_default_root(cls) -> "ImageModelRegistry":
         module_path = Path(__file__).resolve()
-        # .../ProjectMOMOKA/MOMOKA/generator/imagen/model_registry.py -> parents[4] == ProjectMOMOKA
-        project_root = module_path.parents[4]
+        # .../ProjectMOMOKA/MOMOKA/generator/imagen/model_registry.py -> parents[3] == ProjectMOMOKA
+        project_root = module_path.parents[3]
         return cls(project_root / "models" / "image-models")
