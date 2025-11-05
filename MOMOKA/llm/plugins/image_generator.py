@@ -74,18 +74,20 @@ class ImageGenerator:
 
             discovered_models = sorted(self.model_registry.names())
             if not discovered_models:
-                raise RuntimeError("No local image models found under models/image-models")
+                logger.warning("No local image models found under models/image-models; pipeline will remain inactive until models are added.")
 
             configured_models = self.image_gen_config.get("available_models")
             if configured_models:
                 available = [model for model in configured_models if model in discovered_models]
-                if not available:
+                if not available and configured_models:
                     logger.warning(
-                        "Configured available_models not found locally. Using discovered models instead."
+                        "Configured available_models not found locally. Local generation disabled until models are installed."
                     )
                     available = discovered_models
             else:
                 available = discovered_models
+            if not available:
+                available = []
         else:
             self.model_registry = None
             self.pipeline = None
@@ -101,10 +103,12 @@ class ImageGenerator:
 
         self.available_models = available
         configured_default = self.image_gen_config.get("model")
-        if configured_default in self.available_models:
+        if configured_default and configured_default in self.available_models:
             self.default_model = configured_default
-        else:
+        elif self.available_models:
             self.default_model = self.available_models[0]
+        else:
+            self.default_model = configured_default or ""
 
         provider_labels = {
             "local": "MOMOKA Local Diffusers",
