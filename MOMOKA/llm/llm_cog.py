@@ -1044,8 +1044,24 @@ class LLMCog(commands.Cog, name="LLM"):
             if tools_def and supports_tools:
                 api_kwargs["tools"] = tools_def
                 api_kwargs["tool_choice"] = "auto"
-                logger.info(
-                    f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {[t['function']['name'] for t in tools_def]}")
+                # Safely get tool names, handling cases where the structure might be different
+                tool_names = []
+                for t in tools_def:
+                    try:
+                        if isinstance(t, dict):
+                            if 'function' in t and isinstance(t['function'], dict):
+                                tool_names.append(t['function'].get('name', 'unnamed_function'))
+                            elif 'name' in t:
+                                tool_names.append(t['name'])
+                            else:
+                                tool_names.append('unnamed_tool')
+                        else:
+                            tool_names.append(str(t))
+                    except Exception as e:
+                        logger.warning(f"⚠️ [TOOLS] Error processing tool: {e}")
+                        tool_names.append('error_processing_tool')
+                
+                logger.info(f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
                 if is_koboldcpp:
                     logger.info(f"🔧 [KoboldCPP] Tools are enabled for this model")
             elif tools_def and not supports_tools:
