@@ -400,7 +400,7 @@ class ImageGenerator:
                         current_time - progress_state["start_time"],
                         0.0,
                         "Generating... / 生成中..."
-                    )),
+                    ))
             )
 
         try:
