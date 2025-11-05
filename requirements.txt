@@ -20,15 +20,20 @@ langdetect
 pillow
 
 # Local image generation pipeline
-# xformersと互換性のあるバージョンに統一
+# NumPy 1.x に固定（torch 2.1.0 との互換性のため）
+numpy<2.0.0
+
+# PyTorch関連（CUDA 11.8）
 torch==2.1.0+cu118
 torchvision==0.16.0+cu118
 torchaudio==2.1.0+cu118
 xformers==0.0.22.post7
-diffusers
-accelerate
-safetensors
-transformers
+
+# 画像生成パイプライン（torch 2.1.0 と互換性のあるバージョン）
+diffusers==0.25.1
+transformers==4.36.2
+accelerate==0.25.0
+safetensors==0.4.1
 
 # セルフホストがめんどくさい人向けのリリース用
 nuitka
