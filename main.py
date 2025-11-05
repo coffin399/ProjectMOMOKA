@@ -15,6 +15,55 @@ import atexit
 from pathlib import Path
 import ctypes
 
+# モバイルアプリとして識別するための関数
+async def mobile_identify(self):
+    """Discordのモバイルアプリとして識別するための関数"""
+    # 通常のidentifyペイロードを取得
+    payload = {
+        'op': self.IDENTIFY,
+        'd': {
+            'token': self.token,
+            'properties': {
+                '$os': sys.platform,
+                '$browser': 'Discord iOS',  # モバイルアプリとして識別
+                '$device': 'discord.py',
+                '$referrer': '',
+                '$referring_domain': ''
+            },
+            'compress': True,
+            'large_threshold': 250,
+            'v': 3
+        }
+    }
+    
+    # 必要に応じてintentsを追加
+    if self._connection.intents is not None:
+        payload['d']['intents'] = self._connection.intents.value
+    
+    # セッションIDを追加（存在する場合）
+    if self._connection.session_id is not None:
+        payload['d']['session_id'] = self._connection.session_id
+    
+    # セッションIDを追加（存在する場合）
+    if self._connection._activity is not None or self._connection._status is not None:
+        payload['d']['presence'] = {
+            'status': self._connection._status or 'online',
+            'game': self._connection._activity,
+            'since': 0,
+            'afk': False
+        }
+    
+    # プロパティを上書きしてモバイルアプリとして識別
+    payload['d']['properties']['$os'] = 'iOS'
+    payload['d']['properties']['$browser'] = 'Discord iOS'
+    payload['d']['properties']['$device'] = 'iPhone'
+    payload['d']['properties']['$referrer'] = ''
+    payload['d']['properties']['$referring_domain'] = ''
+    
+    # 識別情報を送信
+    await self.call_hooks('before_identify', self.shard_id, initial=self._initial_identify)
+    await self.send_as_json(payload)
+
 def set_dark_mode():
     """Windowsのダークモードを有効化"""
     try:
