@@ -1895,7 +1895,7 @@ class LLMCog(commands.Cog, name="LLM"):
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
             return
-        # プロバイダー付き形式（forge/model_name）の場合は実際のモデル名を抽出
+        # プロバイダー付き形式（provider/model_name）の場合は実際のモデル名を抽出
         actual_model = model.split('/', 1)[1] if '/' in model else model
         available_models = self.image_generator.get_available_models()
         if actual_model not in available_models:
@@ -1911,7 +1911,8 @@ class LLMCog(commands.Cog, name="LLM"):
             try:
                 provider, model_name = model.split('/', 1)
             except ValueError:
-                provider, model_name = "forge", model  # Forgeの場合はデフォルトプロバイダーをforgeに
+                provider, model_name = "local", model
+
             if model != default_model:
                 embed = discord.Embed(title="✅ Image Model Switched / 画像生成モデルを切り替えました",
                                       description="The image generation model for this channel has been switched.\nこのチャンネルの画像生成モデルを切り替えました。",
@@ -1939,43 +1940,6 @@ class LLMCog(commands.Cog, name="LLM"):
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
 
-    @app_commands.command(name="reset-image-model",
-                          description="Reset the image generation model to default for this channel. / このチャンネルの画像生成モデルをデフォルトに戻します。")
-    async def reset_image_model_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.image_generator:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view())
-            return
-        try:
-            if await self.image_generator.reset_model_for_channel(interaction.channel_id):
-                default_model = self.image_generator.default_model
-                embed = discord.Embed(title="✅ Image Model Reset to Default / 画像生成モデルをデフォルトに戻しました",
-                                      description="The image generation model for this channel has been reset to the default.\nこのチャンネルの画像生成モデルをデフォルトに戻しました。",
-                                      color=discord.Color.green())
-                embed.add_field(name="Default Model / デフォルトモデル", value=f"```\n{default_model}\n```",
-                                inline=False)
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-                logger.info(
-                    f"Image model for channel {interaction.channel_id} reset to default by {interaction.user.name}")
-            else:
-                embed = discord.Embed(title="ℹ️ No Custom Model Set / 専用モデルはありません",
-                                      description="No custom image generation model is set for this channel.\nこのチャンネルには専用の画像生成モデルが設定されていません。",
-                                      color=discord.Color.blue())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save channel image model settings after reset: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save settings.\n設定の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view())
-
     @app_commands.command(name="show-image-model",
                           description="Show the current image generation model for this channel. / このチャンネルの現在の画像生成モデルを表示します。")
     async def show_image_model_slash(self, interaction: discord.Interaction):
@@ -1993,8 +1957,8 @@ class LLMCog(commands.Cog, name="LLM"):
         try:
             provider, model_name = current_model.split('/', 1)
         except ValueError:
-            # Stable Diffusion WebUI Forgeの場合はプロバイダーなしなのでforgeをデフォルトとする
-            provider, model_name = "forge", current_model
+            provider, model_name = "local", current_model
+
         embed = discord.Embed(title="🎨 Current Image Generation Model / 現在の画像生成モデル",
                               color=discord.Color.blue() if is_default else discord.Color.purple())
         embed.add_field(name="Current Model / 現在のモデル", value=f"```\n{current_model}\n```", inline=False)

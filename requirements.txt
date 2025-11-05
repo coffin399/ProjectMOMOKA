@@ -15,5 +15,11 @@ japanize-matplotlib
 cartopy
 langdetect
 pillow
+# Local image generation pipeline
+torch
+diffusers
+accelerate
+safetensors
+
 #セルフホストがめんどくさい人向けのリリース用
 nuitka
