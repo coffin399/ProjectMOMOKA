@@ -10,8 +10,9 @@ Style-Bert-VITS2 統合に関する改変内容
 1. 音声合成エンジンの統合
    - ファイル: MOMOKA/generator/tts/synthesizer.py
    - 変更内容:
+     * Style-Bert-VITS2のソースコード（style_bert_vits2パッケージ）をMOMOKA/generator/tts/style_bert_vits2/に統合
      * Style-Bert-VITS2のTTSModelクラスを直接使用するように変更
-     * style_bert_vits2.tts_model.TTSModelをインポートしてモデルをロード
+     * 統合されたstyle_bert_vits2.tts_model.TTSModelをインポートしてモデルをロード
      * モデルが利用可能な場合は実際のニューラルネットワークベースの合成を使用
      * モデルが利用できない場合はエラーを発生させる
 
@@ -34,7 +35,14 @@ Style-Bert-VITS2 統合に関する改変内容
      * デフォルトサンプルレートを22.05kHzから48kHz（Discord標準）に変更
      * Discord向けの最適化を実施
 
-5. ライセンスファイルの追加
+5. Style-Bert-VITS2パッケージの統合
+   - 統合先: MOMOKA/generator/tts/style_bert_vits2/
+   - 統合内容:
+     * Style-Bert-VITS2のソースコード全体をプロジェクトに統合
+     * 推論に必要なモジュール（models/, nlp/, tts_model.py, constants.py等）を含む
+     * 学習・前処理スクリプトは含まれていない（推論エンジンのみ）
+
+6. ライセンスファイルの追加
    - 追加ファイル:
      * MOMOKA/generator/tts/LICENSE_SBVITS2 (説明ファイル)
      * MOMOKA/generator/tts/LICENSE_SBVITS2_AGPL.txt (AGPL-3.0)
@@ -73,8 +81,9 @@ Style-Bert-VITS2は以下のライセンスの下で提供されています:
 Style-Bert-VITS2: https://github.com/litagin02/Style-Bert-VITS2
 Copyright: litagin02 and contributors
 
-本プロジェクトでは、Style-Bert-VITS2の音声合成エンジンのみを統合し、
-学習・前処理などの機能は含まれていません。
+本プロジェクトでは、Style-Bert-VITS2の音声合成エンジン（推論部分）のソースコードを
+MOMOKA/generator/tts/style_bert_vits2/ に統合しています。
+学習・前処理スクリプト（train_ms.py, bert_gen.py等）は含まれていません。
 
 =============================================================================
 改変日: 2025年11月

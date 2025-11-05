@@ -127,9 +127,9 @@ class StyleBertVITS2Synthesizer:
         self._engine = None
         self._device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
-        # First, try direct import of style_bert_vits2
+        # First, try direct import of style_bert_vits2 (integrated package)
         try:
-            from style_bert_vits2.tts_model import TTSModel
+            from .style_bert_vits2.tts_model import TTSModel
             self._engine = TTSModel(
                 model_path=str(self._ckpt_path),
                 config_path=str(self._json_path),
@@ -234,7 +234,7 @@ class StyleBertVITS2Synthesizer:
             # Style-Bert-VITS2 TTSModel.infer() signature:
             # infer(text, language, speaker_id, reference_audio_path, sdp_ratio, noise, noise_w, length, ...)
             # For our use case, we'll use default speaker_id=0 and language=JP
-            from style_bert_vits2.constants import Languages
+            from .style_bert_vits2.constants import Languages
             
             # Determine style ID
             style_id = 0
