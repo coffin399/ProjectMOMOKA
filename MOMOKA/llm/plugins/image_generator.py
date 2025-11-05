@@ -513,13 +513,23 @@ class ImageGenerator:
         payload = dict(updated_arguments)
         payload["__modal_confirmed__"] = True
 
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.HTTPException as exc:  # noqa: BLE001
+            logger.warning("Failed to defer modal interaction: %s", exc)
+
         result = await self._enqueue_task(
             payload,
             channel_id=interaction.channel_id,
             user_id=interaction.user.id,
             user_name=requester_name,
         )
-        await interaction.response.send_message(result, ephemeral=True)
+
+        try:
+            await interaction.followup.send(result, ephemeral=True)
+        except discord.HTTPException as exc:  # noqa: BLE001
+            logger.error("Failed to send modal follow-up message: %s", exc)
 
     async def _update_queue_message(self, message: discord.Message, status: str, position: int, prompt: str) -> None:
         try:
