@@ -605,11 +605,16 @@ class ImageGenerator:
             logger.debug("Failed to update progress message: %s", exc)
 
     @staticmethod
-    def _format_progress(current: int, total: int, bar_length: int = 12) -> str:
+    def _format_progress(current: int, total: int, bar_length: int = 24) -> str:
         clamped = max(0, min(current, total))
         filled = int((clamped / total) * bar_length) if total else 0
-        bar = "█" * filled + "─" * (bar_length - filled)
-        return f"[{bar}] {clamped}/{total}"
+        bar = "█" * filled + "░" * (bar_length - filled)
+        percentage = (clamped / total * 100) if total > 0 else 0
+        return (
+            f"`{bar}`\n"
+            f"`{percentage:5.1f}%` ({clamped:3d}/{total:3d} steps) - "
+            f"`ETA: {((total - clamped) / 2.5):.1f}s`"
+        )
 
     # ------------------------------------------------------------------
     # Utilities
