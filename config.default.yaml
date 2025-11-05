@@ -117,26 +117,23 @@ llm:
       # ツールが動作しない場合は false に設定すると、ツールなしで動作します
       supports_tools: true
 
-  # --- 画像生成設定 (ローカルDiffusers / Stable Diffusion WebUI Forge) ---
+  # --- 画像生成設定 (Stable Diffusion WebUI Forge) ---
   image_generator:
-    # どの画像生成バックエンドを利用するか選択します。
-    #   "local" : Diffusers を利用した内製Stable Diffusionパイプライン
-    #   "forge" : Stable Diffusion WebUI Forge API
-    provider: "local"
+    # Stable Diffusion WebUI Forge API を利用して画像を生成します。
+    provider: "forge"
 
     # 共通設定 ------------------------------------------------------------
     save_images: true                       # 生成結果をローカルに保存するかどうか
     save_directory: "data/image"           # 保存先ディレクトリ
 
-    # 生成サイズの制約（両プロバイダー共通）
+    # 生成サイズの制約
     default_size: "1024x1024"
     max_width: 2048
     max_height: 2048
     min_width: 256
     min_height: 256
 
-    # 利用可能なモデルリスト（ローカルの場合は自動検出されるため省略可能）
-    # Forge利用時はWebUIで読み込めるモデル名を記載してください。
+    # WebUI Forge で読み込めるモデル名を記載してください。
     available_models:
       - "sd_xl_base_1.0.safetensors"
       - "sd_xl_turbo_1.0.safetensors"
@@ -145,7 +142,7 @@ llm:
     # デフォルトで使用するモデル名
     model: "sd_xl_base_1.0.safetensors"
 
-    # デフォルト生成パラメータ（プロバイダー共通で利用）
+    # デフォルト生成パラメータ
     default_params:
       steps: 20                      # サンプリングステップ数 (推奨: 20-30)
       cfg_scale: 7.0                 # CFG Scale (推奨: 7-11)
