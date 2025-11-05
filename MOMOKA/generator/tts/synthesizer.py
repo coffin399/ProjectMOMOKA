@@ -250,10 +250,14 @@ class StyleBertVITS2Synthesizer:
             # Now import using absolute import path
             from style_bert_vits2.tts_model import TTSModel
             logger.debug(f"TTSModel imported successfully. Initializing with: model_path={self._ckpt_path}, config_path={self._json_path}")
+            # TTSModel expects Path objects, not strings
+            style_vec = None
+            if self._style_vectors_path:
+                style_vec = self._style_vectors_path
             self._engine = TTSModel(
-                model_path=str(self._ckpt_path),
-                config_path=str(self._json_path),
-                style_vec_path=str(self._style_vectors_path) if self._style_vectors_path else None,
+                model_path=self._ckpt_path,
+                config_path=self._json_path,
+                style_vec_path=style_vec,
                 device=self._device,
             )
             logger.debug(f"TTSModel instance created. Loading model...")
