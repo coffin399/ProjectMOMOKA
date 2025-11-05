@@ -1,0 +1,22 @@
+support models
+
+models:
+SUPPORTED_WEIGHTS_EXTENSIONS = {
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".bin",
+}
+
+VAE:
+SUPPORTED_VAE_EXTENSIONS = {
+    ".vae",
+    ".safetensors",
+}
+
+LORA:
+SUPPORTED_LORA_EXTENSIONS = {
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+}
