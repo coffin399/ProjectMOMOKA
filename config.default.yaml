@@ -333,13 +333,26 @@ music:
 # TTS Cog Settings (読み上げ機能に関する設定)
 # =============================================================================
 tts:
-  api_server_url: "http://127.0.0.1:5000"  # Style-Bert-VITS2のURL
-  api_key: null  # 通常は不要
-  default_model_id: 0  # デフォルトのモデルID
-  default_style: "Neutral"  # デフォルトのスタイル
-  default_style_weight: 5.0  # スタイルの強さ
-  default_speed: 1.0  # デフォルトの話速
-  default_volume: 1.0  # デフォルトの音量
+  # --- 内製TTS（Style-Bert-VITS2互換）設定 ----------------------------------
+  # モデル配置ルート（プロジェクト直下に配置）
+  model_root: "models/tts-models"
+  # 既定で使用するモデルディレクトリ名（未指定時は先頭の有効モデルを自動選択）
+  default_model_dir: null
+  # pyopenjtalk の辞書パス（任意）
+  pyopenjtalk_dict_dir: null
+
+  # サンプリング周波数とノイズ制御パラメータ
+  sample_rate: 22050
+  noise_scale: 0.667
+  noise_w: 0.8
+  length_scale: 1.0
+
+  # --- UI/既存機能用の既定パラメータ -------------------------------------
+  default_model_id: 0          # 既存UIの互換用（外部API利用時に参照）
+  default_style: "Neutral"
+  default_style_weight: 5.0
+  default_speed: 1.0
+  default_volume: 1.0
   enable_say_command: true
   enable_join_leave_notice: true
   join_message_template: "{member_name}さんが参加しました。"
