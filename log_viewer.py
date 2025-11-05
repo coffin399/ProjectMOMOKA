@@ -117,6 +117,92 @@ class LogViewerApp:
         # テーマカラーを取得
         self.theme = get_theme_colors()
         
+        # メインウィンドウの背景色を設定
+        self.root.configure(bg=self.theme['bg'])
+        
+        # メニューバーのスタイルを設定
+        self.menubar = tk.Menu(self.root, 
+                             bg=self.theme['bg'], 
+                             fg=self.theme['fg'],
+                             activebackground=self.theme['select_bg'],
+                             activeforeground=self.theme['select_fg'],
+                             relief='flat',
+                             bd=0)
+        
+        # ファイルメニュー
+        file_menu = tk.Menu(self.menubar, 
+                          tearoff=0, 
+                          bg=self.theme['bg'], 
+                          fg=self.theme['fg'],
+                          activebackground=self.theme['select_bg'],
+                          activeforeground=self.theme['select_fg'],
+                          bd=1,
+                          relief='solid')
+        file_menu.add_command(label="終了", 
+                            command=self.root.quit,
+                            activebackground=self.theme['select_bg'],
+                            activeforeground=self.theme['select_fg'])
+        self.menubar.add_cascade(label="ファイル", menu=file_menu)
+        
+        # 表示メニュー
+        view_menu = tk.Menu(self.menubar, 
+                          tearoff=0,
+                          bg=self.theme['bg'],
+                          fg=self.theme['fg'],
+                          activebackground=self.theme['select_bg'],
+                          activeforeground=self.theme['select_fg'],
+                          bd=1,
+                          relief='solid')
+        
+        # 自動スクロールの状態変数を初期化
+        self.auto_scroll_var = tk.BooleanVar(value=True)
+        view_menu.add_checkbutton(label="自動スクロール", 
+                                variable=self.auto_scroll_var,
+                                command=self.toggle_auto_scroll,
+                                activebackground=self.theme['select_bg'],
+                                activeforeground=self.theme['select_fg'])
+        
+        self.menubar.add_cascade(label="表示", menu=view_menu)
+        
+        # ヘルプメニュー
+        help_menu = tk.Menu(self.menubar, 
+                           tearoff=0,
+                           bg=self.theme['bg'],
+                           fg=self.theme['fg'],
+                           activebackground=self.theme['select_bg'],
+                           activeforeground=self.theme['select_fg'],
+                           bd=1,
+                           relief='solid')
+        help_menu.add_command(label="バージョン情報",
+                            command=self.show_about,
+                            activebackground=self.theme['select_bg'],
+                            activeforeground=self.theme['select_fg'])
+        self.menubar.add_cascade(label="ヘルプ", menu=help_menu)
+        
+        self.root.config(menu=self.menubar)
+        
+        # 設定ファイルの読み込み
+        self.config_file = "data/log_viewer_config.json"
+        self.load_config()
+        
+        # スタイルの設定を初期化
+        self.setup_styles()
+        
+        # ログキュー
+        self.log_queue = queue.Queue()
+        
+        # ロガーの設定
+        self.setup_logging()
+        
+        # GUIの作成
+        self.setup_gui()
+        
+        # キューを定期的にチェック
+        self.poll_log_queue()
+        
+        # ウィンドウクローズ時の処理
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
         # Windowsのダークモード設定を適用
         if DARK_THEME and platform.system() == 'Windows':
             try:
@@ -130,22 +216,117 @@ class LogViewerApp:
                     ctypes.byref(ctypes.c_int(value)),
                     ctypes.sizeof(ctypes.c_int(value))
                 )
-                
-                # ウィンドウの背景色をダークに設定
-                self.root.configure(bg=self.theme['bg'])
-                
-                # タスクバーの色を設定
-                try:
-                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                        hwnd,
-                        20,  # DWMWA_CAPTION_COLOR
-                        ctypes.byref(ctypes.c_int(0x1e1e1e)),
-                        ctypes.sizeof(ctypes.c_int)
-                    )
-                except:
-                    pass
             except Exception as e:
                 print(f"ダークモードの適用中にエラーが発生しました: {e}")
+    
+    def setup_styles(self):
+        """スタイルの初期化"""
+        style = ttk.Style()
+        
+        # テーマの設定
+        style.theme_use('clam')
+        
+        # フレームのスタイル
+        style.configure('TFrame', 
+                      background=self.theme['bg'],
+                      borderwidth=0)
+        
+        # ラベルのスタイル
+        style.configure('TLabel', 
+                      background=self.theme['bg'], 
+                      foreground=self.theme['fg'],
+                      font=('Meiryo UI', 9),
+                      padding=2)
+        
+        # ボタンのスタイル
+        style.configure('TButton',
+                      background=self.theme['button_bg'],
+                      foreground=self.theme['button_fg'],
+                      borderwidth=1,
+                      relief='raised',
+                      padding=5)
+        
+        style.map('TButton',
+                 background=[('active', self.theme['button_active_bg']),
+                           ('pressed', self.theme['select_bg'])],
+                 foreground=[('active', self.theme['button_active_fg']),
+                           ('pressed', self.theme['select_fg'])],
+                 relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
+        
+        # エントリーのスタイル
+        style.configure('TEntry',
+                      fieldbackground=self.theme['entry_bg'],
+                      foreground=self.theme['entry_fg'],
+                      insertcolor=self.theme['insert_fg'],
+                      borderwidth=1,
+                      relief='solid')
+        
+        # コンボボックスのスタイル
+        style.configure('TCombobox',
+                      fieldbackground=self.theme['entry_bg'],
+                      background=self.theme['entry_bg'],
+                      foreground=self.theme['entry_fg'],
+                      selectbackground=self.theme['select_bg'],
+                      selectforeground=self.theme['select_fg'],
+                      arrowcolor=self.theme['fg'],
+                      borderwidth=1,
+                      relief='solid')
+        
+        # スクロールバーのスタイル
+        style.configure('Vertical.TScrollbar',
+                      background=self.theme['scrollbar_bg'],
+                      troughcolor=self.theme['scrollbar_trough'],
+                      arrowcolor=self.theme['fg'],
+                      bordercolor=self.theme['bg'],
+                      darkcolor=self.theme['bg'],
+                      lightcolor=self.theme['bg'],
+                      gripcount=0,
+                      arrowsize=12)
+        
+        style.configure('Horizontal.TScrollbar',
+                      background=self.theme['scrollbar_bg'],
+                      troughcolor=self.theme['scrollbar_trough'],
+                      arrowcolor=self.theme['fg'],
+                      bordercolor=self.theme['bg'],
+                      darkcolor=self.theme['bg'],
+                      lightcolor=self.theme['bg'],
+                      gripcount=0,
+                      arrowsize=12)
+        
+        # ラベルフレームのスタイル
+        style.configure('TLabelframe',
+                      background=self.theme['bg'],
+                      foreground=self.theme['fg'],
+                      relief='groove',
+                      borderwidth=2)
+        
+        style.configure('TLabelframe.Label',
+                      background=self.theme['bg'],
+                      foreground=self.theme['fg'])
+                      
+        # チェックボタンのスタイル
+        style.configure('TCheckbutton',
+                      background=self.theme['bg'],
+                      foreground=self.theme['fg'],
+                      indicatorbackground=self.theme['bg'],
+                      indicatorcolor=self.theme['fg'],
+                      selectcolor=self.theme['bg'])
+        
+        style.map('TCheckbutton',
+                 background=[('active', self.theme['bg'])],
+                 foreground=[('active', self.theme['fg'])])
+        
+        # ラジオボタンのスタイル
+        style.configure('TRadiobutton',
+                      background=self.theme['bg'],
+                      foreground=self.theme['fg'],
+                      indicatorbackground=self.theme['bg'],
+                      indicatorcolor=self.theme['fg'],
+                      selectcolor=self.theme['bg'])
+        
+        style.map('TRadiobutton',
+                 background=[('active', self.theme['bg'])],
+                 foreground=[('active', self.theme['fg'])])
         
         # 設定ファイルの読み込み
         self.config_file = "data/log_viewer_config.json"
@@ -197,42 +378,207 @@ class LogViewerApp:
         
     def setup_gui(self):
         # メインフレーム
-        main_frame = ttk.Frame(self.root, padding="5")
+        main_frame = ttk.Frame(self.root, padding="5", style='TFrame')
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # スタイルの設定
-        self.style = ttk.Style()
-        self.style.theme_use('default')
+        # コントロールフレーム
+        control_frame = ttk.Frame(main_frame, padding="5", style='TFrame')
+        control_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # ウィジェットのスタイルを設定
-        self.style.configure('.',
-                           background=self.theme['bg'],
-                           foreground=self.theme['fg'],
-                           fieldbackground=self.theme['insert_bg'],
-                           selectbackground=self.theme['select_bg'],
-                           selectforeground=self.theme['select_fg'],
-                           insertcolor=self.theme['insert_fg'],
-                           troughcolor=self.theme['scrollbar_trough'],
-                           arrowcolor=self.theme['fg'],
-                           highlightthickness=1,
-                           relief='flat')
+        # ログレベル選択
+        log_level_frame = ttk.LabelFrame(control_frame, text="ログレベル", padding=5)
+        log_level_frame.pack(side=tk.LEFT, padx=5, pady=5)
         
-        # ボタンのスタイル
-        self.style.configure('TButton',
-                           background=self.theme['button_bg'],
-                           foreground=self.theme['button_fg'],
-                           borderwidth=1,
-                           relief='raised')
+        # 一般ログレベル
+        ttk.Label(log_level_frame, text="一般:").grid(row=0, column=0, padx=2, pady=2, sticky=tk.W)
+        general_level = ttk.Combobox(
+            log_level_frame,
+            values=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            state="readonly",
+            width=10
+        )
+        general_level.set(self.config["log_levels"].get("general", "INFO"))
+        general_level.grid(row=0, column=1, padx=2, pady=2)
+        general_level.bind("<<ComboboxSelected>>", 
+                          lambda e: self.update_log_level("general", general_level.get()))
         
-        self.style.map('TButton',
-                      background=[('active', self.theme['button_active_bg'])],
-                      foreground=[('active', self.theme['button_active_fg'])])
+        # LLMログレベル
+        ttk.Label(log_level_frame, text="LLM:").grid(row=0, column=2, padx=2, pady=2, sticky=tk.W)
+        llm_level = ttk.Combobox(
+            log_level_frame,
+            values=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            state="readonly",
+            width=10
+        )
+        llm_level.set(self.config["log_levels"].get("llm", "INFO"))
+        llm_level.grid(row=0, column=3, padx=2, pady=2)
+        llm_level.bind("<<ComboboxSelected>>", 
+                      lambda e: self.update_log_level("llm", llm_level.get()))
         
-        # ラベルフレームのスタイル
-        self.style.configure('TLabelframe',
-                           background=self.theme['frame_bg'],
-                           foreground=self.theme['fg'],
-                           relief='groove',
+        # TTSログレベル
+        ttk.Label(log_level_frame, text="TTS:").grid(row=0, column=4, padx=2, pady=2, sticky=tk.W)
+        tts_level = ttk.Combobox(
+            log_level_frame,
+            values=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+            state="readonly",
+            width=10
+        )
+        tts_level.set(self.config["log_levels"].get("tts", "INFO"))
+        tts_level.grid(row=0, column=5, padx=2, pady=2)
+        tts_level.bind("<<ComboboxSelected>>", 
+                      lambda e: self.update_log_level("tts", tts_level.get()))
+        
+        # エラーログレベル
+        ttk.Label(log_level_frame, text="エラー:").grid(row=0, column=6, padx=2, pady=2, sticky=tk.W)
+        error_level = ttk.Combobox(
+            log_level_frame,
+            values=["WARNING", "ERROR", "CRITICAL"],
+            state="readonly",
+            width=10
+        )
+        error_level.set(self.config["log_levels"].get("error", "WARNING"))
+        error_level.grid(row=0, column=7, padx=2, pady=2)
+        error_level.bind("<<ComboboxSelected>>", 
+                        lambda e: self.update_log_level("error", error_level.get()))
+        
+        # ボタンフレーム
+        button_frame = ttk.Frame(control_frame, style='TFrame')
+        button_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        # クリアボタン
+        clear_button = ttk.Button(
+            button_frame,
+            text="ログをクリア",
+            command=self.clear_all_logs
+        )
+        clear_button.pack(side=tk.LEFT, padx=2)
+        
+        # 自動スクロールチェックボタン
+        self.auto_scroll_var = tk.BooleanVar(value=self.config.get("auto_scroll", True))
+        auto_scroll = ttk.Checkbutton(
+            button_frame,
+            text="自動スクロール",
+            variable=self.auto_scroll_var,
+            command=self.toggle_auto_scroll
+        )
+        auto_scroll.pack(side=tk.LEFT, padx=2)
+        
+        # ログ表示エリアのフレーム
+        log_frame = ttk.Frame(main_frame, style='TFrame')
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # グリッドの設定
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.columnconfigure(1, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
+        
+        # ログ表示エリアのスタイル
+        # スタイルは既にsetup_stylesで設定されているため、ここでは不要
+        
+        # 左上: 一般ログ
+        general_frame = ttk.LabelFrame(log_frame, text="一般ログ", padding="2", style='TLabelframe')
+        general_frame.grid(row=0, column=0, padx=2, pady=2, sticky="nsew")
+        self.general_log = scrolledtext.ScrolledText(
+            general_frame, 
+            wrap=tk.WORD, 
+            width=60, 
+            height=15,
+            font=self.config["font"],
+            bg=self.theme['text_bg'],
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat'
+        )
+        self.general_log.pack(fill=tk.BOTH, expand=True)
+        
+        # 右上: LLMログ
+        llm_frame = ttk.LabelFrame(log_frame, text="LLMログ", padding="2", style='TLabelframe')
+        llm_frame.grid(row=0, column=1, padx=2, pady=2, sticky="nsew")
+        self.llm_log = scrolledtext.ScrolledText(
+            llm_frame, 
+            wrap=tk.WORD, 
+            width=60, 
+            height=15,
+            font=self.config["font"],
+            bg=self.theme['text_bg'],
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat'
+        )
+        self.llm_log.pack(fill=tk.BOTH, expand=True)
+        
+        # 左下: TTSログ
+        tts_frame = ttk.LabelFrame(log_frame, text="TTSログ", padding="2", style='TLabelframe')
+        tts_frame.grid(row=1, column=0, padx=2, pady=2, sticky="nsew")
+        self.tts_log = scrolledtext.ScrolledText(
+            tts_frame, 
+            wrap=tk.WORD, 
+            width=60, 
+            height=15,
+            font=self.config["font"],
+            bg=self.theme['text_bg'],
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat'
+        )
+        self.tts_log.pack(fill=tk.BOTH, expand=True)
+        
+        # 右下: エラーログ
+        error_frame = ttk.LabelFrame(log_frame, text="エラーログ", padding="2", style='TLabelframe')
+        error_frame.grid(row=1, column=1, padx=2, pady=2, sticky="nsew")
+        self.error_log = scrolledtext.ScrolledText(
+            error_frame, 
+            wrap=tk.WORD, 
+            width=60, 
+            height=15,
+            font=self.config["font"],
+            bg=self.theme['text_bg'],
+            fg=self.theme['error'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat'
+        )
+        self.error_log.pack(fill=tk.BOTH, expand=True)
+        
+        # ステータスバー
+        self.status_var = tk.StringVar()
+        self.status_var.set("準備完了")
+        status_bar = ttk.Label(
+            self.root, 
+            textvariable=self.status_var, 
+            relief=tk.SUNKEN, 
+            anchor=tk.W,
+            style='TLabel'
+        )
+        status_bar.pack(fill=tk.X, side=tk.BOTTOM, ipady=2)
+        
+        # コンテキストメニューの設定
+        self.setup_context_menu(self.general_log)
+        self.setup_context_menu(self.llm_log)
+        self.setup_context_menu(self.tts_log)
+        self.setup_context_menu(self.error_log)
+        
+        # キーバインドの設定
+        self.root.bind_all("<Control-c>", lambda e: self.copy_text(self.root.focus_get()))
+        self.root.bind_all("<Control-a>", lambda e: self.select_all(self.root.focus_get()))
+        
+        # 初期フォーカスを設定
+        self.general_log.focus_set()
+        
+        # メニューのスタイル
+        self.root.option_add('*Menu*background', self.theme['bg'])
+        self.root.option_add('*Menu*foreground', self.theme['fg'])
+        self.root.option_add('*Menu*activeBackground', self.theme['select_bg'])
+        self.root.option_add('*Menu*activeForeground', self.theme['select_fg'])
+        
                            borderwidth=2)
         
         self.style.configure('TLabelframe.Label',
@@ -281,9 +627,9 @@ class LogViewerApp:
                            borderwidth=1,
                            padding=5)
         
-        # 上部フレーム（コントロールパネル）
-        control_frame = ttk.LabelFrame(main_frame, text="コントロール", padding="5 2 5 5")
-        control_frame.pack(fill=tk.X, pady=(0, 5))
+        # コントロールフレーム
+        control_frame = ttk.Frame(main_frame, padding="5", style='TFrame')
+        control_frame.pack(fill=tk.X, padx=5, pady=5)
         
         # クリアボタン
         ttk.Button(control_frame, text="全クリア", command=self.clear_all_logs).pack(side=tk.LEFT, padx=2)
@@ -314,12 +660,18 @@ class LogViewerApp:
         ttk.OptionMenu(control_frame, self.error_level, self.error_level.get(), *log_levels,
                       command=lambda x: self.update_log_level("error", x)).pack(side=tk.LEFT, padx=2)
         
-        # ログ表示エリア
-        log_frame = ttk.Frame(main_frame)
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        # ログ表示エリアの作成
+        log_frame = ttk.Frame(main_frame, style='TFrame')
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # ログ表示エリアのスタイルを設定
+        log_style = ttk.Style()
+        log_style.configure('Log.TFrame', background=self.theme['bg'])
+        log_style.configure('Log.TLabelframe', background=self.theme['bg'], foreground=self.theme['fg'])
+        log_style.configure('Log.TLabelframe.Label', background=self.theme['bg'], foreground=self.theme['fg'])
         
         # 左上: 一般ログ
-        general_frame = ttk.LabelFrame(log_frame, text="一般ログ", padding="2")
+        general_frame = ttk.LabelFrame(log_frame, text="一般ログ", padding="2", style='TLabelframe')
         general_frame.grid(row=0, column=0, padx=2, pady=2, sticky="nsew")
         self.general_log = scrolledtext.ScrolledText(
             general_frame, wrap=tk.WORD, width=60, height=15,
@@ -335,7 +687,7 @@ class LogViewerApp:
         self.general_log.pack(fill=tk.BOTH, expand=True)
         
         # 右上: LLMログ
-        llm_frame = ttk.LabelFrame(log_frame, text="LLMログ", padding="2")
+        llm_frame = ttk.LabelFrame(log_frame, text="LLMログ", padding="2", style='TLabelframe')
         llm_frame.grid(row=0, column=1, padx=2, pady=2, sticky="nsew")
         self.llm_log = scrolledtext.ScrolledText(
             llm_frame, wrap=tk.WORD, width=60, height=15,
@@ -351,7 +703,7 @@ class LogViewerApp:
         self.llm_log.pack(fill=tk.BOTH, expand=True)
         
         # 左下: TTSログ
-        tts_frame = ttk.LabelFrame(log_frame, text="TTSログ", padding="2")
+        tts_frame = ttk.LabelFrame(log_frame, text="TTSログ", padding="2", style='TLabelframe')
         tts_frame.grid(row=1, column=0, padx=2, pady=2, sticky="nsew")
         self.tts_log = scrolledtext.ScrolledText(
             tts_frame, wrap=tk.WORD, width=60, height=15,
@@ -367,7 +719,7 @@ class LogViewerApp:
         self.tts_log.pack(fill=tk.BOTH, expand=True)
         
         # 右下: エラーログ
-        error_frame = ttk.LabelFrame(log_frame, text="エラーログ", padding="2")
+        error_frame = ttk.LabelFrame(log_frame, text="エラーログ", padding="2", style='TLabelframe')
         error_frame.grid(row=1, column=1, padx=2, pady=2, sticky="nsew")
         self.error_log = scrolledtext.ScrolledText(
             error_frame, wrap=tk.WORD, width=60, height=15,
@@ -394,22 +746,12 @@ class LogViewerApp:
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(fill=tk.X, side=tk.BOTTOM, ipady=2)
         
-        # コンテキストメニュー
-        self.setup_context_menu()
-        
-    def setup_context_menu(self):
-        # 各テキストウィジェットにコンテキストメニューを追加
-        for widget in [self.general_log, self.llm_log, self.tts_log, self.error_log]:
-            menu = tk.Menu(widget, tearoff=0)
-            menu.add_command(label="コピー", command=lambda w=widget: self.copy_text(w))
-            menu.add_command(label="すべて選択", command=lambda w=widget: self.select_all(w))
-            menu.add_separator()
-            menu.add_command(label="クリア", command=lambda w=widget: self.clear_log(w))
-            
-            widget.bind("<Button-3>", lambda e, m=menu: self.show_context_menu(e, m))
     
-    def show_context_menu(self, event, menu):
-        try:
+    # 既存のハンドラをクリア
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+            if widget:
+                widget.focus_set()
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
