@@ -504,6 +504,23 @@ class ImageGenerator:
 
         asyncio.create_task(self._process_task(next_task, return_result=False))
 
+    async def _handle_modal_submission(
+        self,
+        interaction: discord.Interaction,
+        updated_arguments: Dict[str, Any],
+        requester_name: str,
+    ) -> None:
+        payload = dict(updated_arguments)
+        payload["__modal_confirmed__"] = True
+
+        result = await self._enqueue_task(
+            payload,
+            channel_id=interaction.channel_id,
+            user_id=interaction.user.id,
+            user_name=requester_name,
+        )
+        await interaction.response.send_message(result, ephemeral=True)
+
     async def _update_queue_message(self, message: discord.Message, status: str, position: int, prompt: str) -> None:
         try:
             embed = discord.Embed(
