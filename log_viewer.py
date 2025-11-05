@@ -6,6 +6,98 @@ import threading
 from datetime import datetime
 import os
 import json
+import ctypes
+import platform
+
+def is_dark_mode():
+    """OSのダークモード設定を検出"""
+    try:
+        if platform.system() == 'Windows':
+            import darkdetect
+            return darkdetect.isDark()
+        return False
+    except:
+        return False
+
+# ダークモードの色設定
+DARK_BG = '#1e1e1e'
+DARK_FG = '#e0e0e0'
+DARK_SELECTION_BG = '#264f78'
+DARK_SELECTION_FG = '#ffffff'
+DARK_INSERT_BG = '#3c3c3c'
+DARK_INSERT_FG = '#ffffff'
+DARK_SCROLLBAR_BG = '#2d2d2d'
+DARK_SCROLLBAR_TROUGH = '#1e1e1e'
+
+# ライトモードの色設定
+LIGHT_BG = '#f0f0f0'
+LIGHT_FG = '#000000'
+LIGHT_SELECTION_BG = '#cce8ff'
+LIGHT_SELECTION_FG = '#000000'
+LIGHT_INSERT_BG = '#ffffff'
+LIGHT_INSERT_FG = '#000000'
+LIGHT_SCROLLBAR_BG = '#e0e0e0'
+LIGHT_SCROLLBAR_TROUGH = '#f0f0f0'
+
+# 現在のテーマを決定
+DARK_THEME = is_dark_mode()
+
+def get_theme_colors():
+    """現在のテーマに応じた色を返す"""
+    if DARK_THEME:
+        return {
+            'bg': DARK_BG,
+            'fg': DARK_FG,
+            'select_bg': DARK_SELECTION_BG,
+            'select_fg': DARK_SELECTION_FG,
+            'insert_bg': DARK_INSERT_BG,
+            'insert_fg': DARK_INSERT_FG,
+            'scrollbar_bg': DARK_SCROLLBAR_BG,
+            'scrollbar_trough': DARK_SCROLLBAR_TROUGH,
+            'button_bg': '#2d2d2d',
+            'button_fg': DARK_FG,
+            'button_active_bg': '#3c3c3c',
+            'button_active_fg': DARK_FG,
+            'frame_bg': DARK_BG,
+            'label_bg': DARK_BG,
+            'label_fg': DARK_FG,
+            'entry_bg': DARK_INSERT_BG,
+            'entry_fg': DARK_INSERT_FG,
+            'text_bg': DARK_INSERT_BG,
+            'text_fg': DARK_INSERT_FG,
+            'border': '#3c3c3c',
+            'error': '#ff6b6b',
+            'warning': '#ffd93d',
+            'info': '#4dabf7',
+            'debug': '#adb5bd'
+        }
+    else:
+        return {
+            'bg': LIGHT_BG,
+            'fg': LIGHT_FG,
+            'select_bg': LIGHT_SELECTION_BG,
+            'select_fg': LIGHT_SELECTION_FG,
+            'insert_bg': LIGHT_INSERT_BG,
+            'insert_fg': LIGHT_INSERT_FG,
+            'scrollbar_bg': LIGHT_SCROLLBAR_BG,
+            'scrollbar_trough': LIGHT_SCROLLBAR_TROUGH,
+            'button_bg': '#e0e0e0',
+            'button_fg': LIGHT_FG,
+            'button_active_bg': '#d0d0d0',
+            'button_active_fg': LIGHT_FG,
+            'frame_bg': LIGHT_BG,
+            'label_bg': LIGHT_BG,
+            'label_fg': LIGHT_FG,
+            'entry_bg': LIGHT_INSERT_BG,
+            'entry_fg': LIGHT_INSERT_FG,
+            'text_bg': LIGHT_INSERT_BG,
+            'text_fg': LIGHT_INSERT_FG,
+            'border': '#c0c0c0',
+            'error': '#dc3545',
+            'warning': '#ffc107',
+            'info': '#0d6efd',
+            'debug': '#6c757d'
+        }
 
 class LogHandler(logging.Handler):
     def __init__(self, log_queue):
@@ -21,6 +113,39 @@ class LogViewerApp:
         self.root = root
         self.root.title("MOMOKA ログビューア")
         self.root.geometry("1200x800")
+        
+        # テーマカラーを取得
+        self.theme = get_theme_colors()
+        
+        # Windowsのダークモード設定を適用
+        if DARK_THEME and platform.system() == 'Windows':
+            try:
+                # ウィンドウのテーマカラーをダークに設定
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                hwnd = ctypes.windll.user32.GetForegroundWindow()
+                value = 1  # ダークモード
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 
+                    DWMWA_USE_IMMERSIVE_DARK_MODE,
+                    ctypes.byref(ctypes.c_int(value)),
+                    ctypes.sizeof(ctypes.c_int(value))
+                )
+                
+                # ウィンドウの背景色をダークに設定
+                self.root.configure(bg=self.theme['bg'])
+                
+                # タスクバーの色を設定
+                try:
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd,
+                        20,  # DWMWA_CAPTION_COLOR
+                        ctypes.byref(ctypes.c_int(0x1e1e1e)),
+                        ctypes.sizeof(ctypes.c_int)
+                    )
+                except:
+                    pass
+            except Exception as e:
+                print(f"ダークモードの適用中にエラーが発生しました: {e}")
         
         # 設定ファイルの読み込み
         self.config_file = "data/log_viewer_config.json"
@@ -75,6 +200,87 @@ class LogViewerApp:
         main_frame = ttk.Frame(self.root, padding="5")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
+        # スタイルの設定
+        self.style = ttk.Style()
+        self.style.theme_use('default')
+        
+        # ウィジェットのスタイルを設定
+        self.style.configure('.',
+                           background=self.theme['bg'],
+                           foreground=self.theme['fg'],
+                           fieldbackground=self.theme['insert_bg'],
+                           selectbackground=self.theme['select_bg'],
+                           selectforeground=self.theme['select_fg'],
+                           insertcolor=self.theme['insert_fg'],
+                           troughcolor=self.theme['scrollbar_trough'],
+                           arrowcolor=self.theme['fg'],
+                           highlightthickness=1,
+                           relief='flat')
+        
+        # ボタンのスタイル
+        self.style.configure('TButton',
+                           background=self.theme['button_bg'],
+                           foreground=self.theme['button_fg'],
+                           borderwidth=1,
+                           relief='raised')
+        
+        self.style.map('TButton',
+                      background=[('active', self.theme['button_active_bg'])],
+                      foreground=[('active', self.theme['button_active_fg'])])
+        
+        # ラベルフレームのスタイル
+        self.style.configure('TLabelframe',
+                           background=self.theme['frame_bg'],
+                           foreground=self.theme['fg'],
+                           relief='groove',
+                           borderwidth=2)
+        
+        self.style.configure('TLabelframe.Label',
+                           background=self.theme['frame_bg'],
+                           foreground=self.theme['fg'])
+        
+        # ラベルのスタイル
+        self.style.configure('TLabel',
+                           background=self.theme['label_bg'],
+                           foreground=self.theme['label_fg'])
+        
+        # エントリーのスタイル
+        self.style.configure('TEntry',
+                           fieldbackground=self.theme['entry_bg'],
+                           foreground=self.theme['entry_fg'],
+                           insertcolor=self.theme['insert_fg'])
+        
+        # コンボボックスのスタイル
+        self.style.map('TCombobox',
+                      fieldbackground=[('readonly', self.theme['entry_bg'])],
+                      selectbackground=[('readonly', self.theme['select_bg'])],
+                      selectforeground=[('readonly', self.theme['select_fg'])])
+        
+        # スクロールバーのスタイル
+        self.style.configure('Vertical.TScrollbar',
+                           background=self.theme['scrollbar_bg'],
+                           troughcolor=self.theme['scrollbar_trough'],
+                           arrowcolor=self.theme['fg'],
+                           bordercolor=self.theme['border'])
+        
+        self.style.map('Vertical.TScrollbar',
+                      background=[('active', self.theme['scrollbar_bg'])])
+        
+        # メニューのスタイル
+        self.root.option_add('*Menu.background', self.theme['bg'])
+        self.root.option_add('*Menu.foreground', self.theme['fg'])
+        self.root.option_add('*Menu.selectColor', self.theme['select_bg'])
+        self.root.option_add('*Menu.activeBackground', self.theme['select_bg'])
+        self.root.option_add('*Menu.activeForeground', self.theme['select_fg'])
+        
+        # ツールチップのスタイル
+        self.style.configure('Tooltip.TLabel',
+                           background='#ffffe0',
+                           foreground='#000000',
+                           relief='solid',
+                           borderwidth=1,
+                           padding=5)
+        
         # 上部フレーム（コントロールパネル）
         control_frame = ttk.LabelFrame(main_frame, text="コントロール", padding="5 2 5 5")
         control_frame.pack(fill=tk.X, pady=(0, 5))
@@ -117,7 +323,14 @@ class LogViewerApp:
         general_frame.grid(row=0, column=0, padx=2, pady=2, sticky="nsew")
         self.general_log = scrolledtext.ScrolledText(
             general_frame, wrap=tk.WORD, width=60, height=15,
-            font=self.config["font"], bg='white', fg='black'
+            font=self.config["font"], 
+            bg=self.theme['text_bg'], 
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat',
+            bd=0
         )
         self.general_log.pack(fill=tk.BOTH, expand=True)
         
@@ -126,7 +339,14 @@ class LogViewerApp:
         llm_frame.grid(row=0, column=1, padx=2, pady=2, sticky="nsew")
         self.llm_log = scrolledtext.ScrolledText(
             llm_frame, wrap=tk.WORD, width=60, height=15,
-            font=self.config["font"], bg='#f0f8ff', fg='black'
+            font=self.config["font"], 
+            bg=self.theme['text_bg'], 
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat',
+            bd=0
         )
         self.llm_log.pack(fill=tk.BOTH, expand=True)
         
@@ -135,7 +355,14 @@ class LogViewerApp:
         tts_frame.grid(row=1, column=0, padx=2, pady=2, sticky="nsew")
         self.tts_log = scrolledtext.ScrolledText(
             tts_frame, wrap=tk.WORD, width=60, height=15,
-            font=self.config["font"], bg='#f0fff0', fg='black'
+            font=self.config["font"], 
+            bg=self.theme['text_bg'], 
+            fg=self.theme['text_fg'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat',
+            bd=0
         )
         self.tts_log.pack(fill=tk.BOTH, expand=True)
         
@@ -144,7 +371,14 @@ class LogViewerApp:
         error_frame.grid(row=1, column=1, padx=2, pady=2, sticky="nsew")
         self.error_log = scrolledtext.ScrolledText(
             error_frame, wrap=tk.WORD, width=60, height=15,
-            font=self.config["font"], bg='#fff0f0', fg='red'
+            font=self.config["font"], 
+            bg=self.theme['text_bg'], 
+            fg=self.theme['error'],
+            insertbackground=self.theme['fg'],
+            selectbackground=self.theme['select_bg'],
+            selectforeground=self.theme['select_fg'],
+            relief='flat',
+            bd=0
         )
         self.error_log.pack(fill=tk.BOTH, expand=True)
         
@@ -281,11 +515,17 @@ class LogViewerApp:
         
         # レベルに応じた色付け
         if level == "ERROR" or level == "CRITICAL":
-            text_widget.tag_config("error", foreground="red")
+            text_widget.tag_config("error", foreground=self.theme['error'])
             text_widget.insert(tk.END, message + "\n", "error")
         elif level == "WARNING":
-            text_widget.tag_config("warning", foreground="orange")
+            text_widget.tag_config("warning", foreground=self.theme['warning'])
             text_widget.insert(tk.END, message + "\n", "warning")
+        elif level == "INFO":
+            text_widget.tag_config("info", foreground=self.theme['info'])
+            text_widget.insert(tk.END, message + "\n", "info")
+        elif level == "DEBUG":
+            text_widget.tag_config("debug", foreground=self.theme['debug'])
+            text_widget.insert(tk.END, message + "\n", "debug")
         else:
             text_widget.insert(tk.END, message + "\n")
         

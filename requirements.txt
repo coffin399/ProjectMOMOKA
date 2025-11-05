@@ -44,3 +44,4 @@ nuitka
 tk
 pillow  # 既に存在しますが、念のため明記
 ttkthemes
+darkdetect>=1.0.0

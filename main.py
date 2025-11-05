@@ -13,6 +13,38 @@ from tkinter import messagebox
 import subprocess
 import atexit
 from pathlib import Path
+import ctypes
+
+def set_dark_mode():
+    """Windowsのダークモードを有効化"""
+    try:
+        if os.name == 'nt':  # Windowsのみ
+            # ダークモードを有効化
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # DPI認識を有効化
+            
+            # テーマカラーをダークモードに設定
+            try:
+                import darkdetect
+                if darkdetect.isDark():
+                    from ctypes import wintypes
+                    
+                    # ウィンドウのテーマカラーをダークに設定
+                    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    value = 1  # ダークモード
+                    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                        hwnd, 
+                        DWMWA_USE_IMMERSIVE_DARK_MODE,
+                        ctypes.byref(ctypes.c_int(value)),
+                        ctypes.sizeof(ctypes.c_int(value))
+                    )
+            except ImportError:
+                pass  # darkdetectが利用できない場合はスキップ
+    except Exception as e:
+        print(f"ダークモードの設定中にエラーが発生しました: {e}")
+
+# ダークモードを有効化
+set_dark_mode()
 
 # --- ロギング設定の初期化 ---
 # ルートロガーの設定
