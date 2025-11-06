@@ -117,10 +117,10 @@ llm:
       # ツールが動作しない場合は false に設定すると、ツールなしで動作します
       supports_tools: true
 
-  # --- 画像生成設定 (Stable Diffusion WebUI Forge) ---
+  # --- 画像生成設定 (ローカル diffusers パイプライン) ---
   image_generator:
-    # Stable Diffusion WebUI Forge API を利用して画像を生成します。
-    provider: "forge"
+    # ローカル diffusers パイプラインを使用して画像を生成します。
+    # モデルは models/image-models/ ディレクトリ配下を自動スキャンして検出されます。
 
     # 共通設定 ------------------------------------------------------------
     save_images: true                       # 生成結果をローカルに保存するかどうか
@@ -133,14 +133,18 @@ llm:
     min_width: 256
     min_height: 256
 
-    # WebUI Forge で読み込めるモデル名を記載してください。
-    available_models:
-      - "sd_xl_base_1.0.safetensors"
-      - "sd_xl_turbo_1.0.safetensors"
-      - "v1-5-pruned-emaonly.safetensors"
-
-    # デフォルトで使用するモデル名
-    model: "sd_xl_base_1.0.safetensors"
+    # デフォルトで使用するモデル名（ディレクトリ名）
+    # 指定しない場合は、models/image-models/ 配下で最初に見つかったモデルが使用されます
+    # 例: model: "sd_xl_base_1.0"
+    model: null  # null または指定したいモデル名（ディレクトリ名）
+    
+    # 注意: available_models は非推奨です。
+    # モデルは models/image-models/<model_name>/ ディレクトリ構造で自動検出されます。
+    # 各モデルディレクトリには以下のファイルを配置してください:
+    #   - <weights_file>.safetensors または .ckpt (必須)
+    #   - <vae_file>.vae または .safetensors (オプション)
+    #   - <lora_file>.safetensors (オプション、複数可)
+    #   - model.json (オプション、メタデータ)
 
     # デフォルト生成パラメータ
     default_params:

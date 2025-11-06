@@ -56,6 +56,7 @@ class ImageGenerator:
         self.model_registry = ImageModelRegistry.from_default_root()
         self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
 
+        # ディレクトリスキャンで見つかったすべてのモデルを使用
         discovered_models = sorted(self.model_registry.names())
         if not discovered_models:
             logger.warning("No local image models found under models/image-models. Image generation will be disabled.")
@@ -63,18 +64,21 @@ class ImageGenerator:
             self.default_model = None
             self._enabled = False
         else:
-            configured_models = self.image_gen_config.get("available_models")
-            if configured_models:
-                available = [model for model in configured_models if model in discovered_models]
-                if not available:
-                    logger.warning("Configured available_models not found locally. Using discovered models instead.")
-                    available = discovered_models
-            else:
-                available = discovered_models
-
-            self.available_models = available
+            # configのavailable_modelsは無視し、ディレクトリスキャンの結果を直接使用
+            self.available_models = discovered_models
+            
+            # デフォルトモデル: configで指定されていて存在する場合はそれを使用、なければ最初に見つかったモデル
             configured_default = self.image_gen_config.get("model")
-            self.default_model = configured_default if configured_default in self.available_models else self.available_models[0]
+            if configured_default and configured_default in self.available_models:
+                self.default_model = configured_default
+            else:
+                self.default_model = self.available_models[0]
+                if configured_default and configured_default not in self.available_models:
+                    logger.warning(
+                        "Configured default model '%s' not found in discovered models. Using '%s' instead.",
+                        configured_default,
+                        self.default_model
+                    )
             self._enabled = True
 
         self.default_size = self.image_gen_config.get("default_size", "1024x1024")
