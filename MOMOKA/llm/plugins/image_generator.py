@@ -54,7 +54,23 @@ class ImageGenerator:
         self._update_interval = 1.0  # Minimum seconds between progress updates
 
         self.model_registry = ImageModelRegistry.from_default_root()
-        self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
+        max_cache_size = self.image_gen_config.get("max_cache_size", 1)
+        
+        # メモリ最適化設定（8GB VRAM対応）
+        memory_optimization = self.image_gen_config.get("memory_optimization", {})
+        enable_cpu_offload = memory_optimization.get("enable_cpu_offload", True)
+        enable_vae_slicing = memory_optimization.get("enable_vae_slicing", True)
+        enable_vae_tiling = memory_optimization.get("enable_vae_tiling", False)
+        attention_slicing = memory_optimization.get("attention_slicing", "max")
+        
+        self.pipeline = LocalTxt2ImgPipeline(
+            device=self.image_gen_config.get("device"),
+            max_cache_size=max_cache_size,
+            enable_cpu_offload=enable_cpu_offload,
+            enable_vae_slicing=enable_vae_slicing,
+            enable_vae_tiling=enable_vae_tiling,
+            attention_slicing=attention_slicing,
+        )
 
         # ディレクトリスキャンで見つかったすべてのモデルを使用
         discovered_models = sorted(self.model_registry.names())
@@ -788,7 +804,10 @@ class ImageGenerator:
             return None
 
     async def close(self) -> None:
-        logger.info("ImageGenerator local pipeline does not require explicit cleanup.")
+        """ImageGeneratorをクリーンアップし、すべてのモデルをVRAMから解放する"""
+        logger.info("Cleaning up ImageGenerator and releasing all models from VRAM")
+        self.pipeline.clear_cache()
+        logger.info("ImageGenerator cleanup completed")
 
 
 class ImageModelSelect(discord.ui.Select):

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Optional, Callable
+from typing import Any, Optional, Callable
 
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
@@ -35,10 +37,26 @@ class GenerationParams:
 class LocalTxt2ImgPipeline:
     """Wrapper around diffusers StableDiffusionPipeline with async execution."""
 
-    def __init__(self, device: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        device: Optional[str] = None,
+        max_cache_size: int = 1,
+        enable_cpu_offload: bool = True,
+        enable_vae_slicing: bool = True,
+        enable_vae_tiling: bool = False,
+        attention_slicing: Optional[str] = "max",
+    ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._pipeline_cache: dict[str, StableDiffusionPipeline | StableDiffusionXLPipeline] = {}
+        # LRUキャッシュ: OrderedDictで実装（最近使用したものが最後に移動）
+        self._pipeline_cache: OrderedDict[str, StableDiffusionPipeline | StableDiffusionXLPipeline] = OrderedDict()
         self._lock = asyncio.Lock()
+        self.max_cache_size = max_cache_size  # 最大キャッシュ数（デフォルト: 1モデルのみ保持）
+        
+        # メモリ最適化設定（8GB VRAM対応）
+        self.enable_cpu_offload = enable_cpu_offload  # CPUオフロード（デフォルト: 有効）
+        self.enable_vae_slicing = enable_vae_slicing  # VAEスライシング（デフォルト: 有効）
+        self.enable_vae_tiling = enable_vae_tiling  # VAEタイル分割（大きな画像用、デフォルト: 無効）
+        self.attention_slicing = attention_slicing  # Attentionスライシング（"max", "auto", None）
     
     def _is_sdxl_model(self, model: ImageModelInfo) -> bool:
         """Check if the model is SDXL based on name, metadata, or file size."""
@@ -64,9 +82,127 @@ class LocalTxt2ImgPipeline:
         
         return False
 
+    def _apply_memory_optimizations(
+        self,
+        pipeline: StableDiffusionPipeline | StableDiffusionXLPipeline,
+        model_name: str,
+    ) -> None:
+        """メモリ最適化設定を適用（8GB VRAM対応）"""
+        logger.info("Applying memory optimizations for model '%s'", model_name)
+        
+        # CPUオフロード: モデルコンポーネントを自動的にCPU/GPU間で移動
+        # 最も効果的なメモリ節約手法（速度は若干低下）
+        if self.enable_cpu_offload and self.device == "cuda":
+            try:
+                # enable_model_cpu_offload は推論時に自動的にコンポーネントを移動
+                # enable_sequential_cpu_offload はより積極的だが、enable_model_cpu_offloadで十分
+                pipeline.enable_model_cpu_offload()
+                logger.info("Enabled CPU offloading for model '%s' (significant VRAM savings)", model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to enable CPU offloading: %s. Falling back to standard loading.", exc)
+                # CPUオフロードが失敗した場合、通常の読み込みにフォールバック
+                if not hasattr(pipeline, '_offload_state'):
+                    pipeline.to(self.device)
+        else:
+            # CPUオフロードが無効な場合、通常通りデバイスに読み込み
+            pipeline.to(self.device)
+        
+        # VAEスライシング: VAE処理をバッチに分割してメモリ使用量を削減
+        # デコード時にメモリ使用量を大幅に削減（品質への影響なし）
+        if self.enable_vae_slicing:
+            try:
+                pipeline.enable_vae_slicing()
+                logger.info("Enabled VAE slicing for model '%s'", model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to enable VAE slicing: %s", exc)
+        
+        # VAEタイル分割: 大きな画像をタイルに分割して処理
+        # 1024x1024以上の大きな画像で有効（品質への影響は最小限）
+        if self.enable_vae_tiling:
+            try:
+                pipeline.enable_vae_tiling()
+                logger.info("Enabled VAE tiling for model '%s' (for large images)", model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to enable VAE tiling: %s", exc)
+        
+        # Attentionスライシング: Attention計算を分割してメモリ使用量を削減
+        # 既に実装されているが、より細かく制御可能に
+        if self.attention_slicing:
+            try:
+                if self.attention_slicing == "max":
+                    pipeline.enable_attention_slicing("max")
+                elif self.attention_slicing == "auto":
+                    pipeline.enable_attention_slicing()
+                else:
+                    pipeline.enable_attention_slicing(self.attention_slicing)
+                logger.info("Enabled attention slicing (%s) for model '%s'", self.attention_slicing, model_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to enable attention slicing: %s", exc)
+        
+        # xFormers: メモリ効率の良いAttention実装（利用可能な場合）
+        # CPUオフロードとは独立して動作
+        try:
+            pipeline.enable_xformers_memory_efficient_attention()
+            logger.info("Enabled xFormers memory efficient attention for model '%s'", model_name)
+        except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+            logger.info("xFormers memory efficient attention unavailable: %s", exc)
+
+    def _unload_pipeline(self, model_name: str) -> None:
+        """指定されたモデルをVRAMから解放する"""
+        if model_name not in self._pipeline_cache:
+            return
+        
+        pipeline = self._pipeline_cache.pop(model_name)
+        logger.info("Unloading model '%s' from VRAM", model_name)
+        
+        # パイプラインの各コンポーネントをCPUに移動してから削除
+        try:
+            # 各コンポーネントをCPUに移動（メモリを解放）
+            if hasattr(pipeline, 'unet') and pipeline.unet is not None:
+                pipeline.unet.to('cpu')
+                del pipeline.unet
+            if hasattr(pipeline, 'vae') and pipeline.vae is not None:
+                pipeline.vae.to('cpu')
+                del pipeline.vae
+            if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
+                pipeline.text_encoder.to('cpu')
+                del pipeline.text_encoder
+            if hasattr(pipeline, 'text_encoder_2') and pipeline.text_encoder_2 is not None:
+                pipeline.text_encoder_2.to('cpu')
+                del pipeline.text_encoder_2
+            
+            # tokenizerとschedulerはメモリをほとんど使わないが、念のため削除
+            if hasattr(pipeline, 'tokenizer'):
+                del pipeline.tokenizer
+            if hasattr(pipeline, 'tokenizer_2'):
+                del pipeline.tokenizer_2
+            if hasattr(pipeline, 'scheduler'):
+                del pipeline.scheduler
+            
+            del pipeline
+            
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error while unloading model '%s': %s", model_name, exc)
+        
+        # CUDAキャッシュをクリア
+        if self.device == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # ガベージコレクション
+        gc.collect()
+        logger.info("Model '%s' unloaded successfully", model_name)
+
     def _load_pipeline(self, model: ImageModelInfo) -> StableDiffusionPipeline | StableDiffusionXLPipeline:
+        # キャッシュに存在する場合、LRUの最後に移動（最近使用されたことを記録）
         if model.name in self._pipeline_cache:
+            self._pipeline_cache.move_to_end(model.name)
             return self._pipeline_cache[model.name]
+        
+        # キャッシュサイズ制限を超える場合、古いモデルを解放
+        while len(self._pipeline_cache) >= self.max_cache_size:
+            # 最も古い（最初の）モデルを取得して解放
+            oldest_model = next(iter(self._pipeline_cache))
+            self._unload_pipeline(oldest_model)
 
         is_sdxl = self._is_sdxl_model(model)
         pipeline_class = StableDiffusionXLPipeline if is_sdxl else StableDiffusionPipeline
@@ -96,6 +232,12 @@ class LocalTxt2ImgPipeline:
             else:
                 raise
 
+        # メモリ最適化設定を適用（8GB VRAM対応）
+        # 注意: CPUオフロードを使用する場合、pipeline.to()は呼ばない
+        # enable_model_cpu_offload()がパイプラインの各コンポーネントを自動的に管理する
+        self._apply_memory_optimizations(pipeline, model.name)
+        
+        # VAEとLoRAの読み込み（メモリ最適化後に実行）
         if model.vae:
             try:
                 logger.info("Loading VAE weights for model '%s'", model.name)
@@ -110,18 +252,26 @@ class LocalTxt2ImgPipeline:
                     pipeline.load_lora_weights(str(lora))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Failed to load LoRA %s: %s", lora, exc)
-
-        pipeline.to(self.device)
-        pipeline.enable_attention_slicing()
-        try:
-            pipeline.enable_xformers_memory_efficient_attention()
-            logger.info("Enabled xFormers memory efficient attention for model '%s'", model.name)
-        except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
-            logger.info("xFormers memory efficient attention unavailable: %s", exc)
         
-        # キャッシュに保存
+        # キャッシュに保存（新しいモデルは最後に追加）
         self._pipeline_cache[model.name] = pipeline
         return pipeline
+    
+    def clear_cache(self) -> None:
+        """すべてのキャッシュされたモデルを解放する"""
+        logger.info("Clearing all cached models from VRAM")
+        model_names = list(self._pipeline_cache.keys())
+        for model_name in model_names:
+            self._unload_pipeline(model_name)
+        logger.info("All cached models cleared")
+    
+    def get_cache_info(self) -> dict[str, Any]:
+        """キャッシュ情報を返す"""
+        return {
+            "cached_models": len(self._pipeline_cache),
+            "max_cache_size": self.max_cache_size,
+            "models": list(self._pipeline_cache.keys()),
+        }
 
     def _apply_sampler(
         self, 

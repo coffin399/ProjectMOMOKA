@@ -125,6 +125,30 @@ llm:
     # 共通設定 ------------------------------------------------------------
     save_images: true                       # 生成結果をローカルに保存するかどうか
     save_directory: "data/image"           # 保存先ディレクトリ
+    
+    # VRAM管理設定
+    max_cache_size: 1                      # 同時にVRAMに保持する最大モデル数（LRUキャッシュ）
+                                           # 1 = 常に1つのモデルのみ保持（モデル切り替え時に自動解放）
+                                           # 2以上 = 指定数のモデルを保持（VRAMに余裕がある場合）
+                                           # デフォルト: 1（VRAM節約優先）
+    
+    # メモリ最適化設定（8GB VRAM対応）
+    memory_optimization:
+      # CPUオフロード: モデルコンポーネントを自動的にCPU/GPU間で移動
+      # VRAM使用量を大幅に削減（速度は若干低下、8GB VRAMでは推奨）
+      enable_cpu_offload: true             # デフォルト: true（8GB VRAM対応）
+      
+      # VAEスライシング: VAE処理をバッチに分割してメモリ使用量を削減
+      # デコード時のメモリ使用量を大幅に削減（品質への影響なし）
+      enable_vae_slicing: true             # デフォルト: true（推奨）
+      
+      # VAEタイル分割: 大きな画像をタイルに分割して処理
+      # 1024x1024以上の大きな画像で有効（品質への影響は最小限）
+      enable_vae_tiling: false             # デフォルト: false（大きな画像生成時のみ有効化推奨）
+      
+      # Attentionスライシング: Attention計算を分割してメモリ使用量を削減
+      # "max" = 最大限のメモリ節約、"auto" = 自動、"1", "2", "4"など = スライス数
+      attention_slicing: "max"             # デフォルト: "max"（8GB VRAM対応）
 
     # 生成サイズの制約
     default_size: "1024x1024"
