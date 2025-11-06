@@ -351,6 +351,15 @@ class Momoka(commands.Bot):
         """ステータスローテーションタスクの開始を待機"""
         await self.wait_until_ready()
 
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """通常コマンド（プレフィックスコマンド）のエラーハンドリング"""
+        # CommandNotFoundエラーは無視（コマンドを探すモードを無効化）
+        if isinstance(error, commands.CommandNotFound):
+            return  # エラーを無視して何もしない
+        
+        # その他のエラーはログに記録（必要に応じて処理）
+        logging.debug(f"コマンドエラー: {error}")
+
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
         """スラッシュコマンドのエラーハンドリング"""
         if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
