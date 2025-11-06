@@ -15,6 +15,8 @@ from typing import Any, Deque, Dict, List, Optional
 
 import discord
 from discord.abc import Messageable
+from PIL import Image
+import numpy as np
 
 from MOMOKA.generator.image import (
     GenerationParams,
@@ -138,6 +140,35 @@ class ImageGenerator:
 
     def get_available_models(self) -> List[str]:
         return self.available_models.copy()
+    
+    @staticmethod
+    def _is_black_image(image_bytes: bytes, threshold: float = 0.01) -> bool:
+        """Check if the image is mostly black (NSFW filter detected).
+        
+        Args:
+            image_bytes: Image bytes data
+            threshold: Maximum average pixel value to consider as black (0.0-1.0)
+        
+        Returns:
+            True if the image is mostly black, False otherwise
+        """
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            # Convert to RGB if necessary
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Convert to numpy array
+            img_array = np.array(image, dtype=np.float32) / 255.0
+            
+            # Calculate average pixel value
+            avg_value = np.mean(img_array)
+            
+            # If average is very low, it's likely a black image (NSFW filter)
+            return avg_value < threshold
+        except Exception as exc:
+            logger.warning("Failed to check if image is black: %s", exc)
+            return False
 
     def get_models_by_provider(self) -> Dict[str, List[str]]:
         provider = "local"
@@ -443,6 +474,48 @@ class ImageGenerator:
             raise
 
         elapsed_time = time.time() - start_time
+        
+        # Check if image is black (NSFW filter detected)
+        is_black_image = self._is_black_image(image_bytes)
+        is_nsfw_channel = getattr(channel, 'nsfw', False) if hasattr(channel, 'nsfw') else False
+        
+        if is_black_image and not is_nsfw_channel:
+            # NSFW detected in non-NSFW channel - show fallback message
+            if progress_message:
+                try:
+                    await progress_message.delete()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to delete progress message: %s", exc)
+            
+            embed = discord.Embed(
+                title="⚠️ NSFW Content Detected / NSFWコンテンツが検出されました",
+                description=(
+                    "Potential NSFW content was detected in the generated image. "
+                    "A black image was returned instead.\n\n"
+                    "**To generate NSFW content, please use an NSFW channel.**\n\n"
+                    "潜在的にNSFWなコンテンツが検出されました。"
+                    "代わりに黒い画像が返されました。\n\n"
+                    "**NSFWコンテンツを生成するには、NSFWチャンネルを使用してください。**"
+                ),
+                color=discord.Color.orange(),
+            )
+            embed.add_field(name="Prompt", value=prompt[:200] + ("..." if len(prompt) > 200 else ""), inline=False)
+            embed.add_field(name="Model", value=model_name, inline=True)
+            embed.add_field(name="Size", value=adjusted_size, inline=True)
+            embed.set_footer(text="Try again with a different prompt and/or seed, or use an NSFW channel")
+            
+            await channel.send(embed=embed)
+            
+            if task.queue_message:
+                try:
+                    await task.queue_message.delete()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to delete queue message: %s", exc)
+            
+            await self._schedule_next_task()
+            return None  # Don't return success message for NSFW-filtered images
+        
+        # Normal image generation - show completed message and send image
         if progress_message:
             await self._update_progress_message(
                 progress_message,
@@ -492,17 +565,6 @@ class ImageGenerator:
         file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
         await channel.send(embed=embed, file=file)
 
-        result_text = (
-            f"✅ Successfully generated image with prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'\n"
-            f"Parameters: size={adjusted_size}, steps={steps}, cfg={cfg_scale:.2f}, sampler={sampler_name or 'default'}"
-        )
-        if seed != -1:
-            result_text += f", seed={seed}"
-        if size_input != adjusted_size:
-            result_text += f"\n(Size adjusted from {size_input} to {adjusted_size})"
-        if saved_path:
-            result_text += " (Saved locally)"
-
         if task.queue_message:
             try:
                 await task.queue_message.delete()
@@ -510,7 +572,7 @@ class ImageGenerator:
                 logger.warning("Failed to delete queue message: %s", exc)
 
         await self._schedule_next_task()
-        return result_text if return_result else None
+        return None  # Don't return success message
 
     async def _schedule_next_task(self) -> None:
         async with self.queue_lock:
