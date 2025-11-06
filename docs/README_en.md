@@ -74,12 +74,12 @@ Play music in voice channels. Provides queue management, loop, shuffle, and othe
 
 ### 3. Image Generation Feature
 
-Generate images using Stable Diffusion. You can now choose between:
+Generate images using Stable Diffusion with the **built-in diffusers-based engine**. No external services required!
 
-- **Local Diffusers Pipeline** – run everything in-house using the bundled diffusers integration (place models under `models/image-models/`)
-- **Stable Diffusion WebUI Forge API** – keep using your existing Forge instance via HTTP
+- **Built-in Diffusers Pipeline (Default)** – Fully integrated image generation engine using diffusers. Place models under `models/image-models/`
+- **Stable Diffusion WebUI Forge API (Optional)** – Alternative option to use your existing Forge instance via HTTP
 
-#### Local Diffusers Pipeline
+#### Built-in Diffusers Pipeline (Recommended)
 
 1. Place your model folders (weights + optional VAE/LoRA) under:
    ```
@@ -100,9 +100,11 @@ Generate images using Stable Diffusion. You can now choose between:
    - Enable xFormers (`pip install xformers`) for reduced VRAM usage
    - Adjust `default_size`, `steps`, and `cfg_scale` to fit an 8GB GPU
 
-#### Stable Diffusion WebUI Forge
+#### Stable Diffusion WebUI Forge (Optional)
 
-1. Keep `provider: "forge"` (default)
+If you prefer to use an existing WebUI Forge instance instead of the built-in engine:
+
+1. Set `provider: "forge"` in `config.yaml`
 2. Ensure Forge is running with the API enabled:
    ```bash
    python webui.py --api
@@ -129,14 +131,12 @@ Generate images using Stable Diffusion. You can now choose between:
 
 ### 4. Text-to-Speech Feature (TTS)
 
-Convert text to speech using [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2).
+Convert text to speech using the **fully integrated Style-Bert-VITS2 engine**. The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. **No external API server needed!**
 
-**⚠️ Setup Requirements:**
-- Installation and setup of [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is required
-- You need to start the API server:
-  ```bash
-  python server_fastapi.py
-  ```
+**Setup:**
+- Place TTS models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`
+- Optional: `pyopenjtalk` dictionary and `style_vectors.npy` are supported
+- See `NOTICE` for integration details
 
 #### Main Features
 
@@ -278,17 +278,28 @@ llm:
 
 #### Image Generation Settings
 
-**⚠️ Setup Requirements:**
+**Built-in Engine (Default):**
+```yaml
+llm:
+  image_generator:
+    provider: "local"  # Built-in diffusers pipeline (default)
+    model: "sd_xl_base_1.0.safetensors"
+    default_size: "1024x1024"
+    # Place models under models/image-models/<model_name>/
+```
+
+**Optional: WebUI Forge (Alternative):**
+If you prefer to use an existing WebUI Forge instance:
 - Installation and setup of [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is required
 - You **must start WebUI Forge with the `--api` flag**:
   ```bash
   python webui.py --api
   ```
-
 ```yaml
 llm:
   image_generator:
-    forge_url: "http://127.0.0.1:7860"  # Stable Diffusion WebUI Forge URL
+    provider: "forge"  # Use external Forge instance
+    forge_url: "http://127.0.0.1:7860"
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
 ```
@@ -304,18 +315,17 @@ music:
 
 #### TTS Settings
 
-**⚠️ Setup Requirements:**
-- Installation and setup of [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is required
-- You need to start the Style-Bert-VITS2 API server:
-  ```bash
-  python server_fastapi.py
-  ```
+**Built-in Engine (No external server required):**
+The Style-Bert-VITS2 engine is fully integrated into this project. Just place your models and configure:
 
 ```yaml
 tts:
-  api_server_url: "http://127.0.0.1:5000"  # Style-Bert-VITS2 API server URL
-  default_model_id: 0
+  model_root: "models/tts-models"  # Place models here
+  model_name: "your-model-name"    # Model directory name
   default_style: "Neutral"
+  sample_rate: 48000  # Discord standard
+  # Optional: custom pyopenjtalk dictionary
+  pyopenjtalk_dict_dir: "path/to/custom/dict"
 ```
 
 For detailed configuration options, refer to `config.default.yaml`.
@@ -504,16 +514,25 @@ When the voice channel becomes empty, the bot automatically leaves after the con
 
 ### Image Generation Feature Details
 
-#### Stable Diffusion WebUI Forge Integration
+#### Built-in Diffusers Pipeline
 
-If [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is running, you can request image generation from the bot.
+The built-in image generation engine uses diffusers and runs entirely within the bot. No external services are required.
+
+**Setup:**
+1. Place your models under `models/image-models/<model_name>/`
+2. Configure `provider: "local"` in `config.yaml` (this is the default)
+3. The engine will automatically discover and load available models
+
+#### Optional: WebUI Forge Integration
+
+If you prefer to use an existing [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) instance, you can configure it as an alternative:
 
 **Important:** When starting WebUI Forge, you **must** specify the `--api` flag:
 ```bash
 python webui.py --api
 ```
 
-Without this flag, the bot cannot access the WebUI Forge API.
+Set `provider: "forge"` in `config.yaml` to use this option.
 
 #### Prompts
 
@@ -555,10 +574,17 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 
 ### Image generation doesn't work
 
+**For built-in engine (default):**
+1. Check if models are placed under `models/image-models/<model_name>/`
+2. Check if `provider: "local"` is set in `config.yaml` (or not set, as it's the default)
+3. Check if the model files (`.safetensors` or `.ckpt`) are present
+4. Check GPU/CPU availability and memory (check logs for errors)
+
+**For WebUI Forge (optional):**
 1. Check if [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is running
 2. Check if WebUI Forge was started with the `--api` flag (required)
-3. Check if `forge_url` in `config.yaml` is correct
-4. Check if the model is correctly loaded
+3. Check if `provider: "forge"` and `forge_url` in `config.yaml` are correct
+4. Check if the model is correctly loaded in Forge
 
 ### Earthquake alerts don't arrive
 

@@ -74,12 +74,12 @@
 
 ### 3. 画像生成機能
 
-Stable Diffusionを使用して画像を生成できます。以下の2つのバックエンドから選択できます。
+**内製diffusersベースのエンジン**を使用して画像を生成できます。外部サービスは不要です！
 
-- **ローカル diffusers パイプライン** – `models/image-models/` 配下にモデルを配置し、完全に内製環境で推論
-- **Stable Diffusion WebUI Forge API** – 既存の Forge インスタンスを HTTP 経由で利用
+- **内製 diffusers パイプライン（デフォルト）** – 完全に統合された画像生成エンジン。`models/image-models/` 配下にモデルを配置
+- **Stable Diffusion WebUI Forge API（オプション）** – 既存の Forge インスタンスを HTTP 経由で利用する代替オプション
 
-#### ローカル diffusers パイプライン
+#### 内製 diffusers パイプライン（推奨）
 
 1. モデルフォルダ（weights + 任意の VAE / LoRA）を以下の構成で配置します。
    ```
@@ -100,9 +100,11 @@ Stable Diffusionを使用して画像を生成できます。以下の2つのバ
    - `pip install xformers` を実行してメモリ効率化
    - `default_size`, `steps`, `cfg_scale` を調整して使用メモリを削減
 
-#### Stable Diffusion WebUI Forge
+#### Stable Diffusion WebUI Forge（オプション）
 
-1. `provider: "forge"` を設定します（デフォルト値）。
+既存のWebUI Forgeインスタンスを使用したい場合：
+
+1. `config.yaml` で `provider: "forge"` を設定します。
 2. Forge を `--api` オプション付きで起動します。
    ```bash
    python webui.py --api
@@ -129,14 +131,12 @@ Stable Diffusionを使用して画像を生成できます。以下の2つのバ
 
 ### 4. 音声読み上げ機能 (TTS)
 
-[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)を使用してテキストを音声に変換します。
+**完全に統合されたStyle-Bert-VITS2エンジン**を使用してテキストを音声に変換します。[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)の完全なソースコードがこのプロジェクトに統合されています。**外部APIサーバーは不要です！**
 
-**⚠️ セットアップ要件:**
-- [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)のインストールとセットアップが必要です
-- APIサーバーを起動する必要があります：
-  ```bash
-  python server_fastapi.py
-  ```
+**セットアップ:**
+- TTSモデルを `models/tts-models/<model_name>/` 配下に配置（`<model_name>.safetensors` または `G_*.pth` と対応する `config.json`）
+- オプション: `pyopenjtalk` 辞書と `style_vectors.npy` をサポート
+- 統合の詳細は `NOTICE` を参照
 
 #### 主な機能
 
@@ -278,17 +278,28 @@ llm:
 
 #### 画像生成設定
 
-**⚠️ セットアップ要件:**
+**内製エンジン（デフォルト）:**
+```yaml
+llm:
+  image_generator:
+    provider: "local"  # 内製diffusersパイプライン（デフォルト）
+    model: "sd_xl_base_1.0.safetensors"
+    default_size: "1024x1024"
+    # モデルを models/image-models/<model_name>/ 配下に配置
+```
+
+**オプション: WebUI Forge（代替）:**
+既存のWebUI Forgeインスタンスを使用したい場合：
 - [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)のインストールとセットアップが必要です
 - WebUI Forgeを起動する際に、**`--api`引数を必ず指定してください**：
   ```bash
   python webui.py --api
   ```
-
 ```yaml
 llm:
   image_generator:
-    forge_url: "http://127.0.0.1:7860"  # Stable Diffusion WebUI ForgeのURL
+    provider: "forge"  # 外部Forgeインスタンスを使用
+    forge_url: "http://127.0.0.1:7860"
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
 ```
@@ -304,18 +315,17 @@ music:
 
 #### TTS設定
 
-**⚠️ セットアップ要件:**
-- [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)のインストールとセットアップが必要です
-- Style-Bert-VITS2のAPIサーバーを起動する必要があります：
-  ```bash
-  python server_fastapi.py
-  ```
+**内製エンジン（外部サーバー不要）:**
+Style-Bert-VITS2エンジンはこのプロジェクトに完全に統合されています。モデルを配置して設定するだけです：
 
 ```yaml
 tts:
-  api_server_url: "http://127.0.0.1:5000"  # Style-Bert-VITS2のAPIサーバーURL
-  default_model_id: 0
+  model_root: "models/tts-models"  # モデルをここに配置
+  model_name: "your-model-name"    # モデルディレクトリ名
   default_style: "Neutral"
+  sample_rate: 48000  # Discord標準
+  # オプション: カスタムpyopenjtalk辞書
+  pyopenjtalk_dict_dir: "path/to/custom/dict"
 ```
 
 詳細な設定オプションは`config.default.yaml`を参照してください。
@@ -504,16 +514,25 @@ providers:
 
 ### 画像生成機能の詳細
 
-#### Stable Diffusion WebUI Forge連携
+#### 内製diffusersパイプライン
 
-[Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)を起動している場合、ボットから画像生成を依頼できます。
+内製画像生成エンジンはdiffusersを使用し、ボット内で完全に動作します。外部サービスは不要です。
+
+**セットアップ:**
+1. モデルを `models/image-models/<model_name>/` 配下に配置
+2. `config.yaml` で `provider: "local"` を設定（これがデフォルトです）
+3. エンジンが自動的に利用可能なモデルを検出してロードします
+
+#### オプション: WebUI Forge連携
+
+既存の[Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)インスタンスを使用したい場合、代替オプションとして設定できます：
 
 **重要:** WebUI Forgeを起動する際は、必ず`--api`引数を指定してください：
 ```bash
 python webui.py --api
 ```
 
-この引数がないと、ボットがWebUI ForgeのAPIにアクセスできません。
+このオプションを使用するには、`config.yaml` で `provider: "forge"` を設定します。
 
 #### プロンプト
 
@@ -555,10 +574,17 @@ AIとの対話で「画像を生成して」などと依頼すると、AIがプ�
 
 ### 画像生成ができない
 
+**内製エンジン（デフォルト）の場合:**
+1. モデルが `models/image-models/<model_name>/` 配下に配置されているか確認
+2. `config.yaml` で `provider: "local"` が設定されているか確認（または未設定、デフォルトです）
+3. モデルファイル（`.safetensors` または `.ckpt`）が存在するか確認
+4. GPU/CPUの可用性とメモリを確認（ログでエラーを確認）
+
+**WebUI Forge（オプション）の場合:**
 1. [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)が起動しているか確認
 2. WebUI Forgeを`--api`引数で起動しているか確認（必須）
-3. `config.yaml`の`forge_url`が正しいか確認
-4. モデルが正しくロードされているか確認
+3. `config.yaml` で `provider: "forge"` と `forge_url` が正しいか確認
+4. モデルがForgeで正しくロードされているか確認
 
 ### 地震速報が届かない
 

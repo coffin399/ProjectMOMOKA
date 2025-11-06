@@ -35,15 +35,15 @@
 **MOMOKA** is your all-in-one Discord companion! 🎮✨ A feature-packed bot that combines the power of AI chat, seamless music playback, local image generation, and essential utility commands—all in one sleek package. Perfect for communities that want everything without the hassle of managing multiple bots!
 
 > **Built-ins:**
-> - Local image generation via diffusers (see `MOMOKA/generator/image`)
-> - **Style-Bert-VITS2 TTS engine integrated** - The source code from [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) is integrated into this project. See `MOMOKA/generator/tts` and `NOTICE` for details.
+> - **Built-in image generation engine** - Fully integrated diffusers-based image generation pipeline (see `MOMOKA/generator/image`). No external services required!
+> - **Integrated Style-Bert-VITS2 TTS engine** - The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is integrated into this project. No external API server needed! See `MOMOKA/generator/tts` and `NOTICE` for details.
 
 ### 🚀 Key Features
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
-- 🎨 **Image Generation (Local)** - Generate images via the built-in diffusers pipeline. Drop models under `models/image-models/<model_name>/` (single-file weights like `.safetensors`/`.ckpt` supported; optional VAE/LoRA and `model.json`).
-- 🗣️ **Text-to-Speech (Local)** - **Style-Bert-VITS2 engine integrated** - The [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`. Optional `pyopenjtalk` dictionary and `style_vectors.npy` are supported. See `NOTICE` for integration details.
+- 🎨 **Image Generation (Built-in)** - Fully integrated diffusers-based image generation engine. No external services required! Drop models under `models/image-models/<model_name>/` (single-file weights like `.safetensors`/`.ckpt` supported; optional VAE/LoRA and `model.json`).
+- 🗣️ **Text-to-Speech (Built-in)** - **Fully integrated Style-Bert-VITS2 engine** - The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. No external API server needed! Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`. Optional `pyopenjtalk` dictionary and `style_vectors.npy` are supported. See `NOTICE` for integration details.
 - 📊 **Game Tracking** - Track stats for Rainbow Six Siege and VALORANT
 - 🔔 **Notifications** - Get notified about earthquakes and Twitch streams
 - 🎲 **Utilities** - Dice rolls, timers, media downloads, and more!
@@ -90,7 +90,7 @@ For detailed documentation, please check the language-specific README files:
 - [🇺🇸 English Detailed Documentation](docs/README_en.md)
 
 Key guides inside the docs include:
-- Configuring **WebUI Forge** and model management
+- Configuring built-in image generation and model management
 - Tips for Stable Diffusion prompt crafting
 
 ### 🔧 Third-Party Integrations
