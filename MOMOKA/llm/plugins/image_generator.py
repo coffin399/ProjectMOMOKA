@@ -366,7 +366,8 @@ class ImageGenerator:
             ).format(pos=queue_position)
 
         result = await self._process_task(task, return_result=True)
-        return result if result else "✅ Image generation completed."
+        # Return result if available, otherwise return None (embed is already sent)
+        return result if result else None
 
     async def _process_task(self, task: GenerationTask, return_result: bool) -> Optional[str]:
         if task.queue_message:

@@ -198,9 +198,10 @@ class StyleBertVITS2Synthesizer:
 
     def _maybe_warmup_model(self) -> None:
         """Style-Bert-VITS2モデルをロードします。"""
+        logger = logging.getLogger(__name__)
         if torch is None:
             self._model_ready = False
-            logging.getLogger(__name__).error("PyTorch not available. Style-Bert-VITS2 requires PyTorch.")
+            logger.warning("PyTorch not available. Style-Bert-VITS2 requires PyTorch. TTS will be disabled.")
             return
         if not (self._ckpt_path and self._json_path):
             self._model_ready = False
@@ -208,8 +209,9 @@ class StyleBertVITS2Synthesizer:
             module_path = Path(__file__).resolve()
             project_root = module_path.parents[3]
             expected_path = project_root / "models" / "tts-models" / "<model_name>"
-            logging.getLogger(__name__).error(
-                f"Model files not found. Please place Style-Bert-VITS2 model files in: {expected_path}"
+            logger.warning(
+                f"Model files not found. Please place Style-Bert-VITS2 model files in: {expected_path}. "
+                f"TTS will be disabled until models are available."
             )
             return
 
