@@ -447,7 +447,8 @@ class ImageGenerator:
         def progress_callback(step: int, _timestep: int, _latents):
             nonlocal progress_state, loop
             current_time = time.time()
-            progress_state["last_step"] = step + 1
+            current_step = step + 1
+            progress_state["last_step"] = current_step
             
             # Only update if enough time has passed since the last update (at most once per second)
             if current_time - progress_state.get("last_update", 0) >= 1.0:
@@ -456,6 +457,10 @@ class ImageGenerator:
                 # Only update the message if it's been at least 1 second since the last edit
                 if current_time - progress_state.get("last_message_edit", 0) >= 1.0:
                     progress_state["last_message_edit"] = current_time
+                    
+                    # Calculate actual speed (it/s) and elapsed time
+                    elapsed_time = current_time - progress_state["start_time"]
+                    it_per_s = current_step / elapsed_time if elapsed_time > 0 else 0.0
                     
                     # Create a coroutine for the progress update
                     async def update_progress():
@@ -466,10 +471,10 @@ class ImageGenerator:
                                 model_name,
                                 adjusted_size,
                                 steps,
-                                step + 1,
+                                current_step,
                                 sampler_name or "default",
-                                current_time - progress_state["start_time"],
-                                0.0,
+                                elapsed_time,
+                                it_per_s,
                                 "Generating... / 生成中..."
                             )
                         except Exception as e:
@@ -489,16 +494,19 @@ class ImageGenerator:
             )
         except Exception as exc:  # noqa: BLE001
             if progress_message:
+                error_elapsed = time.time() - start_time
+                error_step = progress_state.get("last_step", 0)
+                error_speed = error_step / error_elapsed if error_elapsed > 0 and error_step > 0 else 0.0
                 await self._update_progress_message(
                     progress_message,
                     prompt,
                     model_name,
                     adjusted_size,
                     steps,
-                    progress_state.get("last_step", 0),
+                    error_step,
                     sampler_name or "default",
-                    time.time() - start_time,
-                    0.0,
+                    error_elapsed,
+                    error_speed,
                     status=f"❌ Error: {exc}"
                 )
             raise
@@ -547,6 +555,7 @@ class ImageGenerator:
         
         # Normal image generation - show completed message and send image
         if progress_message:
+            final_speed = steps / elapsed_time if elapsed_time > 0 else 0.0
             await self._update_progress_message(
                 progress_message,
                 prompt,
@@ -556,7 +565,7 @@ class ImageGenerator:
                 steps,
                 sampler_name or "default",
                 elapsed_time,
-                steps / elapsed_time if elapsed_time > 0 else 0.0,
+                final_speed,
                 status="✅ Completed",
             )
 
@@ -704,7 +713,7 @@ class ImageGenerator:
             embed.add_field(name="Sampler", value=sampler, inline=True)
             embed.add_field(
                 name="Progress",
-                value=self._format_progress(current_step, total_steps),
+                value=self._format_progress(current_step, total_steps, it_per_s),
                 inline=False,
             )
             embed.add_field(name="Speed", value=f"{it_per_s:.2f} it/s", inline=True)
@@ -714,15 +723,29 @@ class ImageGenerator:
             logger.debug("Failed to update progress message: %s", exc)
 
     @staticmethod
-    def _format_progress(current: int, total: int, bar_length: int = 24) -> str:
+    def _format_progress(current: int, total: int, it_per_s: float = 0.0, bar_length: int = 24) -> str:
         clamped = max(0, min(current, total))
         filled = int((clamped / total) * bar_length) if total else 0
         bar = "█" * filled + "░" * (bar_length - filled)
         percentage = (clamped / total * 100) if total > 0 else 0
+        
+        # Calculate ETA based on actual speed
+        remaining_steps = total - clamped
+        if it_per_s > 0 and remaining_steps > 0:
+            eta_seconds = remaining_steps / it_per_s
+            if eta_seconds < 60:
+                eta_str = f"{eta_seconds:.1f}s"
+            elif eta_seconds < 3600:
+                eta_str = f"{eta_seconds / 60:.1f}m"
+            else:
+                eta_str = f"{eta_seconds / 3600:.1f}h"
+        else:
+            eta_str = "--"
+        
         return (
             f"`{bar}`\n"
             f"`{percentage:5.1f}%` ({clamped:3d}/{total:3d} steps) - "
-            f"`ETA: {((total - clamped) / 2.5):.1f}s`"
+            f"`ETA: {eta_str}`"
         )
 
     # ------------------------------------------------------------------
