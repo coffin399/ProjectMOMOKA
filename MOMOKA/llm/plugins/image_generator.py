@@ -16,7 +16,12 @@ from typing import Any, Deque, Dict, List, Optional
 import discord
 from discord.abc import Messageable
 from PIL import Image
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:
+    # Fallback if numpy is not available (should not happen in production)
+    np = None
 
 from MOMOKA.generator.image import (
     GenerationParams,
@@ -152,6 +157,10 @@ class ImageGenerator:
         Returns:
             True if the image is mostly black, False otherwise
         """
+        if np is None:
+            logger.warning("numpy is not available, cannot check if image is black")
+            return False
+        
         try:
             image = Image.open(io.BytesIO(image_bytes))
             # Convert to RGB if necessary

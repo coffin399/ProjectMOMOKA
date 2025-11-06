@@ -48,9 +48,16 @@ def _discover_plugins():
 
                         # print(f"Discovered plugin: {attr_name}") # for debugging
 
-            except ImportError as e:
+            except Exception as e:
                 # Handle potential import errors gracefully
-                print(f"Error importing plugin {module_name}: {e}")
+                # Log the error but don't fail the entire discovery process
+                # The actual import will fail later if dependencies are truly missing
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Error importing plugin {module_name}: {e}")
+                # Don't print traceback in production, only log the error
+                # import traceback
+                # traceback.print_exc()
 
 # --- Initialization ---
 # Discover plugins when this package is imported.
