@@ -81,11 +81,34 @@
 
 #### 内製 diffusers パイプライン（推奨）
 
-1. モデルフォルダ（weights + 任意の VAE / LoRA）を以下の構成で配置します。
+1. 画像モデルを以下のパスに配置します：
+   
+   **ディレクトリ構造:**
    ```
-   models/image-models/<モデル名>/
+   models/
+   ├── image-models/
+   │   └── <image model名>/
+   │       └── <image model名>.safetensors
+   │       └── (オプション) VAE, LoRA, model.json
+   └── tts-models/
+       └── <tts model名>/
+           └── <tts model名>.safetensors
+           └── (オプション) config.json, style_vectors.npy
    ```
+   
+   **例:**
+   ```
+   models/
+   ├── image-models/
+   │   └── my-model/
+   │       └── my-model.safetensors
+   └── tts-models/
+       └── my-voice/
+           └── my-voice.safetensors
+   ```
+   
    対応拡張子: `.safetensors`, `.ckpt`, `.pt`, `.bin`（VAE: `.vae`, `.safetensors`; LoRA: `.safetensors`, `.ckpt`, `.pt`）
+   オプション: VAE、LoRA、`model.json` を同じディレクトリに配置可能
 2. `config.yaml` を編集してローカル利用を有効化します。
    ```yaml
    llm:
@@ -134,7 +157,27 @@
 **完全に統合されたStyle-Bert-VITS2エンジン**を使用してテキストを音声に変換します。[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)の完全なソースコードがこのプロジェクトに統合されています。**外部APIサーバーは不要です！**
 
 **セットアップ:**
-- TTSモデルを `models/tts-models/<model_name>/` 配下に配置（`<model_name>.safetensors` または `G_*.pth` と対応する `config.json`）
+
+**ディレクトリ構造:**
+```
+models/
+└── tts-models/
+    └── <tts model名>/
+        └── <tts model名>.safetensors
+        └── (オプション) config.json, style_vectors.npy
+```
+
+**例:**
+```
+models/
+└── tts-models/
+    └── my-voice/
+        └── my-voice.safetensors
+        └── config.json
+```
+
+- TTSモデルを以下のパスに配置: `models/tts-models/<tts model名>/<tts model名>.safetensors`
+  - 代替: 同じディレクトリに `G_*.pth` と対応する `config.json`
 - オプション: `pyopenjtalk` 辞書と `style_vectors.npy` をサポート
 - 統合の詳細は `NOTICE` を参照
 
@@ -285,7 +328,7 @@ llm:
     provider: "local"  # 内製diffusersパイプライン（デフォルト）
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
-    # モデルを models/image-models/<model_name>/ 配下に配置
+    # モデルを配置: models/image-models/<image model名>/<image model名>.safetensors
 ```
 
 **オプション: WebUI Forge（代替）:**
@@ -324,6 +367,7 @@ tts:
   model_name: "your-model-name"    # モデルディレクトリ名
   default_style: "Neutral"
   sample_rate: 48000  # Discord標準
+  # モデルを配置: models/tts-models/<tts model名>/<tts model名>.safetensors
   # オプション: カスタムpyopenjtalk辞書
   pyopenjtalk_dict_dir: "path/to/custom/dict"
 ```
@@ -519,7 +563,22 @@ providers:
 内製画像生成エンジンはdiffusersを使用し、ボット内で完全に動作します。外部サービスは不要です。
 
 **セットアップ:**
-1. モデルを `models/image-models/<model_name>/` 配下に配置
+
+**ディレクトリ構造:**
+```
+models/
+├── image-models/
+│   └── <image model名>/
+│       └── <image model名>.safetensors
+│       └── (オプション) VAE, LoRA, model.json
+└── tts-models/
+    └── <tts model名>/
+        └── <tts model名>.safetensors
+        └── (オプション) config.json, style_vectors.npy
+```
+
+1. 画像モデルを以下のパスに配置: `models/image-models/<image model名>/<image model名>.safetensors`
+   - 例: `models/image-models/my-model/my-model.safetensors`
 2. `config.yaml` で `provider: "local"` を設定（これがデフォルトです）
 3. エンジンが自動的に利用可能なモデルを検出してロードします
 
@@ -575,9 +634,9 @@ AIとの対話で「画像を生成して」などと依頼すると、AIがプ�
 ### 画像生成ができない
 
 **内製エンジン（デフォルト）の場合:**
-1. モデルが `models/image-models/<model_name>/` 配下に配置されているか確認
+1. モデルが `models/image-models/<image model名>/<image model名>.safetensors` に配置されているか確認
 2. `config.yaml` で `provider: "local"` が設定されているか確認（または未設定、デフォルトです）
-3. モデルファイル（`.safetensors` または `.ckpt`）が存在するか確認
+3. モデルファイル（`.safetensors` または `.ckpt`）が正しい命名で存在するか確認
 4. GPU/CPUの可用性とメモリを確認（ログでエラーを確認）
 
 **WebUI Forge（オプション）の場合:**

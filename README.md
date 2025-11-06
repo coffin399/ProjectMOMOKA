@@ -42,8 +42,8 @@
 
 - 🤖 **AI Chat (LLM)** - Simply mention the bot with `@<bot name>` to start chatting! Supports multiple AI models including OpenAI GPT-4, Google Gemini, NVIDIA NIM, and local KoboldCPP with **automatic API key rotation** to handle rate limits seamlessly
 - 🎵 **Music Playback** - Play music from YouTube, Spotify, and more in voice channels
-- 🎨 **Image Generation (Built-in)** - Fully integrated diffusers-based image generation engine. No external services required! Drop models under `models/image-models/<model_name>/` (single-file weights like `.safetensors`/`.ckpt` supported; optional VAE/LoRA and `model.json`).
-- 🗣️ **Text-to-Speech (Built-in)** - **Fully integrated Style-Bert-VITS2 engine** - The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. No external API server needed! Put models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`. Optional `pyopenjtalk` dictionary and `style_vectors.npy` are supported. See `NOTICE` for integration details.
+- 🎨 **Image Generation (Built-in)** - Fully integrated diffusers-based image generation engine. No external services required! Place models at `models/image-models/<image model名>/<image model名>.safetensors` (optional VAE/LoRA and `model.json`).
+- 🗣️ **Text-to-Speech (Built-in)** - **Fully integrated Style-Bert-VITS2 engine** - The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. No external API server needed! Place models at `models/tts-models/<tts model名>/<tts model名>.safetensors` (or `G_*.pth` with matching `config.json`). Optional `pyopenjtalk` dictionary and `style_vectors.npy` are supported. See `NOTICE` for integration details.
 - 📊 **Game Tracking** - Track stats for Rainbow Six Siege and VALORANT
 - 🔔 **Notifications** - Get notified about earthquakes and Twitch streams
 - 🎲 **Utilities** - Dice rolls, timers, media downloads, and more!
@@ -64,10 +64,27 @@
 3. **Configure the bot**
    - Copy `config.default.yaml` to `config.yaml`
    - Fill in your bot token and API keys
-   - (Optional) Place local models:
-     - Image: `models/image-models/<model_name>/` → weights (`.safetensors`/`.ckpt`), optional `model.json`, VAE, LoRA
-     - TTS: `models/tts-models/<model_name>/` → `<model_name>.safetensors` or `G_*.pth` + `.json`
-     - You can also specify `tts.pyopenjtalk_dict_dir` for a custom `pyopenjtalk` dictionary
+  - (Optional) Place local models:
+    
+    **Directory Structure:**
+    ```
+    models/
+    ├── image-models/
+    │   └── <image model名>/
+    │       └── <image model名>.safetensors
+    │       └── (optional) VAE, LoRA, model.json
+    └── tts-models/
+        └── <tts model名>/
+            └── <tts model名>.safetensors
+            └── (optional) config.json, style_vectors.npy
+    ```
+    
+    **Examples:**
+    - **Image models**: `models/image-models/my-model/my-model.safetensors`
+      - Optional: VAE, LoRA, and `model.json` in the same directory
+    - **TTS models**: `models/tts-models/my-voice/my-voice.safetensors`
+      - Alternative: `G_*.pth` with matching `config.json`
+      - Optional: `pyopenjtalk` dictionary and `style_vectors.npy`
    - Configure options in `config.yaml` (e.g., default image model, TTS defaults)
 
 4. **Run the bot**

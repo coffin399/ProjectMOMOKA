@@ -81,11 +81,34 @@ Generate images using Stable Diffusion with the **built-in diffusers-based engin
 
 #### Built-in Diffusers Pipeline (Recommended)
 
-1. Place your model folders (weights + optional VAE/LoRA) under:
+1. Place your image models at:
+   
+   **Directory Structure:**
    ```
-   models/image-models/<model-name>/
+   models/
+   ├── image-models/
+   │   └── <image model name>/
+   │       └── <image model name>.safetensors
+   │       └── (optional) VAE, LoRA, model.json
+   └── tts-models/
+       └── <tts model name>/
+           └── <tts model name>.safetensors
+           └── (optional) config.json, style_vectors.npy
    ```
+   
+   **Example:**
+   ```
+   models/
+   ├── image-models/
+   │   └── my-model/
+   │       └── my-model.safetensors
+   └── tts-models/
+       └── my-voice/
+           └── my-voice.safetensors
+   ```
+   
    Supported extensions: `.safetensors`, `.ckpt`, `.pt`, `.bin` (VAE: `.vae`, `.safetensors`; LoRA: `.safetensors`, `.ckpt`, `.pt`)
+   Optional: VAE, LoRA, and `model.json` can be placed in the same directory
 2. Update `config.yaml`:
    ```yaml
    llm:
@@ -134,7 +157,27 @@ If you prefer to use an existing WebUI Forge instance instead of the built-in en
 Convert text to speech using the **fully integrated Style-Bert-VITS2 engine**. The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. **No external API server needed!**
 
 **Setup:**
-- Place TTS models under `models/tts-models/<model_name>/` with `<model_name>.safetensors` or `G_*.pth` and the matching `config.json`
+
+**Directory Structure:**
+```
+models/
+└── tts-models/
+    └── <tts model name>/
+        └── <tts model name>.safetensors
+        └── (optional) config.json, style_vectors.npy
+```
+
+**Example:**
+```
+models/
+└── tts-models/
+    └── my-voice/
+        └── my-voice.safetensors
+        └── config.json
+```
+
+- Place TTS models at: `models/tts-models/<tts model name>/<tts model name>.safetensors`
+  - Alternative: `G_*.pth` with matching `config.json` in the same directory
 - Optional: `pyopenjtalk` dictionary and `style_vectors.npy` are supported
 - See `NOTICE` for integration details
 
@@ -285,7 +328,7 @@ llm:
     provider: "local"  # Built-in diffusers pipeline (default)
     model: "sd_xl_base_1.0.safetensors"
     default_size: "1024x1024"
-    # Place models under models/image-models/<model_name>/
+    # Place models at: models/image-models/<image model name>/<image model name>.safetensors
 ```
 
 **Optional: WebUI Forge (Alternative):**
@@ -324,6 +367,7 @@ tts:
   model_name: "your-model-name"    # Model directory name
   default_style: "Neutral"
   sample_rate: 48000  # Discord standard
+  # Place models at: models/tts-models/<tts model name>/<tts model name>.safetensors
   # Optional: custom pyopenjtalk dictionary
   pyopenjtalk_dict_dir: "path/to/custom/dict"
 ```
@@ -519,7 +563,22 @@ When the voice channel becomes empty, the bot automatically leaves after the con
 The built-in image generation engine uses diffusers and runs entirely within the bot. No external services are required.
 
 **Setup:**
-1. Place your models under `models/image-models/<model_name>/`
+
+**Directory Structure:**
+```
+models/
+├── image-models/
+│   └── <image model name>/
+│       └── <image model name>.safetensors
+│       └── (optional) VAE, LoRA, model.json
+└── tts-models/
+    └── <tts model name>/
+        └── <tts model name>.safetensors
+        └── (optional) config.json, style_vectors.npy
+```
+
+1. Place your image models at: `models/image-models/<image model name>/<image model name>.safetensors`
+   - Example: `models/image-models/my-model/my-model.safetensors`
 2. Configure `provider: "local"` in `config.yaml` (this is the default)
 3. The engine will automatically discover and load available models
 
@@ -575,9 +634,9 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 ### Image generation doesn't work
 
 **For built-in engine (default):**
-1. Check if models are placed under `models/image-models/<model_name>/`
+1. Check if models are placed at `models/image-models/<image model name>/<image model name>.safetensors`
 2. Check if `provider: "local"` is set in `config.yaml` (or not set, as it's the default)
-3. Check if the model files (`.safetensors` or `.ckpt`) are present
+3. Check if the model files (`.safetensors` or `.ckpt`) are present with correct naming
 4. Check GPU/CPU availability and memory (check logs for errors)
 
 **For WebUI Forge (optional):**
