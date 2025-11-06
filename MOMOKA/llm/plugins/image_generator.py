@@ -41,6 +41,7 @@ class GenerationTask:
     arguments: Dict[str, Any]
     position: int = 0
     queue_message: Optional[discord.Message] = None
+    thinking_message: Optional[discord.Message] = None  # 「考え中...」メッセージ
 
 
 class ImageGenerator:
@@ -346,8 +347,14 @@ class ImageGenerator:
             "User interaction is required to proceed."
         )
 
-    async def _enqueue_task(self, arguments: Dict[str, Any], channel_id: int, user_id: int,
-                             user_name: str) -> str:
+    async def _enqueue_task(
+        self,
+        arguments: Dict[str, Any],
+        channel_id: int,
+        user_id: int,
+        user_name: str,
+        thinking_message: Optional[discord.Message] = None,
+    ) -> str:
         prompt = arguments.get("prompt", "").strip()
         if not prompt:
             return "❌ Error: Empty prompt provided. / エラー: プロンプトが空です。"
@@ -363,6 +370,7 @@ class ImageGenerator:
             prompt=prompt,
             channel_id=channel_id,
             arguments=arguments,
+            thinking_message=thinking_message,
         )
 
         queue_message: Optional[discord.Message] = None
@@ -525,6 +533,14 @@ class ImageGenerator:
                     error_speed,
                     status=f"❌ Error: {exc}"
                 )
+            
+            # エラー時もthinkingメッセージを削除
+            if task.thinking_message:
+                try:
+                    await task.thinking_message.delete()
+                except Exception as exc_delete:  # noqa: BLE001
+                    logger.debug("Failed to delete thinking message on error: %s", exc_delete)
+            
             raise
 
         elapsed_time = time.time() - start_time
@@ -559,6 +575,13 @@ class ImageGenerator:
             embed.set_footer(text="Try again with a different prompt and/or seed, or use an NSFW channel")
             
             await channel.send(embed=embed)
+            
+            # thinkingメッセージを削除（「考え中...」を削除）
+            if task.thinking_message:
+                try:
+                    await task.thinking_message.delete()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to delete thinking message: %s", exc)
             
             if task.queue_message:
                 try:
@@ -615,6 +638,13 @@ class ImageGenerator:
         file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
         await channel.send(embed=embed, file=file)
 
+        # thinkingメッセージを削除（「考え中...」を削除）
+        if task.thinking_message:
+            try:
+                await task.thinking_message.delete()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to delete thinking message: %s", exc)
+
         if task.queue_message:
             try:
                 await task.queue_message.delete()
@@ -646,9 +676,15 @@ class ImageGenerator:
         payload = dict(updated_arguments)
         payload["__modal_confirmed__"] = True
 
+        thinking_message: Optional[discord.Message] = None
         try:
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=False, thinking=True)
+                # thinkingメッセージを取得
+                try:
+                    thinking_message = await interaction.original_response()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to get thinking message: %s", exc)
         except discord.HTTPException as exc:  # noqa: BLE001
             logger.warning("Failed to defer modal interaction: %s", exc)
 
@@ -657,6 +693,7 @@ class ImageGenerator:
             channel_id=interaction.channel_id,
             user_id=interaction.user.id,
             user_name=requester_name,
+            thinking_message=thinking_message,  # thinkingメッセージをタスクに渡す
         )
 
         try:
