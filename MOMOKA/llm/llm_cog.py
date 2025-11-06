@@ -748,9 +748,8 @@ class LLMCog(commands.Cog, name="LLM"):
             # FIX IS HERE
             f"Messages structure: system={len(messages_for_api[0]['content'])} chars, lang_override={'present' if len(messages_for_api) > 1 and 'CRITICAL' in str(messages_for_api) else 'absent'}")
         try:
-            # 最初のレスポンスかどうかを判定（会話履歴がない場合）
-            # スレッド内では常にスレッド作成ボタンを表示しない
-            is_first_response = not isinstance(message.channel, discord.Thread) and len(conversation_history) == 0
+            # スレッド作成ボタンは削除（常にFalse）
+            is_first_response = False
             sent_messages, llm_response, used_key_index = await self._handle_llm_streaming_response(message,
                                                                                                     messages_for_api,
                                                                                                     llm_client,
@@ -893,10 +892,8 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.debug(f"Stream completed | Total chunks: {chunk_count} | Final length: {len(full_response_text)} chars")
         if full_response_text:
             if len(full_response_text) <= SAFE_MESSAGE_LENGTH:
-                # 最初のレスポンスのみスレッド作成ボタンを追加
+                # スレッド作成ボタンは削除
                 view = None
-                if is_first_response:
-                    view = ThreadCreationView(self, sent_message)
                 
                 for attempt in range(max_final_retries):
                     try:
@@ -925,10 +922,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 all_messages = []
                 first_chunk = chunks[0]  # 最初のチャンクを取得
 
-                # 最初のレスポンスのみスレッド作成ボタンを追加
+                # スレッド作成ボタンは削除
                 view = None
-                if is_first_response:
-                    view = ThreadCreationView(self, sent_message)
 
                 for attempt in range(max_final_retries):
                     try:
@@ -1434,10 +1429,10 @@ class LLMCog(commands.Cog, name="LLM"):
             else:
                 waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
                 temp_message = await interaction.followup.send(waiting_message, ephemeral=False, wait=True)
-            # /chatコマンドは常に最初のレスポンスとして扱う
+            # スレッド作成ボタンは削除（常にFalse）
             sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
                 sent_message=temp_message, channel=interaction.channel, user=interaction.user,
-                messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=True)
+                messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
             if sent_messages and full_response_text:
                 logger.info(
                     f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
