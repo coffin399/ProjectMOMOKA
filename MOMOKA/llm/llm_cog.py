@@ -544,39 +544,85 @@ class LLMCog(commands.Cog, name="LLM"):
         if guild_id not in self.conversation_threads:
             self.conversation_threads[guild_id] = {}
         
-        history, current_msg, visited_ids = [], message, set()
-        while current_msg.reference and current_msg.reference.message_id:
-            if current_msg.reference.message_id in visited_ids: break
+        history = []
+        current_msg = message
+        visited_ids = set()
+        max_depth = 50  # 無限ループ防止
+        
+        # リプライチェーンを遡って会話履歴を収集
+        depth = 0
+        while current_msg.reference and current_msg.reference.message_id and depth < max_depth:
+            if current_msg.reference.message_id in visited_ids:
+                break
             visited_ids.add(current_msg.reference.message_id)
+            depth += 1
+            
             try:
-                parent_msg = current_msg.reference.resolved or await message.channel.fetch_message(
-                    current_msg.reference.message_id)
+                # 参照メッセージを取得
+                parent_msg = current_msg.reference.resolved
+                if not parent_msg:
+                    parent_msg = await message.channel.fetch_message(current_msg.reference.message_id)
+                
                 if isinstance(parent_msg, discord.DeletedReferencedMessage):
                     logger.debug(f"Encountered deleted referenced message in history collection.")
                     break
-                if parent_msg.author != self.bot.user:
-                    image_contents, text_content = await self._prepare_multimodal_content(parent_msg)
-                    text_content = text_content.replace(f'<@!{self.bot.user.id}>', '').replace(f'<@{self.bot.user.id}>',
-                                                                                               '').strip()
-                    if text_content or image_contents:
-                        user_content_parts = []
-                        if text_content: user_content_parts.append({"type": "text",
-                                                                    "text": f"{parent_msg.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"})
-                        user_content_parts.extend(image_contents)
-                        history.append({"role": "user", "content": user_content_parts})
-                else:
+                
+                # Botのメッセージの場合、保存された会話履歴から取得
+                if parent_msg.author == self.bot.user:
                     thread_id = await self._get_conversation_thread_id(parent_msg)
                     if thread_id in self.conversation_threads[guild_id]:
-                        for msg in self.conversation_threads[guild_id][thread_id]:
+                        # このメッセージIDに対応するassistantメッセージを検索
+                        found_assistant = False
+                        for msg in reversed(self.conversation_threads[guild_id][thread_id]):
                             if msg.get("role") == "assistant" and msg.get("message_id") == parent_msg.id:
                                 history.append({"role": "assistant", "content": msg["content"]})
+                                found_assistant = True
+                                # このassistantメッセージより前の会話履歴も含める
+                                thread_history = self.conversation_threads[guild_id][thread_id]
+                                assistant_index = thread_history.index(msg)
+                                # assistantより前のメッセージを追加（時系列順に）
+                                for prev_msg in thread_history[:assistant_index]:
+                                    history.append(prev_msg)
                                 break
+                        
+                        if not found_assistant:
+                            # 履歴にない場合は、そのメッセージの内容を直接取得
+                            if parent_msg.content:
+                                history.append({"role": "assistant", "content": parent_msg.content})
+                
+                # ユーザーのメッセージの場合
+                elif parent_msg.author != self.bot.user:
+                    image_contents, text_content = await self._prepare_multimodal_content(parent_msg)
+                    text_content = text_content.replace(f'<@!{self.bot.user.id}>', '').replace(f'<@{self.bot.user.id}>', '').strip()
+                    if text_content or image_contents:
+                        user_content_parts = []
+                        if text_content:
+                            user_content_parts.append({
+                                "type": "text",
+                                "text": f"{parent_msg.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"
+                            })
+                        user_content_parts.extend(image_contents)
+                        history.append({"role": "user", "content": user_content_parts})
+                
+                # 親メッセージに移動
                 current_msg = parent_msg
-            except (discord.NotFound, discord.HTTPException):
+                
+            except (discord.NotFound, discord.HTTPException) as e:
+                logger.debug(f"Could not fetch parent message: {e}")
                 break
+            except Exception as e:
+                logger.error(f"Error collecting conversation history: {e}", exc_info=True)
+                break
+        
+        # 会話履歴を時系列順に並び替え（古いものから新しいものへ）
         history.reverse()
+        
+        # 最大履歴数で制限
         max_history_entries = self.llm_config.get('max_messages', 10) * 2
-        return history[-max_history_entries:] if len(history) > max_history_entries else history
+        if len(history) > max_history_entries:
+            history = history[-max_history_entries:]
+        
+        return history
 
     async def _process_image_url(self, url: str) -> Optional[Dict[str, Any]]:
         try:
@@ -684,13 +730,14 @@ class LLMCog(commands.Cog, name="LLM"):
                            isinstance(message.reference.resolved, discord.Message) and 
                            message.reference.resolved.author == self.bot.user)
         
-        # スレッド内ではBotのメッセージへのリプライのみ、通常チャンネルではメンション・リプライが必要
-        if is_thread:
-            if not is_reply_to_bot:
+        # リプライの場合はメンション必須、通常チャンネルではメンションのみ
+        if is_reply_to_bot:
+            # リプライの場合はメンションが必要
+            if not is_mentioned:
                 return
-        else:
-            if not (is_mentioned or is_reply_to_bot):
-                return
+        elif not is_mentioned:
+            # リプライでない場合もメンションが必要
+            return
         try:
             llm_client = await self._get_llm_client_for_channel(message.channel.id)
             if not llm_client:
@@ -1038,7 +1085,12 @@ class LLMCog(commands.Cog, name="LLM"):
             
             if tools_def and supports_tools:
                 api_kwargs["tools"] = tools_def
-                api_kwargs["tool_choice"] = "auto"
+                # Geminiモデルでは tool_choice パラメータを設定しない
+                # Geminiは tool_choice をサポートしていないか、異なる形式を要求する可能性がある
+                if not is_gemini:
+                    api_kwargs["tool_choice"] = "auto"
+                else:
+                    logger.debug(f"🔧 [GEMINI] Skipping tool_choice parameter for Gemini model")
                 # Safely get tool names, handling cases where the structure might be different
                 tool_names = []
                 for t in tools_def:
@@ -1059,6 +1111,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.info(f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
                 if is_koboldcpp:
                     logger.info(f"🔧 [KoboldCPP] Tools are enabled for this model")
+                if is_gemini:
+                    logger.info(f"🔧 [GEMINI] Tools are enabled for Gemini model (without tool_choice)")
             elif tools_def and not supports_tools:
                 logger.warning(
                     f"⚠️ [TOOLS] Tools are disabled for provider '{provider_name}' (supports_tools=false). Skipping tools.")
@@ -1090,8 +1144,9 @@ class LLMCog(commands.Cog, name="LLM"):
                     logger.warning(
                         f"⚠️ {error_type} error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
                     if attempt + 1 >= num_keys:
-                        logger.error(f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting.")
-                        raise e
+                        error_msg = f"Tried {num_keys} API key(s), but no response was received."
+                        logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                        raise Exception(error_msg)
                     next_key_index = (current_key_index + 1) % num_keys
                     self.provider_key_index[provider_name] = next_key_index
                     next_key = api_keys[next_key_index]
@@ -1113,6 +1168,25 @@ class LLMCog(commands.Cog, name="LLM"):
                     await asyncio.sleep(1)
                 except (openai.BadRequestError, openai.APIStatusError) as e:
                     status_code = getattr(e, 'status_code', None)
+                    # デバッグ用にapi_kwargsの内容をログに記録（機密情報を除外）
+                    debug_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
+                    debug_kwargs['messages_count'] = len(api_kwargs.get('messages', []))
+                    if 'messages' in api_kwargs and api_kwargs['messages']:
+                        # 最初と最後のメッセージの概要のみ記録
+                        first_msg = api_kwargs['messages'][0]
+                        last_msg = api_kwargs['messages'][-1]
+                        debug_kwargs['first_message'] = {
+                            'role': first_msg.get('role'),
+                            'content_preview': str(first_msg.get('content', ''))[:100] if isinstance(first_msg.get('content'), str) else type(first_msg.get('content')).__name__
+                        }
+                        debug_kwargs['last_message'] = {
+                            'role': last_msg.get('role'),
+                            'content_preview': str(last_msg.get('content', ''))[:100] if isinstance(last_msg.get('content'), str) else type(last_msg.get('content')).__name__
+                        }
+                    logger.error(f"❌ [API ERROR] Provider: '{provider_name}', Status: {status_code}")
+                    logger.error(f"❌ [API ERROR] Request parameters: {debug_kwargs}")
+                    logger.error(f"❌ [API ERROR] Full error: {e}")
+                    
                     if isinstance(status_code, int) and status_code >= 500:
                         logger.warning(
                             f"⚠️ Server-like status error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
@@ -1124,8 +1198,9 @@ class LLMCog(commands.Cog, name="LLM"):
                             f"⚠️ Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
 
                     if attempt + 1 >= num_keys:
-                        logger.error(f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting.")
-                        raise e
+                        error_msg = f"Tried {num_keys} API key(s), but no response was received."
+                        logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                        raise Exception(error_msg)
 
                     next_key_index = (current_key_index + 1) % num_keys
                     self.provider_key_index[provider_name] = next_key_index
@@ -1150,7 +1225,9 @@ class LLMCog(commands.Cog, name="LLM"):
                     raise
 
             if stream is None:
-                raise Exception("Failed to establish stream with any API key.")
+                error_msg = f"Tried {num_keys} API key(s), but no response was received."
+                logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                raise Exception(error_msg)
 
             tool_calls_buffer = []
             assistant_response_content = ""
