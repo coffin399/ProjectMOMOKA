@@ -13,6 +13,7 @@ from tkinter import scrolledtext, ttk
 from pathlib import Path
 import ctypes
 import platform
+from io import StringIO
 
 # --- グローバル変数 ---
 log_viewer_thread = None
@@ -129,9 +130,51 @@ class QueueHandler(logging.Handler):
             self.handleError(record)
 
 
-# キューにログを送信するハンドラを追加
+class StdoutCapture:
+    """標準出力をキャプチャしてログキューに送信するクラス"""
+    
+    def __init__(self, log_queue, original_stdout):
+        self.log_queue = log_queue
+        self.original_stdout = original_stdout
+        self.buffer = StringIO()
+    
+    def write(self, text):
+        """標準出力への書き込みをキャプチャ"""
+        # 元の標準出力にも書き込む（コンソールにも表示）
+        self.original_stdout.write(text)
+        self.original_stdout.flush()
+        
+        # 空行や改行のみの場合はスキップ
+        if not text.strip():
+            return
+        
+        # ログキューに送信
+        try:
+            # 各行を個別に処理
+            for line in text.rstrip().split('\n'):
+                if line.strip():
+                    # 標準出力のログとして扱う
+                    log_entry = f"{line}"
+                    self.log_queue.put(("stdout", "INFO", log_entry))
+        except Exception:
+            pass  # エラーが発生しても元の標準出力は動作させる
+    
+    def flush(self):
+        """フラッシュ処理"""
+        self.original_stdout.flush()
+        if hasattr(self.buffer, 'flush'):
+            self.buffer.flush()
+
+
+# キューにログを送信するハンドラを追加（GUIログビューア用）
 queue_handler = QueueHandler(log_queue)
 root_logger.addHandler(queue_handler)
+# 注意: DiscordLogHandlerはsetup_hook内で追加されるため、GUIとDiscordの両方にログが送信されます
+
+# 標準出力をキャプチャしてGUIにも表示
+original_stdout = sys.stdout
+stdout_capture = StdoutCapture(log_queue, original_stdout)
+sys.stdout = stdout_capture
 
 from MOMOKA.services.discord_handler import DiscordLogHandler, DiscordLogFormatter
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
@@ -231,6 +274,9 @@ class Momoka(commands.Bot):
 
         if all_log_channel_ids:
             try:
+                # DiscordLogHandlerを追加（GUIログビューアと並行して動作）
+                # 両方のハンドラが同じroot_loggerに追加されているため、
+                # すべてのログがGUIとDiscordの両方に送信されます
                 discord_handler = DiscordLogHandler(bot=self, channel_ids=all_log_channel_ids, interval=6.0)
                 discord_handler.setLevel(logging.INFO)
                 discord_formatter = DiscordLogFormatter('%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
@@ -975,7 +1021,7 @@ class LogViewerApp:
             self.root.after(100, self.poll_log_queue)
     
     def process_log_entry(self, name, level, log_entry):
-        """ログエントリを処理"""
+        """ログエントリを処理 - すべてのログを確実にGUIに表示"""
         # ログレベルに基づいてフィルタリング
         log_levels = {
             "DEBUG": 10,
@@ -985,25 +1031,38 @@ class LogViewerApp:
             "CRITICAL": 50
         }
         
-        # ログの種類を判定
+        # エラーログは常にエラーログウィジェットに表示
+        if level in ["ERROR", "CRITICAL"]:
+            widget = self.error_log
+            min_level = log_levels.get(self.error_level_var.get(), 30)
+            # エラーログは常に表示（フィルタリングを緩和）
+            if log_levels.get(level, 0) >= min_level:
+                self.append_to_log(widget, log_entry, level)
+            return
+        
+        # 標準出力からのログは一般ログに表示
+        if name == "stdout":
+            widget = self.general_log
+            min_level = log_levels.get(self.general_level_var.get(), 20)
+            # 標準出力は常にINFOレベルとして扱う
+            if log_levels.get("INFO", 20) >= min_level:
+                self.append_to_log(widget, log_entry, "INFO")
+            return
+        
+        # ログの種類を判定（MOMOKAモジュールのログを分類）
         if "MOMOKA.llm" in name:
-            log_type = "llm"
             widget = self.llm_log
             min_level = log_levels.get(self.llm_level_var.get(), 20)
         elif "MOMOKA.tts" in name:
-            log_type = "tts"
             widget = self.tts_log
             min_level = log_levels.get(self.tts_level_var.get(), 20)
-        elif level in ["ERROR", "CRITICAL"]:
-            log_type = "error"
-            widget = self.error_log
-            min_level = log_levels.get(self.error_level_var.get(), 30)
         else:
-            log_type = "general"
+            # その他のすべてのログは一般ログに表示
             widget = self.general_log
             min_level = log_levels.get(self.general_level_var.get(), 20)
         
         # ログレベルが閾値以上の場合のみ表示
+        # すべてのログを確実に表示するため、レベルチェックを実行
         if log_levels.get(level, 0) >= min_level:
             self.append_to_log(widget, log_entry, level)
     
