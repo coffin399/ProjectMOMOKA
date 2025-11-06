@@ -553,26 +553,20 @@ class ImageGenerator:
             await self._schedule_next_task()
             return None  # Don't return success message for NSFW-filtered images
         
-        # Normal image generation - show completed message and send image
+        # Delete progress message before sending the final result
         if progress_message:
-            final_speed = steps / elapsed_time if elapsed_time > 0 else 0.0
-            await self._update_progress_message(
-                progress_message,
-                prompt,
-                model_name,
-                adjusted_size,
-                steps,
-                steps,
-                sampler_name or "default",
-                elapsed_time,
-                final_speed,
-                status="✅ Completed",
-            )
+            try:
+                await progress_message.delete()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to delete progress message: %s", exc)
 
         if self.save_images:
             saved_path = await self._save_image(image_bytes, prompt, model_name, adjusted_size)
         else:
             saved_path = None
+
+        # Calculate final speed for display
+        final_speed = steps / elapsed_time if elapsed_time > 0 else 0.0
 
         embed = discord.Embed(
             title="🎨 Generated Image / 生成された画像",
@@ -593,6 +587,7 @@ class ImageGenerator:
         if seed != -1:
             embed.add_field(name="Seed", value=str(seed), inline=True)
         embed.add_field(name="Generation Time", value=f"{elapsed_time:.1f}s", inline=True)
+        embed.add_field(name="Speed", value=f"{final_speed:.2f} it/s", inline=True)
         if size_input != adjusted_size:
             embed.add_field(
                 name="ℹ️ Size Adjusted",
