@@ -58,20 +58,24 @@ class ImageGenerator:
 
         discovered_models = sorted(self.model_registry.names())
         if not discovered_models:
-            raise RuntimeError("No local image models found under models/image-models")
-
-        configured_models = self.image_gen_config.get("available_models")
-        if configured_models:
-            available = [model for model in configured_models if model in discovered_models]
-            if not available:
-                logger.warning("Configured available_models not found locally. Using discovered models instead.")
-                available = discovered_models
+            logger.warning("No local image models found under models/image-models. Image generation will be disabled.")
+            self.available_models = []
+            self.default_model = None
+            self._enabled = False
         else:
-            available = discovered_models
+            configured_models = self.image_gen_config.get("available_models")
+            if configured_models:
+                available = [model for model in configured_models if model in discovered_models]
+                if not available:
+                    logger.warning("Configured available_models not found locally. Using discovered models instead.")
+                    available = discovered_models
+            else:
+                available = discovered_models
 
-        self.available_models = available
-        configured_default = self.image_gen_config.get("model")
-        self.default_model = configured_default if configured_default in self.available_models else self.available_models[0]
+            self.available_models = available
+            configured_default = self.image_gen_config.get("model")
+            self.default_model = configured_default if configured_default in self.available_models else self.available_models[0]
+            self._enabled = True
 
         self.default_size = self.image_gen_config.get("default_size", "1024x1024")
         self.save_images = self.image_gen_config.get("save_images", True)
@@ -90,8 +94,11 @@ class ImageGenerator:
         self.is_generating = False
         self.current_task: Optional[GenerationTask] = None
 
-        logger.info("ImageGenerator initialised with %d local model(s)", len(self.available_models))
-        logger.info("Default model: %s", self.default_model)
+        if self._enabled:
+            logger.info("ImageGenerator initialised with %d local model(s)", len(self.available_models))
+            logger.info("Default model: %s", self.default_model)
+        else:
+            logger.info("ImageGenerator initialised but disabled (no models found)")
 
     # ------------------------------------------------------------------
     # Channel model helpers
@@ -250,7 +257,16 @@ class ImageGenerator:
     # Queue handling
     # ------------------------------------------------------------------
     async def run(self, arguments: Dict[str, Any], channel_id: int, user_id: int = 0,
-                  user_name: str = "Unknown") -> str:
+                   user_name: str = "Unknown") -> str:
+        if not self._enabled:
+            return (
+                "❌ Error: Image generation is disabled. "
+                "No local image models found under models/image-models.\n\n"
+                "エラー: 画像生成が無効です。models/image-models の下にローカル画像モデルが見つかりませんでした。\n\n"
+                "Please ensure models are placed in: models/image-models/<model_name>/<weights_file>\n"
+                "モデルは次の場所に配置してください: models/image-models/<model_name>/<weights_file>"
+            )
+        
         prompt = arguments.get("prompt", "").strip()
         if not prompt:
             return "❌ Error: Empty prompt provided. / エラー: プロンプトが空です。"
