@@ -132,6 +132,65 @@ class ImageCommandsCog(commands.Cog, name="画像検索"):
             await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
             logger.error(f"/yandere: Unexpected error - {e}")
 
+    @app_commands.command(name="yandere-safe", description="Yandereから安全な画像を検索します (rating:safe) / Search safe images from Yandere (rating:safe)")
+    @app_commands.describe(query="検索タグ (スペース区切り) / Search tags (space separated)")
+    async def yandere_safe_command(self, interaction: discord.Interaction, query: str = ""):
+        await interaction.response.defer(ephemeral=False)
+        try:
+            # タグをスペース区切りで分割し、+で結合
+            # rating:safeを自動的に追加
+            base_tags = query.strip().replace(" ", "+") if query else ""
+            tags = f"{base_tags}+rating:safe" if base_tags else "rating:safe"
+
+            # Yandere APIエンドポイント
+            url = f"https://yande.re/post.json?limit=100&tags={tags}"
+
+            async with self.http_session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data and isinstance(data, list) and len(data) > 0:
+                        # ランダムに1つ選択
+                        post = random.choice(data)
+                        image_url = post.get("file_url") or post.get("sample_url")
+
+                        if image_url:
+                            embed = discord.Embed(
+                                title="Yandere Image (Safe)",
+                                color=discord.Color.pink(),
+                                url=f"https://yande.re/post/show/{post.get('id', '')}"
+                            )
+                            embed.set_image(url=image_url)
+
+                            # タグ情報を追加
+                            tags_str = post.get("tags", "")[:200]  # 200文字まで
+                            if tags_str:
+                                embed.add_field(name="Tags", value=tags_str, inline=False)
+
+                            embed.set_footer(text=f"Rating: {post.get('rating', 'unknown')} | Yande.re")
+
+                            await interaction.followup.send(embed=embed, ephemeral=False)
+                            logger.info(f"/yandere-safe: 画像送信成功 - Query: {query} (User: {interaction.user.id})")
+                        else:
+                            await interaction.followup.send("画像URLが取得できませんでした。", ephemeral=False)
+                    else:
+                        await interaction.followup.send(
+                            f"検索結果が見つかりませんでした。\nQuery: `{query}`",
+                            ephemeral=False
+                        )
+                else:
+                    await interaction.followup.send(
+                        f"Yandere APIエラー: ステータスコード {response.status}",
+                        ephemeral=False
+                    )
+                    logger.error(f"/yandere-safe: API error - Status: {response.status}")
+
+        except aiohttp.ClientError as e:
+            await interaction.followup.send("接続エラーが発生しました。", ephemeral=False)
+            logger.error(f"/yandere-safe: Connection error - {e}")
+        except Exception as e:
+            await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
+            logger.error(f"/yandere-safe: Unexpected error - {e}")
+
     @app_commands.command(name="danbooru", description="Danbooruから画像を検索します / Search images from Danbooru")
     @app_commands.describe(query="検索タグ (スペース区切り) / Search tags (space separated)")
     async def danbooru_command(self, interaction: discord.Interaction, query: str = ""):
@@ -196,6 +255,65 @@ class ImageCommandsCog(commands.Cog, name="画像検索"):
         except Exception as e:
             await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
             logger.error(f"/danbooru: Unexpected error - {e}")
+
+    @app_commands.command(name="danbooru-safe", description="Danbooruから安全な画像を検索します (rating:general) / Search safe images from Danbooru (rating:general)")
+    @app_commands.describe(query="検索タグ (スペース区切り) / Search tags (space separated)")
+    async def danbooru_safe_command(self, interaction: discord.Interaction, query: str = ""):
+        await interaction.response.defer(ephemeral=False)
+        try:
+            # タグをスペース区切りで分割し、+で結合
+            # rating:generalを自動的に追加
+            base_tags = query.strip().replace(" ", "+") if query else ""
+            tags = f"{base_tags}+rating:general" if base_tags else "rating:general"
+
+            # Danbooru APIエンドポイント
+            url = f"https://danbooru.donmai.us/posts.json?limit=100&tags={tags}"
+
+            async with self.http_session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data and isinstance(data, list) and len(data) > 0:
+                        # ランダムに1つ選択
+                        post = random.choice(data)
+                        image_url = post.get("file_url") or post.get("large_file_url")
+
+                        if image_url:
+                            embed = discord.Embed(
+                                title="Danbooru Image (Safe)",
+                                color=discord.Color.blue(),
+                                url=f"https://danbooru.donmai.us/posts/{post.get('id', '')}"
+                            )
+                            embed.set_image(url=image_url)
+
+                            # タグ情報を追加
+                            tag_string = post.get("tag_string", "")[:200]  # 200文字まで
+                            if tag_string:
+                                embed.add_field(name="Tags", value=tag_string, inline=False)
+
+                            embed.set_footer(text=f"Rating: {post.get('rating', 'unknown')} | Danbooru")
+
+                            await interaction.followup.send(embed=embed, ephemeral=False)
+                            logger.info(f"/danbooru-safe: 画像送信成功 - Query: {query} (User: {interaction.user.id})")
+                        else:
+                            await interaction.followup.send("画像URLが取得できませんでした。", ephemeral=False)
+                    else:
+                        await interaction.followup.send(
+                            f"検索結果が見つかりませんでした。\nQuery: `{query}`",
+                            ephemeral=False
+                        )
+                else:
+                    await interaction.followup.send(
+                        f"Danbooru APIエラー: ステータスコード {response.status}",
+                        ephemeral=False
+                    )
+                    logger.error(f"/danbooru-safe: API error - Status: {response.status}")
+
+        except aiohttp.ClientError as e:
+            await interaction.followup.send("接続エラーが発生しました。", ephemeral=False)
+            logger.error(f"/danbooru-safe: Connection error - {e}")
+        except Exception as e:
+            await interaction.followup.send("予期しないエラーが発生しました。", ephemeral=False)
+            logger.error(f"/danbooru-safe: Unexpected error - {e}")
 
 
 async def setup(bot: commands.Bot):
