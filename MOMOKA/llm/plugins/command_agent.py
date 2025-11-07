@@ -405,6 +405,15 @@ class CommandAgent:
                     logger.error(f"CommandAgent: Error executing queue command: {e}", exc_info=True)
                     return f"❌ キュー確認中にエラーが発生しました: {str(e)}"
 
+            elif command_name == "leave":
+                try:
+                    # MusicCogのleaveメソッドを直接呼び出す
+                    await music_cog.leave(ctx)
+                    return "✅ ボイスチャンネルから切断しました。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error executing leave command: {e}", exc_info=True)
+                    return f"❌ 切断中にエラーが発生しました: {str(e)}"
+
             else:
                 return f"❌ 未対応の音楽コマンド: {command_name}"
 
@@ -545,7 +554,7 @@ class CommandAgent:
         # コマンドを実行
         logger.info(f"CommandAgent: Executing command '{command_name}' with parameters {parameters}")
         try:
-            if command_name in ["play", "pause", "resume", "skip", "stop", "queue"]:
+            if command_name in ["play", "pause", "resume", "skip", "stop", "queue", "leave"]:
                 result = await self._execute_music_command(command_name, parameters, channel_id, user_id)
             elif command_name in ["yandere-safe", "danbooru-safe"]:
                 result = await self._execute_image_command(command_name, parameters, channel_id, user_id)
