@@ -1342,11 +1342,13 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                            channel_id=channel_id)
                     logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
                 elif self.command_agent and function_name == self.command_agent.name:
+                    logger.info(f"🔧 [TOOL] CommandAgent called with arguments: {function_args}")
                     tool_response_content = await self.command_agent.run(arguments=function_args,
                                                                           bot=self.bot,
                                                                           channel_id=channel_id,
                                                                           user_id=user_id)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
+                    logger.info(f"🔧 [TOOL] CommandAgent result: {tool_response_content[:200] if tool_response_content else 'None'}...")
+                    logger.debug(f"🔧 [TOOL] Full result:\n{tool_response_content}")
                 else:
                     logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")
                     error_content = f"Error: Tool '{function_name}' is not available."

@@ -263,9 +263,15 @@ class CommandAgent:
     async def _execute_music_command(self, command_name: str, parameters: Dict[str, Any], channel_id: int, user_id: int) -> str:
         """音楽コマンドを実行"""
         try:
-            music_cog = self.bot.get_cog("MusicCog")
+            logger.info(f"CommandAgent: _execute_music_command called with command_name='{command_name}', parameters={parameters}, channel_id={channel_id}, user_id={user_id}")
+            # MusicCogの名前を確認（"MusicCog"または"music_cog"の可能性がある）
+            music_cog = self.bot.get_cog("MusicCog") or self.bot.get_cog("music_cog")
             if not music_cog:
+                # 利用可能なCog名をログに出力
+                available_cogs = [cog_name for cog_name in self.bot.cogs.keys()]
+                logger.error(f"CommandAgent: MusicCog not found. Available cogs: {available_cogs}")
                 return "❌ 音楽機能が利用できません。"
+            logger.info(f"CommandAgent: MusicCog found: {music_cog.__class__.__name__} (cog name: {music_cog.qualified_name if hasattr(music_cog, 'qualified_name') else 'N/A'})")
 
             channel = self.bot.get_channel(channel_id)
             if not channel or not isinstance(channel, discord.TextChannel):
@@ -509,29 +515,49 @@ class CommandAgent:
         command_name = arguments.get("command_name", "")
         parameters = arguments.get("parameters", {})
 
+        logger.info(f"CommandAgent: run() called with user_request='{user_request}', command_name='{command_name}', parameters={parameters}")
+
         if not user_request and not command_name:
+            logger.error("CommandAgent: Both user_request and command_name are missing.")
             raise ValueError("user_request または command_name が必要です。")
 
         # user_idが指定されていない場合は、botのユーザーIDを使用
         if user_id is None:
             user_id = bot.user.id if bot and bot.user else 0
 
+        logger.info(f"CommandAgent: Using user_id={user_id}, channel_id={channel_id}")
+
         # コマンド名が指定されていない場合は判別
         if not command_name:
-            identification_result = await self._identify_command(user_request)
-            command_name = identification_result.get("command_name", "")
-            parameters = identification_result.get("parameters", {})
-            reasoning = identification_result.get("reasoning", "")
+            logger.info(f"CommandAgent: Command name not provided, identifying from user_request: '{user_request}'")
+            try:
+                identification_result = await self._identify_command(user_request)
+                command_name = identification_result.get("command_name", "")
+                parameters = identification_result.get("parameters", {})
+                reasoning = identification_result.get("reasoning", "")
 
-            logger.info(f"CommandAgent: Identified command '{command_name}' for request '{user_request}' (reasoning: {reasoning})")
+                logger.info(f"CommandAgent: Identified command '{command_name}' for request '{user_request}' (reasoning: {reasoning}, parameters: {parameters})")
+            except Exception as e:
+                logger.error(f"CommandAgent: Error during command identification: {e}", exc_info=True)
+                return f"❌ コマンドの判別中にエラーが発生しました: {str(e)}"
+
+        if not command_name:
+            logger.warning(f"CommandAgent: No command identified for request: '{user_request}'")
+            return f"❌ 要求 '{user_request}' に対応するコマンドが見つかりませんでした。"
 
         # コマンドを実行
-        if command_name in ["play", "pause", "resume", "skip", "stop", "queue"]:
-            result = await self._execute_music_command(command_name, parameters, channel_id, user_id)
-        elif command_name in ["yandere-safe", "danbooru-safe"]:
-            result = await self._execute_image_command(command_name, parameters, channel_id, user_id)
-        else:
-            result = f"❌ 未対応のコマンド: {command_name}"
-
-        return result
+        logger.info(f"CommandAgent: Executing command '{command_name}' with parameters {parameters}")
+        try:
+            if command_name in ["play", "pause", "resume", "skip", "stop", "queue"]:
+                result = await self._execute_music_command(command_name, parameters, channel_id, user_id)
+            elif command_name in ["yandere-safe", "danbooru-safe"]:
+                result = await self._execute_image_command(command_name, parameters, channel_id, user_id)
+            else:
+                result = f"❌ 未対応のコマンド: {command_name}"
+            
+            logger.info(f"CommandAgent: Command '{command_name}' executed successfully. Result: {result[:100]}...")
+            return result
+        except Exception as e:
+            logger.error(f"CommandAgent: Error executing command '{command_name}': {e}", exc_info=True)
+            return f"❌ コマンド '{command_name}' の実行中にエラーが発生しました: {str(e)}"
 
