@@ -48,10 +48,10 @@ class CommandAgent:
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        gcfg = self.bot.cfg.get("llm", {}).get("agent", {})
+        gcfg = self.bot.cfg.get("agent", {})
         if not gcfg:
             logger.error("CommandAgent: agent config is missing. Using default Google config.")
-            gcfg = self.bot.cfg.get("llm", {}).get("providers", {}).get("google", {})
+            gcfg = self.bot.cfg.get("providers", {}).get("google", {})
 
         # 複数のAPIキーを収集
         self.api_keys = []

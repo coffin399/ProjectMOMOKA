@@ -40,7 +40,7 @@ class SearchAgent:
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        gcfg = self.bot.cfg.get("llm", {}).get("agent", {})
+        gcfg = self.bot.cfg.get("agent", {})
         if not gcfg:
             logger.error("SearchAgent config is missing. Search will be disabled.")
             self.clients = []
