@@ -236,6 +236,7 @@ llm:
       - When users introduce themselves, use the `user_bio` tool to remember that information.
       - When asked to remember universal information, use the `memory` tool.
       - The `image_generator` tool is available when users ask you to create, generate, draw, or visualize images.
+      - The `command_executor` tool is available when users request to execute Discord bot commands (e.g., play music, search images, pause/resume playback). Use this tool to automatically identify and execute the appropriate command based on the user's request.
 
   # --- 言語制御プロンプト ---
   language_prompt: |
@@ -256,8 +257,8 @@ llm:
     - "command_executor"
   max_tool_iterations: 3
 
-  # --- 検索エージェント設定 ---
-  search_agent:
+  # --- 検索・コマンド実行エージェント設定 ---
+  agent:
     api_key1: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
     api_key2: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
     api_key3: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"

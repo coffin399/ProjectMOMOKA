@@ -40,7 +40,7 @@ class SearchAgent:
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        gcfg = self.bot.cfg.get("search_agent")
+        gcfg = self.bot.cfg.get("llm", {}).get("agent", {})
         if not gcfg:
             logger.error("SearchAgent config is missing. Search will be disabled.")
             self.clients = []
@@ -56,7 +56,7 @@ class SearchAgent:
                     self.api_keys.append(api_key)
 
         if not self.api_keys:
-            logger.error("No valid API keys found in search_agent config. Search will be disabled.")
+            logger.error("No valid API keys found in agent config. Search will be disabled.")
             self.clients = []
             self.current_key_index = 0
             return
