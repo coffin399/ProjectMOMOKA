@@ -281,33 +281,30 @@ class CommandAgent:
             if not guild:
                 return "❌ ギルドが見つかりません。"
 
-            # ユーザーオブジェクトを取得
-            user = self.bot.get_user(user_id)
-            if not user:
-                return "❌ ユーザーが見つかりません。"
+            # メンバーオブジェクトを取得（guild.get_memberを使用）
+            member = guild.get_member(user_id)
+            if not member:
+                # メンバーが見つからない場合は、fetchを試みる
+                try:
+                    member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    logger.error(f"CommandAgent: Member {user_id} not found in guild {guild.id}")
+                    return "❌ ユーザーが見つかりません。ユーザーがこのサーバーに参加していることを確認してください。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error fetching member {user_id}: {e}", exc_info=True)
+                    return f"❌ ユーザー情報の取得中にエラーが発生しました: {str(e)}"
+
+            logger.info(f"CommandAgent: Member found: {member.display_name} (id: {member.id})")
 
             # モックContextオブジェクトを作成
-            class MockVoiceState:
-                def __init__(self, channel):
-                    self.channel = channel
-
             class MockContext:
                 def __init__(self, bot, channel, guild, author):
                     self.bot = bot
                     self.channel = channel
                     self.guild = guild
-                    self.author = author
+                    self.author = author  # これはdiscord.Memberオブジェクト
                     self.deferred = False
-                    # ユーザーがボイスチャンネルに接続しているか確認
-                    if isinstance(author, discord.Member):
-                        self.author.voice = author.voice  # 実際のvoice状態を使用
-                    else:
-                        # Userオブジェクトの場合は、ギルドからMemberを取得
-                        member = guild.get_member(author.id) if guild else None
-                        if member and member.voice:
-                            self.author.voice = member.voice
-                        else:
-                            self.author.voice = None
+                    # authorは既にMemberなので、voice属性はそのまま使用
                 
                 async def defer(self):
                     self.deferred = True
@@ -315,7 +312,7 @@ class CommandAgent:
                 async def send(self, content=None, **kwargs):
                     return await self.channel.send(content, **kwargs)
 
-            ctx = MockContext(self.bot, channel, guild, user)
+            ctx = MockContext(self.bot, channel, guild, member)
 
             # コマンドに応じて実行
             if command_name == "play":
