@@ -4,7 +4,7 @@
 
 # 🎯 MOMOKA
 
-**A powerful, feature-rich Discord bot with AI chat, music playback, image generation, and more!**
+**AIエージェント型DiscordBOT - An intelligent AI agent Discord bot with autonomous decision-making, AI chat, music playback, image generation, and more!**
 
 [![Invite Bot](https://img.shields.io/badge/Invite%20Sample%20Bot-24/7%20Online-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
 
@@ -32,7 +32,7 @@
 
 ## ✨ What is MOMOKA?
 
-**MOMOKA** is your all-in-one Discord companion! 🎮✨ A feature-packed bot that combines the power of AI chat, seamless music playback, local image generation, and essential utility commands—all in one sleek package. Perfect for communities that want everything without the hassle of managing multiple bots!
+**MOMOKA** is an **AI Agent-type Discord Bot** that acts as your intelligent Discord companion! 🤖✨ Unlike traditional bots that simply respond to commands, MOMOKA operates as an autonomous AI agent capable of making decisions, understanding context, and proactively assisting your community. It combines the power of advanced AI chat with autonomous capabilities, seamless music playback, local image generation, and essential utility commands—all in one sleek package. Perfect for communities that want an intelligent, self-aware bot that can think and act independently!
 
 > **Built-ins:**
 > - **Built-in image generation engine** - Fully integrated diffusers-based image generation pipeline (see `MOMOKA/generator/image`). No external services required!
