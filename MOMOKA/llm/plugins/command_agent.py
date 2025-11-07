@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 
 import discord
@@ -279,30 +280,127 @@ class CommandAgent:
             if not user:
                 return "❌ ユーザーが見つかりません。"
 
+            # モックContextオブジェクトを作成
+            class MockVoiceState:
+                def __init__(self, channel):
+                    self.channel = channel
+
+            class MockContext:
+                def __init__(self, bot, channel, guild, author):
+                    self.bot = bot
+                    self.channel = channel
+                    self.guild = guild
+                    self.author = author
+                    self.deferred = False
+                    # ユーザーがボイスチャンネルに接続しているか確認
+                    if isinstance(author, discord.Member):
+                        self.author.voice = author.voice  # 実際のvoice状態を使用
+                    else:
+                        # Userオブジェクトの場合は、ギルドからMemberを取得
+                        member = guild.get_member(author.id) if guild else None
+                        if member and member.voice:
+                            self.author.voice = member.voice
+                        else:
+                            self.author.voice = None
+                
+                async def defer(self):
+                    self.deferred = True
+                
+                async def send(self, content=None, **kwargs):
+                    return await self.channel.send(content, **kwargs)
+
+            ctx = MockContext(self.bot, channel, guild, user)
+
             # コマンドに応じて実行
             if command_name == "play":
                 query = parameters.get("query", "")
                 if not query:
                     return "❌ /play コマンドには query パラメータが必要です。"
                 
-                # 実際のコマンドを実行するために、スラッシュコマンドを呼び出す
-                # ただし、Interactionが必要なため、簡易的な実装としてメッセージを送信
                 try:
-                    # スラッシュコマンドを直接呼び出すことはできないため、
-                    # ユーザーにコマンドを提案する形で実装
-                    await channel.send(f"🎵 音楽再生リクエスト: `{query}`\n💡 実際に再生するには `/play query:{query}` コマンドを実行してください。")
-                    return f"✅ 音楽再生コマンドを実行しました: {query}"
+                    # MusicCogのplayメソッドを直接呼び出す
+                    await music_cog.play(ctx, query=query)
+                    return f"✅ 音楽再生を開始しました: {query}"
                 except Exception as e:
-                    logger.error(f"CommandAgent: Error sending music command message: {e}")
-                    return f"✅ 音楽再生コマンドを実行しました: {query} (メッセージ送信に失敗しましたが、コマンドは認識されました)"
+                    logger.error(f"CommandAgent: Error executing play command: {e}", exc_info=True)
+                    return f"❌ 音楽再生中にエラーが発生しました: {str(e)}"
 
-            elif command_name in ["pause", "resume", "skip", "stop", "queue"]:
-                # これらのコマンドはパラメータ不要
+            elif command_name == "pause":
                 try:
-                    await channel.send(f"🎵 {command_name} コマンドがリクエストされました。\n💡 実際に実行するには `/{command_name}` コマンドを実行してください。")
+                    state = music_cog._get_guild_state(guild.id)
+                    if not state or not state.voice_client or not state.is_playing:
+                        return "❌ 現在再生中の音楽がありません。"
+                    if state.is_paused:
+                        return "⚠️ 既に一時停止中です。"
+                    state.voice_client.pause()
+                    state.is_paused = True
+                    state.paused_at = time.time()
+                    await channel.send("⏸️ 再生を一時停止しました。")
+                    return "✅ 再生を一時停止しました。"
                 except Exception as e:
-                    logger.error(f"CommandAgent: Error sending command message: {e}")
-                return f"✅ {command_name} コマンドを実行しました。"
+                    logger.error(f"CommandAgent: Error executing pause command: {e}", exc_info=True)
+                    return f"❌ 一時停止中にエラーが発生しました: {str(e)}"
+
+            elif command_name == "resume":
+                try:
+                    state = music_cog._get_guild_state(guild.id)
+                    if not state or not state.voice_client or not state.is_paused:
+                        return "❌ 一時停止中の音楽がありません。"
+                    state.voice_client.resume()
+                    state.is_paused = False
+                    if state.paused_at and state.playback_start_time:
+                        state.playback_start_time = time.time() - (state.paused_at - state.playback_start_time)
+                    state.paused_at = None
+                    await channel.send("▶️ 再生を再開しました。")
+                    return "✅ 再生を再開しました。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error executing resume command: {e}", exc_info=True)
+                    return f"❌ 再生再開中にエラーが発生しました: {str(e)}"
+
+            elif command_name == "skip":
+                try:
+                    state = music_cog._get_guild_state(guild.id)
+                    if not state or not state.voice_client:
+                        return "❌ 現在再生中の音楽がありません。"
+                    if state.voice_client.is_playing():
+                        state.voice_client.stop()
+                    return "✅ 曲をスキップしました。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error executing skip command: {e}", exc_info=True)
+                    return f"❌ スキップ中にエラーが発生しました: {str(e)}"
+
+            elif command_name == "stop":
+                try:
+                    state = music_cog._get_guild_state(guild.id)
+                    if not state:
+                        return "❌ 音楽機能が利用できません。"
+                    if state.voice_client and state.voice_client.is_playing():
+                        state.voice_client.stop()
+                    await state.clear_queue()
+                    state.current_track = None
+                    state.is_playing = False
+                    state.is_paused = False
+                    await channel.send("⏹️ 再生を停止し、キューをクリアしました。")
+                    return "✅ 再生を停止しました。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error executing stop command: {e}", exc_info=True)
+                    return f"❌ 停止中にエラーが発生しました: {str(e)}"
+
+            elif command_name == "queue":
+                try:
+                    state = music_cog._get_guild_state(guild.id)
+                    if not state:
+                        return "❌ 音楽機能が利用できません。"
+                    queue_size = state.queue.qsize()
+                    if queue_size == 0:
+                        await channel.send("📭 キューは空です。")
+                        return "📭 キューは空です。"
+                    else:
+                        await channel.send(f"📜 キューには {queue_size} 曲が入っています。")
+                        return f"📜 キューには {queue_size} 曲が入っています。"
+                except Exception as e:
+                    logger.error(f"CommandAgent: Error executing queue command: {e}", exc_info=True)
+                    return f"❌ キュー確認中にエラーが発生しました: {str(e)}"
 
             else:
                 return f"❌ 未対応の音楽コマンド: {command_name}"
