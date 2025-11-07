@@ -30,7 +30,8 @@ from MOMOKA.llm.plugins import (
     BioManager,
     MemoryManager,
     CommandInfoManager,
-    ImageGenerator
+    ImageGenerator,
+    CommandAgent
 )
 
 try:
@@ -264,7 +265,7 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.info(
             f"Loaded {len(self.channel_models)} channel-specific model settings from '{self.channel_settings_path}'.")
         self.jst = timezone(timedelta(hours=+9))
-        self.search_agent, self.bio_manager, self.memory_manager, self.command_manager, self.image_generator, self.tips_manager = self._initialize_plugins()
+        self.search_agent, self.bio_manager, self.memory_manager, self.command_manager, self.image_generator, self.command_agent, self.tips_manager = self._initialize_plugins()
         default_model_string = self.llm_config.get('model')
         if default_model_string:
             main_llm_client = self._initialize_llm_client(default_model_string)
@@ -276,7 +277,7 @@ class LLMCog(commands.Cog, name="LLM"):
         else:
             logger.error("Default LLM model is not configured in config.yaml.")
 
-    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[TipsManager]]:
+    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager]]:
         """Initializes and returns all registered plugins."""
         plugins = {
             "SearchAgent": None,
@@ -284,6 +285,7 @@ class LLMCog(commands.Cog, name="LLM"):
             "MemoryManager": None,
             "CommandInfoManager": None,
             "ImageGenerator": None,
+            "CommandAgent": None,
             "TipsManager": None
         }
 
@@ -303,6 +305,9 @@ class LLMCog(commands.Cog, name="LLM"):
         if 'image_generator' in active_tools and ImageGenerator:
             plugins["ImageGenerator"] = ImageGenerator(self.bot)
 
+        if 'command_executor' in active_tools and CommandAgent:
+            plugins["CommandAgent"] = CommandAgent(self.bot)
+
         # Log initialized plugins
         for name, instance in plugins.items():
             if instance:
@@ -316,6 +321,7 @@ class LLMCog(commands.Cog, name="LLM"):
             plugins["MemoryManager"],
             plugins["CommandInfoManager"],
             plugins["ImageGenerator"],
+            plugins["CommandAgent"],
             plugins["TipsManager"]
         )
 
@@ -478,7 +484,8 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.debug(f"🔍 [TOOLS] Plugin status: search_agent={self.search_agent is not None}, "
                      f"bio_manager={self.bio_manager is not None}, "
                      f"memory_manager={self.memory_manager is not None}, "
-                     f"image_generator={self.image_generator is not None}")
+                     f"image_generator={self.image_generator is not None}, "
+                     f"command_agent={self.command_agent is not None}")
 
         if 'search' in active_tools:
             if self.search_agent:
@@ -507,6 +514,13 @@ class LLMCog(commands.Cog, name="LLM"):
                 #logger.info(f"✅ [TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
             else:
                 logger.warning(f"⚠️ [TOOLS] 'image_generator' is in active_tools but image_generator is None")
+
+        if 'command_executor' in active_tools:
+            if self.command_agent:
+                definitions.append(self.command_agent.tool_spec)
+                #logger.info(f"✅ [TOOLS] Added 'command_executor' tool (name: {self.command_agent.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'command_executor' is in active_tools but command_agent is None")
 
         logger.info(f"🔧 [TOOLS] Total tools to return: {len(definitions)}")
 
@@ -1326,6 +1340,12 @@ class LLMCog(commands.Cog, name="LLM"):
                 elif self.image_generator and function_name == self.image_generator.name:
                     tool_response_content = await self.image_generator.run(arguments=function_args,
                                                                            channel_id=channel_id)
+                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
+                elif self.command_agent and function_name == self.command_agent.name:
+                    tool_response_content = await self.command_agent.run(arguments=function_args,
+                                                                          bot=self.bot,
+                                                                          channel_id=channel_id,
+                                                                          user_id=user_id)
                     logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
                 else:
                     logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")

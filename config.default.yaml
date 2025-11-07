@@ -253,6 +253,7 @@ llm:
     - "user_bio"
     - "memory"
     - "image_generator"
+    - "command_executor"
   max_tool_iterations: 3
 
   # --- 検索エージェント設定 ---
