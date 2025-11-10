@@ -233,6 +233,138 @@ class LLMCog(commands.Cog, name="LLM"):
     report_schedule_group = app_commands.Group(name="report-schedule",
                                                description="Manage scheduled deep research reports. / 定期リサーチレポートを管理します。")
 
+    @report_schedule_group.command(name="add",
+                                   description="Add a new scheduled report. / 新しい定期レポートを追加します。")
+    @app_commands.describe(
+        interval_hours="Interval in hours between reports. / レポート間の間隔（時間）",
+        query="Research query for the report. / レポートのリサーチクエリ"
+    )
+    async def report_schedule_add(self, interaction: discord.Interaction, interval_hours: float, query: str):
+        """Add a new scheduled report."""
+        if not self.reporter_manager:
+            await interaction.response.send_message(
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            schedule = await self.reporter_manager.add_schedule(
+                guild_id=interaction.guild.id,
+                channel_id=interaction.channel.id,
+                interval_hours=interval_hours,
+                query=query
+            )
+            
+            embed = discord.Embed(
+                title="✅ Schedule Added / スケジュール追加完了",
+                description=f"Report scheduled successfully! / レポートが正常にスケジュールされました！",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Schedule ID / スケジュールID", value=str(schedule["id"]))
+            embed.add_field(name="Interval / 間隔", value=f"{interval_hours} hours / 時間")
+            embed.add_field(name="Query / クエリ", value=query)
+            embed.add_field(name="Next Run / 次回実行", value=schedule["next_run_at"])
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error adding schedule: {e}", exc_info=True)
+            await interaction.followup.send(
+                "❌ Failed to add schedule. / スケジュールの追加に失敗しました。",
+                ephemeral=True
+            )
+
+    @report_schedule_group.command(name="list",
+                                   description="List all scheduled reports. / すべての定期レポートを一覧表示します。")
+    async def report_schedule_list(self, interaction: discord.Interaction):
+        """List all scheduled reports."""
+        if not self.reporter_manager:
+            await interaction.response.send_message(
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            schedules = await self.reporter_manager.list_schedules(interaction.guild.id)
+            
+            if not schedules:
+                await interaction.followup.send(
+                    "📋 No scheduled reports found. / スケジュールされたレポートが見つかりません。",
+                    ephemeral=True
+                )
+                return
+            
+            embed = discord.Embed(
+                title="📋 Scheduled Reports / スケジュールされたレポート",
+                description=f"Found {len(schedules)} schedule(s) / {len(schedules)}個のスケジュールが見つかりました",
+                color=discord.Color.blue()
+            )
+            
+            for schedule in schedules:
+                field_value = (
+                    f"**Query / クエリ:** {schedule['query']}\n"
+                    f"**Interval / 間隔:** {schedule['interval_hours']}h\n"
+                    f"**Next Run / 次回実行:** {schedule['next_run_at']}\n"
+                    f"**Channel / チャンネル:** <#{schedule['channel_id']}>"
+                )
+                embed.add_field(
+                    name=f"ID: {schedule['id']}",
+                    value=field_value,
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error listing schedules: {e}", exc_info=True)
+            await interaction.followup.send(
+                "❌ Failed to list schedules. / スケジュールの一覧表示に失敗しました。",
+                ephemeral=True
+            )
+
+    @report_schedule_group.command(name="delete",
+                                   description="Delete a scheduled report. / 定期レポートを削除します。")
+    @app_commands.describe(
+        schedule_id="ID of the schedule to delete. / 削除するスケジュールのID"
+    )
+    async def report_schedule_delete(self, interaction: discord.Interaction, schedule_id: int):
+        """Delete a scheduled report."""
+        if not self.reporter_manager:
+            await interaction.response.send_message(
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            success = await self.reporter_manager.delete_schedule(interaction.guild.id, schedule_id)
+            
+            if success:
+                await interaction.followup.send(
+                    f"✅ Schedule {schedule_id} deleted successfully. / スケジュール {schedule_id} が正常に削除されました。",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"❌ Schedule {schedule_id} not found. / スケジュール {schedule_id} が見つかりません。",
+                    ephemeral=True
+                )
+                
+        except Exception as e:
+            logger.error(f"Error deleting schedule: {e}", exc_info=True)
+            await interaction.followup.send(
+                "❌ Failed to delete schedule. / スケジュールの削除に失敗しました。",
+                ephemeral=True
+            )
+
     def _add_support_footer(self, embed: discord.Embed) -> None:
         current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
         support_text = "\n問題がありますか？開発者にご連絡ください！ / Having issues? Contact the developer!"
