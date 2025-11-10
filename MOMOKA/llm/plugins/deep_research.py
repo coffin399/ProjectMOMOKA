@@ -105,9 +105,8 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
 2. **Structure and Organization**:
    - Start with a clear executive summary
    - Use well-organized sections with descriptive headings
-   - Include bullet points (use • or -), numbered lists, and tables where appropriate
+   - Include bullet points, numbered lists, and tables where appropriate
    - End with conclusions and key takeaways
-   - IMPORTANT: You can use #, ##, ### for headings, but avoid using #### as it doesn't display properly in Discord
 
 3. **Comprehensive Coverage**:
    - Include historical context and background information
@@ -121,7 +120,6 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
    - Define technical terms when necessary
    - Use analogies and real-world examples to illustrate points
    - Maintain a professional yet engaging tone
-   - Use **bold** and *italic* text for emphasis (these work well in Discord)
 
 5. **Research Quality**:
    - Provide specific facts, figures, and evidence
@@ -129,18 +127,67 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
    - Distinguish between established facts and speculative analysis
    - Acknowledge limitations or uncertainties in the information
 
-6. **Discord Formatting Guidelines**:
-   - Use #, ##, ### for headings (avoid ####)
-   - Use • or - for bullet points
-   - Use numbered lists with 1., 2., 3. format
-   - Use *italic* for emphasis
-   - Use `code formatting` for technical terms
-   - Avoid complex markdown tables that may not render properly
-   - Use line breaks and spacing for readability
+6. **Discord Markdown Formatting Guidelines**:
+   
+   **ALLOWED Discord Markdown Elements (USE ONLY THESE):**
+   
+   **Text Decoration:**
+   - *Italic text*: Use `*text*` or `_text_`
+   - **Bold text**: Use `**text**`
+   - ***Bold italic***: Use `***text***`
+   - __Underline__: Use `__text__`
+   - __*Underline italic*__: Use `__*text*__`
+   - __**Underline bold**__: Use `__**text**__`
+   - __***Underline bold italic***__: Use `__***text***__`
+   - ~~Strikethrough~~: Use `~~text~~`
+   - ||Spoiler text||: Use `||text||`
+   
+   **Headings:**
+   - # Heading 1: Use `# text`
+   - ## Heading 2: Use `## text`
+   - ### Heading 3: Use `### text`
+   - DO NOT use #### (level 4 headings)
+   
+   **Lists:**
+   - Bullet points: Use `- text`, `* text`, or `+ text`
+   - Numbered lists: Use `1. text`, `2. text`, etc.
+   
+   **Quotes:**
+   - > Quote: Use `> text`
+   - >>> Multi-line quote: Use `>>> text`
+   
+   **Code:**
+   - Inline code: Use `` `code` ``
+   - Code blocks: Use ``` triple backticks ```
+   - Syntax highlighting: Use ```language ... ```
+   
+   **Links:**
+   - [Link text](URL): Use `[text](url)`
+   - Direct link: Use `<url>`
+   
+   **Other:**
+   - Horizontal lines: Use `---`, `***`, or `___`
+   
+   **Combinations:**
+   - **__Bold underline__**: Combine formats
+   - *__Italic underline__*: Combine formats
+   - ~~**Strikethrough bold**~~: Combine formats
+   
+   **Special Discord Features:**
+   - Mentions: Use `<@userID>`, `<@&roleID>`, `<#channelID>`
+   - Custom emojis: Use `<:emojiName:emojiID>` or `<a:emojiName:emojiID>` (animated)
+   - Timestamps: Use `<t:unixTime:style>` (e.g., `<t:1234567890:F>`)
+   
+   **IMPORTANT FORMATTING RULES:**
+   - Use markdown correctly and sparingly
+   - Do not duplicate formatting symbols (avoid `****text****` or `### ###`)
+   - Each formatting element should be opened and closed properly
+   - Use backslash `\\` to escape special characters when needed
+   - Test that your formatting works in Discord before finalizing
 
 7. **Length and Thoroughness**: Aim for a substantial report (typically 1500-3000 words) that thoroughly explores the topic from multiple angles.
 
-Please ensure the report is valuable to readers seeking deep understanding of the subject matter and formats correctly in Discord.
+Please ensure the report is valuable to readers seeking deep understanding of the subject matter and formats correctly in Discord using only the markdown elements listed above.
 """
         
         parts = [

@@ -256,7 +256,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 guild_id=interaction.guild.id,
                 channel_id=interaction.channel.id,
                 interval_hours=interval_hours,
-                query=query
+                query=query,
+                custom_prompt=custom_prompt
             )
             
             # Execute report immediately
@@ -274,8 +275,12 @@ class LLMCog(commands.Cog, name="LLM"):
                         if isinstance(result, str):
                             # Split long messages
                             chunks = self.reporter_manager._chunk_text(result)
-                            for chunk in chunks:
-                                await interaction.channel.send(f"📊 **Initial Report / 初回レポート**\n\n{chunk}")
+                            for i, chunk in enumerate(chunks):
+                                if i == 0:
+                                    # Only add header to first chunk
+                                    await interaction.channel.send(f"📊 **Initial Report / 初回レポート**\n\n{chunk}")
+                                else:
+                                    await interaction.channel.send(chunk)
                         else:
                             await interaction.channel.send("📊 **Initial Report / 初回レポート**\n\nReport generated but format was unexpected.")
                     else:
