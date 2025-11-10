@@ -31,7 +31,9 @@ from MOMOKA.llm.plugins import (
     MemoryManager,
     CommandInfoManager,
     ImageGenerator,
-    CommandAgent
+    CommandAgent,
+    DeepResearchAgent,
+    ScheduledReporter
 )
 
 try:
@@ -228,6 +230,9 @@ class ThreadCreationView(discord.ui.View):
 class LLMCog(commands.Cog, name="LLM"):
     """A cog for interacting with Large Language Models, with tool support."""
 
+    schedule_report_group = app_commands.Group(name="schedule-report",
+                                               description="Manage scheduled deep research reports. / 定期リサーチレポートを管理します。")
+
     def _add_support_footer(self, embed: discord.Embed) -> None:
         current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
         support_text = "\n問題がありますか？開発者にご連絡ください！ / Having issues? Contact the developer!"
@@ -262,10 +267,34 @@ class LLMCog(commands.Cog, name="LLM"):
         self.exception_handler = LLMExceptionHandler(self.llm_config)
         self.channel_settings_path = "data/channel_llm_models.json"
         self.channel_models: Dict[str, str] = self._load_json_data(self.channel_settings_path)
+        # Plugin placeholders (populated by _initialize_plugins)
+        self.search_agent: Optional[SearchAgent] = None
+        self.bio_manager: Optional[BioManager] = None
+        self.memory_manager: Optional[MemoryManager] = None
+        self.command_manager: Optional[CommandInfoManager] = None
+        self.image_generator: Optional[ImageGenerator] = None
+        self.command_agent: Optional[CommandAgent] = None
+        self.tips_manager: Optional[TipsManager] = None
+        self.deep_research_agent: Optional[DeepResearchAgent] = None
+        self.reporter_manager: Optional[ScheduledReporter] = None
         logger.info(
             f"Loaded {len(self.channel_models)} channel-specific model settings from '{self.channel_settings_path}'.")
         self.jst = timezone(timedelta(hours=+9))
-        self.search_agent, self.bio_manager, self.memory_manager, self.command_manager, self.image_generator, self.command_agent, self.tips_manager = self._initialize_plugins()
+        (
+            self.search_agent,
+            self.bio_manager,
+            self.memory_manager,
+            self.command_manager,
+            self.image_generator,
+            self.command_agent,
+            self.tips_manager,
+            self.deep_research_agent,
+            self.reporter_manager
+        ) = self._initialize_plugins()
+        try:
+            self.bot.tree.add_command(self.schedule_report_group)
+        except app_commands.CommandAlreadyRegistered:
+            logger.debug("schedule-report command group already registered; skipping re-add.")
         default_model_string = self.llm_config.get('model')
         if default_model_string:
             main_llm_client = self._initialize_llm_client(default_model_string)
@@ -277,7 +306,7 @@ class LLMCog(commands.Cog, name="LLM"):
         else:
             logger.error("Default LLM model is not configured in config.yaml.")
 
-    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager]]:
+    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager], Optional[DeepResearchAgent], Optional[ScheduledReporter]]:
         """Initializes and returns all registered plugins."""
         plugins = {
             "SearchAgent": None,
@@ -286,7 +315,9 @@ class LLMCog(commands.Cog, name="LLM"):
             "CommandInfoManager": None,
             "ImageGenerator": None,
             "CommandAgent": None,
-            "TipsManager": None
+            "TipsManager": None,
+            "DeepResearchAgent": None,
+            "ScheduledReporter": None
         }
 
         # Initialize plugins that are always needed or don't have a specific config toggle
@@ -296,17 +327,53 @@ class LLMCog(commands.Cog, name="LLM"):
 
         # Initialize plugins based on config
         active_tools = self.llm_config.get('active_tools', [])
-        if 'search' in active_tools and SearchAgent:
-            plugins["SearchAgent"] = SearchAgent(self.bot)
-        
-        if self.llm_config.get('commands_manager', True) and CommandInfoManager:
-            plugins["CommandInfoManager"] = CommandInfoManager(self.bot)
 
-        if 'image_generator' in active_tools and ImageGenerator:
-            plugins["ImageGenerator"] = ImageGenerator(self.bot)
+        logger.info(f"🔍 [TOOLS] Active tools from config: {active_tools}")
 
-        if 'command_executor' in active_tools and CommandAgent:
-            plugins["CommandAgent"] = CommandAgent(self.bot)
+        if 'search' in active_tools:
+            if SearchAgent:
+                plugins["SearchAgent"] = SearchAgent(self.bot)
+                #logger.info(f"✅ [TOOLS] Added 'search' tool (name: {self.search_agent.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'search' is in active_tools but search_agent is None")
+
+        if 'user_bio' in active_tools:
+            if BioManager:
+                plugins["BioManager"] = BioManager(self.bot)
+                #logger.info(f"✅ [TOOLS] Added 'user_bio' tool (name: {self.bio_manager.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'user_bio' is in active_tools but bio_manager is None")
+
+        if 'memory' in active_tools:
+            if MemoryManager:
+                plugins["MemoryManager"] = MemoryManager(self.bot)
+                #logger.info(f"✅ [TOOLS] Added 'memory' tool (name: {self.memory_manager.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'memory' is in active_tools but memory_manager is None")
+
+        if 'image_generator' in active_tools:
+            if ImageGenerator:
+                plugins["ImageGenerator"] = ImageGenerator(self.bot)
+                #logger.info(f"✅ [TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'image_generator' is in active_tools but image_generator is None")
+
+        if 'command_executor' in active_tools:
+            if CommandAgent:
+                plugins["CommandAgent"] = CommandAgent(self.bot)
+                #logger.info(f"✅ [TOOLS] Added 'command_executor' tool (name: {self.command_agent.tool_spec['function']['name']})")
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'command_executor' is in active_tools but command_agent is None")
+
+        try:
+            plugins["DeepResearchAgent"] = DeepResearchAgent(self.bot, search_agent=plugins["SearchAgent"])
+        except Exception as e:
+            logger.error(f"DeepResearchAgent failed to initialize: {e}", exc_info=True)
+
+        try:
+            plugins["ScheduledReporter"] = ScheduledReporter(self.bot, deep_research=plugins["DeepResearchAgent"])
+        except Exception as e:
+            logger.error(f"ScheduledReporter failed to initialize: {e}", exc_info=True)
 
         # Log initialized plugins
         for name, instance in plugins.items():
@@ -322,7 +389,9 @@ class LLMCog(commands.Cog, name="LLM"):
             plugins["CommandInfoManager"],
             plugins["ImageGenerator"],
             plugins["CommandAgent"],
-            plugins["TipsManager"]
+            plugins["TipsManager"],
+            plugins["DeepResearchAgent"],
+            plugins["ScheduledReporter"]
         )
 
     async def cog_unload(self):
@@ -330,6 +399,11 @@ class LLMCog(commands.Cog, name="LLM"):
         for task in self.model_reset_tasks.values(): task.cancel()
         logger.info(f"Cancelled {len(self.model_reset_tasks)} pending model reset tasks.")
         if self.image_generator: await self.image_generator.close()
+        if self.reporter_manager: await self.reporter_manager.shutdown()
+        try:
+            self.bot.tree.remove_command(self.schedule_report_group.name, type=discord.AppCommandType.chat_input)
+        except Exception as e:
+            logger.debug(f"Failed to remove schedule-report command group: {e}")
         logger.info("LLMCog's aiohttp session has been closed.")
 
     def _load_json_data(self, path: str) -> Dict[str, Any]:
@@ -522,9 +596,37 @@ class LLMCog(commands.Cog, name="LLM"):
             else:
                 logger.warning(f"⚠️ [TOOLS] 'command_executor' is in active_tools but command_agent is None")
 
+        if 'deep_research' in active_tools:
+            if self.deep_research_agent:
+                definitions.append(self.deep_research_agent.tool_spec)
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'deep_research' is in active_tools but deep_research_agent is None")
+
         logger.info(f"🔧 [TOOLS] Total tools to return: {len(definitions)}")
 
         return definitions or None
+
+    def _format_report_datetime(self, iso_str: Optional[str]) -> str:
+        try:
+            if not iso_str:
+                raise ValueError("missing")
+            dt = datetime.fromisoformat(iso_str)
+        except (ValueError, TypeError):
+            return "Unknown"
+        return dt.astimezone(self.jst).strftime('%Y-%m-%d %H:%M JST')
+
+    def _resolve_channel_display(self, channel_id: int) -> str:
+        channel = self.bot.get_channel(channel_id)
+        if channel:
+            return channel.mention
+        return f"<#{channel_id}>"
+
+    def _reporter_unavailable_embed(self) -> discord.Embed:
+        embed = discord.Embed(title="❌ Reporter Not Available / レポーター機能が利用できません",
+                              description="ScheduledReporter plugin is not initialized. / ScheduledReporterプラグインが初期化されていません。",
+                              color=discord.Color.red())
+        self._add_support_footer(embed)
+        return embed
 
     async def _get_conversation_thread_id(self, message: discord.Message) -> int:
         guild_id = message.guild.id if message.guild else 0  # DMの場合は0
@@ -1349,6 +1451,10 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                           user_id=user_id)
                     logger.info(f"🔧 [TOOL] CommandAgent result: {tool_response_content[:200] if tool_response_content else 'None'}...")
                     logger.debug(f"🔧 [TOOL] Full result:\n{tool_response_content}")
+                elif self.deep_research_agent and function_name == self.deep_research_agent.name:
+                    tool_response_content = await self.deep_research_agent.run_tool(arguments=function_args,
+                                                                                   channel_id=channel_id)
+                    logger.debug(f"🔧 [TOOL] DeepResearch result (len={len(tool_response_content)}):\n{tool_response_content[:500]}")
                 else:
                     logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")
                     error_content = f"Error: Tool '{function_name}' is not available."

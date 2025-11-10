@@ -268,6 +268,13 @@ llm:
     model: "gemini-2.5-flash"
     timeout: 60.0
     format_control: "検索結果に基づき、ユーザーの質問に直接回答する形で、構造化された詳細なレポートを作成してください。"
+    format_control_deep_research: |
+      [DEEP RESEARCH REPORT FORMAT]
+      1. **Executive Summary / 要約** — 研究対象の主要結論を3行以内で提示する。
+      2. **Key Findings / 主要知見** — 箇条書きで具体的な事実・データ・引用元を記載する。
+      3. **Implications / 含意** — ユーザーの目的に関連する洞察・推奨事項を整理する。
+      4. **Sources / 参考情報** — 参照した出典の概要とURLを列挙する。
+      5. 文体は客観的かつ簡潔にし、重複を避けること。日本語で回答する場合は適切な敬語を使用する。
 
   # --- エラーメッセージ設定 ---
   error_msg:
