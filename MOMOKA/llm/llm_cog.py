@@ -291,10 +291,6 @@ class LLMCog(commands.Cog, name="LLM"):
             self.deep_research_agent,
             self.reporter_manager
         ) = self._initialize_plugins()
-        try:
-            self.bot.tree.add_command(self.schedule_report_group)
-        except app_commands.CommandAlreadyRegistered:
-            logger.debug("schedule-report command group already registered; skipping re-add.")
         default_model_string = self.llm_config.get('model')
         if default_model_string:
             main_llm_client = self._initialize_llm_client(default_model_string)
@@ -400,10 +396,6 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.info(f"Cancelled {len(self.model_reset_tasks)} pending model reset tasks.")
         if self.image_generator: await self.image_generator.close()
         if self.reporter_manager: await self.reporter_manager.shutdown()
-        try:
-            self.bot.tree.remove_command(self.schedule_report_group.name, type=discord.AppCommandType.chat_input)
-        except Exception as e:
-            logger.debug(f"Failed to remove schedule-report command group: {e}")
         logger.info("LLMCog's aiohttp session has been closed.")
 
     def _load_json_data(self, path: str) -> Dict[str, Any]:
