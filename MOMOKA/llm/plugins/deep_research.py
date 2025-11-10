@@ -105,8 +105,9 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
 2. **Structure and Organization**:
    - Start with a clear executive summary
    - Use well-organized sections with descriptive headings
-   - Include bullet points, numbered lists, and tables where appropriate
+   - Include bullet points (use • or -), numbered lists, and tables where appropriate
    - End with conclusions and key takeaways
+   - IMPORTANT: You can use #, ##, ### for headings, but avoid using #### as it doesn't display properly in Discord
 
 3. **Comprehensive Coverage**:
    - Include historical context and background information
@@ -120,6 +121,7 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
    - Define technical terms when necessary
    - Use analogies and real-world examples to illustrate points
    - Maintain a professional yet engaging tone
+   - Use **bold** and *italic* text for emphasis (these work well in Discord)
 
 5. **Research Quality**:
    - Provide specific facts, figures, and evidence
@@ -127,9 +129,18 @@ Please generate a comprehensive and detailed report on the requested topic. Foll
    - Distinguish between established facts and speculative analysis
    - Acknowledge limitations or uncertainties in the information
 
-6. **Length and Thoroughness**: Aim for a substantial report (typically 1500-3000 words) that thoroughly explores the topic from multiple angles.
+6. **Discord Formatting Guidelines**:
+   - Use #, ##, ### for headings (avoid ####)
+   - Use • or - for bullet points
+   - Use numbered lists with 1., 2., 3. format
+   - Use *italic* for emphasis
+   - Use `code formatting` for technical terms
+   - Avoid complex markdown tables that may not render properly
+   - Use line breaks and spacing for readability
 
-Please ensure the report is valuable to readers seeking deep understanding of the subject matter.
+7. **Length and Thoroughness**: Aim for a substantial report (typically 1500-3000 words) that thoroughly explores the topic from multiple angles.
+
+Please ensure the report is valuable to readers seeking deep understanding of the subject matter and formats correctly in Discord.
 """
         
         parts = [
