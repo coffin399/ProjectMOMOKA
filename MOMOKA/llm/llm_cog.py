@@ -243,12 +243,11 @@ class LLMCog(commands.Cog, name="LLM"):
         """Add a new scheduled report."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
-                ephemeral=True
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         try:
             schedule = await self.reporter_manager.add_schedule(
@@ -268,13 +267,12 @@ class LLMCog(commands.Cog, name="LLM"):
             embed.add_field(name="Query / クエリ", value=query)
             embed.add_field(name="Next Run / 次回実行", value=schedule["next_run_at"])
             
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             
         except Exception as e:
             logger.error(f"Error adding schedule: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to add schedule. / スケジュールの追加に失敗しました。",
-                ephemeral=True
+                "❌ Failed to add schedule. / スケジュールの追加に失敗しました。"
             )
 
     @report_schedule_group.command(name="list",
@@ -283,20 +281,18 @@ class LLMCog(commands.Cog, name="LLM"):
         """List all scheduled reports."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
-                ephemeral=True
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         try:
             schedules = await self.reporter_manager.list_schedules(interaction.guild.id)
             
             if not schedules:
                 await interaction.followup.send(
-                    "📋 No scheduled reports found. / スケジュールされたレポートが見つかりません。",
-                    ephemeral=True
+                    "📋 No scheduled reports found. / スケジュールされたレポートが見つかりません。"
                 )
                 return
             
@@ -319,13 +315,12 @@ class LLMCog(commands.Cog, name="LLM"):
                     inline=False
                 )
             
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             
         except Exception as e:
             logger.error(f"Error listing schedules: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to list schedules. / スケジュールの一覧表示に失敗しました。",
-                ephemeral=True
+                "❌ Failed to list schedules. / スケジュールの一覧表示に失敗しました。"
             )
 
     @report_schedule_group.command(name="delete",
@@ -337,32 +332,28 @@ class LLMCog(commands.Cog, name="LLM"):
         """Delete a scheduled report."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。",
-                ephemeral=True
+                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
             )
             return
         
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         
         try:
             success = await self.reporter_manager.delete_schedule(interaction.guild.id, schedule_id)
             
             if success:
                 await interaction.followup.send(
-                    f"✅ Schedule {schedule_id} deleted successfully. / スケジュール {schedule_id} が正常に削除されました。",
-                    ephemeral=True
+                    f"✅ Schedule {schedule_id} deleted successfully. / スケジュール {schedule_id} が正常に削除されました。"
                 )
             else:
                 await interaction.followup.send(
-                    f"❌ Schedule {schedule_id} not found. / スケジュール {schedule_id} が見つかりません。",
-                    ephemeral=True
+                    f"❌ Schedule {schedule_id} not found. / スケジュール {schedule_id} が見つかりません。"
                 )
                 
         except Exception as e:
             logger.error(f"Error deleting schedule: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to delete schedule. / スケジュールの削除に失敗しました。",
-                ephemeral=True
+                "❌ Failed to delete schedule. / スケジュールの削除に失敗しました。"
             )
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
