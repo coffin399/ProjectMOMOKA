@@ -250,12 +250,43 @@ class LLMCog(commands.Cog, name="LLM"):
         await interaction.response.defer()
         
         try:
+            # Add schedule first
             schedule = await self.reporter_manager.add_schedule(
                 guild_id=interaction.guild.id,
                 channel_id=interaction.channel.id,
                 interval_hours=interval_hours,
                 query=query
             )
+            
+            # Execute report immediately
+            if self.reporter_manager.deep_research:
+                await interaction.followup.send(
+                    f"🔄 Executing initial report for query: {query}\nクエリの初回レポートを実行中: {query}"
+                )
+                
+                try:
+                    # Execute the report
+                    result = await self.reporter_manager.deep_research.generate_report(query)
+                    
+                    if result:
+                        # Send the report to the channel
+                        if isinstance(result, str):
+                            # Split long messages
+                            chunks = self.reporter_manager._chunk_text(result)
+                            for chunk in chunks:
+                                await interaction.channel.send(f"📊 **Initial Report / 初回レポート**\n\n{chunk}")
+                        else:
+                            await interaction.channel.send("📊 **Initial Report / 初回レポート**\n\nReport generated but format was unexpected.")
+                    else:
+                        await interaction.channel.send("❌ Failed to generate initial report. / 初回レポートの生成に失敗しました。")
+                        
+                except Exception as e:
+                    logger.error(f"Error executing initial report: {e}", exc_info=True)
+                    await interaction.channel.send("❌ Error occurred while generating initial report. / 初回レポート生成中にエラーが発生しました。")
+            
+            # Format next run time in JST
+            from MOMOKA.llm.plugins.reporter_plugin import ScheduledReporter
+            next_run_jst = ScheduledReporter._format_datetime_jst(schedule["next_run_at"])
             
             embed = discord.Embed(
                 title="✅ Schedule Added / スケジュール追加完了",
@@ -265,7 +296,7 @@ class LLMCog(commands.Cog, name="LLM"):
             embed.add_field(name="Schedule ID / スケジュールID", value=str(schedule["id"]))
             embed.add_field(name="Interval / 間隔", value=f"{interval_hours} hours / 時間")
             embed.add_field(name="Query / クエリ", value=query)
-            embed.add_field(name="Next Run / 次回実行", value=schedule["next_run_at"])
+            embed.add_field(name="Next Run / 次回実行 (JST)", value=next_run_jst)
             
             await interaction.followup.send(embed=embed)
             
@@ -296,6 +327,9 @@ class LLMCog(commands.Cog, name="LLM"):
                 )
                 return
             
+            # Import for JST formatting
+            from MOMOKA.llm.plugins.reporter_plugin import ScheduledReporter
+            
             embed = discord.Embed(
                 title="📋 Scheduled Reports / スケジュールされたレポート",
                 description=f"Found {len(schedules)} schedule(s) / {len(schedules)}個のスケジュールが見つかりました",
@@ -303,10 +337,13 @@ class LLMCog(commands.Cog, name="LLM"):
             )
             
             for schedule in schedules:
+                # Format next run time in JST
+                next_run_jst = ScheduledReporter._format_datetime_jst(schedule["next_run_at"])
+                
                 field_value = (
                     f"**Query / クエリ:** {schedule['query']}\n"
                     f"**Interval / 間隔:** {schedule['interval_hours']}h\n"
-                    f"**Next Run / 次回実行:** {schedule['next_run_at']}\n"
+                    f"**Next Run / 次回実行 (JST):** {next_run_jst}\n"
                     f"**Channel / チャンネル:** <#{schedule['channel_id']}>"
                 )
                 embed.add_field(

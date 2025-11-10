@@ -283,3 +283,14 @@ class ScheduledReporter:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(tz=timezone.utc)
+    
+    @staticmethod
+    def _format_datetime_jst(dt_str: str) -> str:
+        """Convert UTC datetime string to JST YYYY-MM-dd-hh-mm-ss format."""
+        try:
+            dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            # Convert to JST (UTC+9)
+            jst_dt = dt.astimezone(timezone(timedelta(hours=9)))
+            return jst_dt.strftime("%Y-%m-%d-%H-%M-%S")
+        except Exception:
+            return "Invalid datetime"
