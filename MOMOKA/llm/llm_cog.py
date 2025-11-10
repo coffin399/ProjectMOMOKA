@@ -230,7 +230,7 @@ class ThreadCreationView(discord.ui.View):
 class LLMCog(commands.Cog, name="LLM"):
     """A cog for interacting with Large Language Models, with tool support."""
 
-    schedule_report_group = app_commands.Group(name="schedule-report",
+    report_schedule_group = app_commands.Group(name="report-schedule",
                                                description="Manage scheduled deep research reports. / 定期リサーチレポートを管理します。")
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
