@@ -127,6 +127,7 @@ class VideoFormatSelect(discord.ui.Select):
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
+            'noprogress': True,
         }
         downloaded_file_path = None
         try:
@@ -221,7 +222,9 @@ class YtdlpGdriveCog(commands.Cog):
             'postprocessors': [
                 {'key': 'FFmpegExtractAudio', 'preferredcodec': audio_format, 'preferredquality': '192'}],
             'noplaylist': True, 'default_search': 'ytsearch', 'quiet': True, 'no_warnings': True,
+            'noprogress': True,
         }
+
         temp_original_file_path = None
         message = None
         try:
@@ -281,7 +284,8 @@ class YtdlpGdriveCog(commands.Cog):
             return
         await interaction.response.defer(thinking=True)
         try:
-            ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'noplaylist': True}
+            ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'noplaylist': True, 'noprogress': True}
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, query, download=False)
                 if 'entries' in info and info['entries']:

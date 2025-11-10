@@ -1,15 +1,21 @@
 # MOMOKA/music/music_cog.py
 import asyncio
+import collections
 import gc
+import io
+import itertools
 import logging
 import math
 import random
-from datetime import datetime, timedelta
-from enum import Enum, auto
-from pathlib import Path
-from typing import Dict, Optional
-import time
+import re
 import subprocess
+import time
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import discord
 import yaml
 from discord import app_commands
@@ -248,13 +254,48 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.guild_states[guild_id].update_activity()
         return self.guild_states[guild_id]
 
+    async def _send_ctx_message(
+            self,
+            ctx: commands.Context,
+            *,
+            content: Optional[str] = None,
+            embed: Optional[discord.Embed] = None,
+            view: Optional[discord.ui.View] = None,
+            ephemeral: bool = False,
+            **kwargs,
+    ):
+        interaction = getattr(ctx, "interaction", None)
+        try:
+            if interaction:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        content=content,
+                        embed=embed,
+                        view=view,
+                        ephemeral=ephemeral,
+                        **kwargs,
+                    )
+                else:
+                    await interaction.followup.send(
+                        content=content,
+                        embed=embed,
+                        view=view,
+                        ephemeral=ephemeral,
+                        **kwargs,
+                    )
+            else:
+                if ephemeral:
+                    logger.debug("Ephemeral messages are not supported for prefix commands; sending normally.")
+                await ctx.send(content=content, embed=embed, view=view, **kwargs)
+        except Exception as e:
+            guild = ctx.guild
+            guild_info = f"{guild.id} ({guild.name})" if guild else "Unknown guild"
+            logger.error(f"Guild {guild_info}: Response error: {e}")
+
     async def _send_response(self, ctx: commands.Context, message_key: str, ephemeral: bool = False,
                              **kwargs):
         content = self.exception_handler.get_message(message_key, **kwargs)
-        try:
-            await ctx.send(content, ephemeral=ephemeral)
-        except Exception as e:
-            logger.error(f"Guild {ctx.guild.id} ({ctx.guild.name}): Response error: {e}")
+        await self._send_ctx_message(ctx, content=content, ephemeral=ephemeral)
 
     async def _send_background_message(self, channel_id: int, message_key: str, **kwargs):
         try:
@@ -268,13 +309,13 @@ class MusicCog(commands.Cog, name="music_cog"):
 
     async def _handle_error(self, ctx: commands.Context, error: Exception):
         error_message = self.exception_handler.handle_error(error, ctx.guild)
-        await ctx.send(error_message, ephemeral=True)
+        await self._send_ctx_message(ctx, content=error_message, ephemeral=True)
 
     async def _ensure_voice(self, ctx: commands.Context, connect_if_not_in: bool = True) -> Optional[
         discord.VoiceClient]:
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("サーバーの上限に達しています。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="サーバーの上限に達しています。", ephemeral=True)
             return None
         state.update_last_text_channel(ctx.channel.id)
         user_voice = ctx.author.voice
@@ -600,7 +641,7 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("サーバーの上限に達しています。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="サーバーの上限に達しています。", ephemeral=True)
             return
 
         vc = await self._ensure_voice(ctx, connect_if_not_in=True)
@@ -616,16 +657,19 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.is_loading = True
 
         try:
-            await ctx.send(
-                self.exception_handler.get_message("searching_for_song", query=query)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("searching_for_song", query=query),
             )
 
             extracted_media = await extract_audio_data(query, shuffle_playlist=False)
 
             if not extracted_media:
-                await ctx.send(
-                    self.exception_handler.get_message("search_no_results", query=query)
+                await self._send_ctx_message(
+                    ctx,
+                    content=self.exception_handler.get_message("search_no_results", query=query),
                 )
+
                 return
 
             tracks = extracted_media if isinstance(extracted_media, list) else [extracted_media]
@@ -640,23 +684,28 @@ class MusicCog(commands.Cog, name="music_cog"):
                         first_track = track
                     added_count += 1
                 else:
-                    await ctx.send(
-                        self.exception_handler.get_message("max_queue_size_reached",
-                                                           max_size=self.max_queue_size)
+                    await self._send_ctx_message(
+                        ctx,
+                        content=self.exception_handler.get_message("max_queue_size_reached",
+                                                                  max_size=self.max_queue_size)
                     )
+
                     break
 
             if added_count > 1:
-                await ctx.send(
-                    self.exception_handler.get_message("added_playlist_to_queue",
-                                                       count=added_count)
+                await self._send_ctx_message(
+                    ctx,
+                    content=self.exception_handler.get_message("added_playlist_to_queue",
+                                                              count=added_count)
                 )
+
             elif added_count == 1 and first_track:
-                await ctx.send(
-                    self.exception_handler.get_message("added_to_queue",
-                                                       title=first_track.title,
-                                                       duration=format_duration(first_track.duration),
-                                                       requester_display_name=ctx.author.display_name)
+                await self._send_ctx_message(
+                    ctx,
+                    content=self.exception_handler.get_message("added_to_queue",
+                                                              title=first_track.title,
+                                                              duration=format_duration(first_track.duration),
+                                                              requester_display_name=ctx.author.display_name)
                 )
 
             if not was_playing:
@@ -664,9 +713,11 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         except Exception as e:
             error_message = self.exception_handler.handle_error(e, ctx.guild)
-            await ctx.send(
-                self.exception_handler.get_message("error_message_wrapper", error=error_message)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("error_message_wrapper", error=error_message)
             )
+
         finally:
             state.is_loading = False
 
@@ -675,7 +726,8 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def seek(self, ctx: commands.Context, *, time: str):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         await ctx.defer()
@@ -746,7 +798,8 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def skip(self, ctx: commands.Context):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         await ctx.defer()
@@ -762,7 +815,8 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def stop(self, ctx: commands.Context):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         await ctx.defer()
@@ -786,7 +840,8 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def leave(self, ctx: commands.Context):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         await ctx.defer()
@@ -801,12 +856,18 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def queue(self, ctx: commands.Context):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         state.update_last_text_channel(ctx.channel.id)
         if state.queue.empty() and not state.current_track:
-            await ctx.send(self.exception_handler.get_message("queue_empty"), ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("queue_empty"),
+                ephemeral=True,
+            )
+
             return
 
         items_per_page = 10
@@ -958,17 +1019,22 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         current_page = 1
         if total_pages <= 1:
-            await ctx.send(embed=await get_page_embed(current_page))
+            await self._send_ctx_message(ctx, embed=await get_page_embed(current_page))
+
         else:
             view = get_queue_view(current_page, total_pages, ctx.author.id)
-            await ctx.send(embed=await get_page_embed(current_page), view=view)
+            await self._send_ctx_message(ctx, embed=await get_page_embed(current_page), view=view)
 
     @commands.hybrid_command(name="nowplaying", description="現在再生中の曲の情報を表示します。")
     async def nowplaying(self, ctx: commands.Context):
         state = self._get_guild_state(ctx.guild.id)
         if not state or not state.current_track:
-            await ctx.send(self.exception_handler.get_message("now_playing_nothing"),
-                                                    ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("now_playing_nothing"),
+                ephemeral=True,
+            )
+
             return
 
         track = state.current_track
@@ -991,7 +1057,7 @@ class MusicCog(commands.Cog, name="music_cog"):
         )
         if track.thumbnail:
             embed.set_thumbnail(url=track.thumbnail)
-        await ctx.send(embed=embed)
+        await self._send_ctx_message(ctx, embed=embed)
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         if total <= 0:
@@ -1033,7 +1099,8 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def remove(self, ctx: commands.Context, index: int):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         if index < 1:
@@ -1041,7 +1108,12 @@ class MusicCog(commands.Cog, name="music_cog"):
             return
 
         if state.queue.empty():
-            await ctx.send(self.exception_handler.get_message("queue_empty"), ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("queue_empty"),
+                ephemeral=True,
+            )
+
             return
 
         actual_index = index - 1
@@ -1060,12 +1132,14 @@ class MusicCog(commands.Cog, name="music_cog"):
     @app_commands.describe(level="設定したい音量レベル (0-200)")
     async def volume(self, ctx: commands.Context, level: int):
         if not 0 <= level <= 200:
-            await ctx.send("音量は0から200の間で指定してください。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="音量は0から200の間で指定してください。", ephemeral=True)
+
             return
 
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         state.volume = level / 100.0
@@ -1084,14 +1158,20 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def loop(self, ctx: commands.Context, mode: str):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
-            await ctx.send("エラーが発生しました。", ephemeral=True)
+            await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
+
             return
 
         await ctx.defer()
         mode_map = {"off": LoopMode.OFF, "one": LoopMode.ONE, "all": LoopMode.ALL}
         mode_val = mode.lower()
         if mode_val not in mode_map:
-            await ctx.send(f"無効なモードです。`off`, `one`, `all`のいずれかを指定してください。", ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content="無効なモードです。`off`, `one`, `all`のいずれかを指定してください。",
+                ephemeral=True,
+            )
+
             return
         state.loop_mode = mode_map.get(mode_val, LoopMode.OFF)
         state.update_activity()
@@ -1101,7 +1181,11 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def join(self, ctx: commands.Context):
         await ctx.defer(ephemeral=True)
         if await self._ensure_voice(ctx, connect_if_not_in=True):
-            await ctx.send(self.exception_handler.get_message("already_connected"), ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content=self.exception_handler.get_message("already_connected"),
+                ephemeral=True,
+            )
 
     @commands.hybrid_command(name="music_help", description="音楽機能のコマンド一覧と使い方を表示します。")
     async def music_help(self, ctx: commands.Context):
@@ -1147,12 +1231,16 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         active_guilds = len(self.guild_states)
         embed.set_footer(text=f"<> は引数を表します | Active: {active_guilds}/{self.max_guilds} servers")
-        await ctx.send(embed=embed)
+        await self._send_ctx_message(ctx, embed=embed)
 
     @commands.hybrid_group(name="reload", description="各種機能を再読み込みします。 / Reloads various features.")
     async def reload(self, ctx: commands.Context):
         if ctx.invoked_subcommand is None:
-            await ctx.send('このコマンドにはサブコマンドが必要です。 (例: `reload music_cog`)', ephemeral=True)
+            await self._send_ctx_message(
+                ctx,
+                content='このコマンドにはサブコマンドが必要です。 (例: `reload music_cog`)',
+                ephemeral=True,
+            )
 
     @reload.command(name="music_cog", description="音楽Cogを再読み込みして、問題をリセットします。/ Reloads the music cog to fix issues.")
     async def reload_music_cog(self, ctx: commands.Context):
