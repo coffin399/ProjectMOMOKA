@@ -59,6 +59,7 @@ class ScheduledReporter:
         channel_id: int,
         interval_hours: float,
         query: str,
+        custom_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a new report schedule for the given guild."""
         guild_key = str(guild_id)
@@ -70,6 +71,7 @@ class ScheduledReporter:
                 "channel_id": int(channel_id),
                 "query": query,
                 "interval_hours": float(interval_hours),
+                "custom_prompt": custom_prompt,
                 "created_at": now.isoformat(),
                 "next_run_at": (now + timedelta(hours=float(interval_hours))).isoformat(),
             }

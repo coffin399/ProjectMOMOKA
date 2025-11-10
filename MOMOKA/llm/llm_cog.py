@@ -237,9 +237,10 @@ class LLMCog(commands.Cog, name="LLM"):
                                    description="Add a new scheduled report. / 新しい定期レポートを追加します。")
     @app_commands.describe(
         interval_hours="Interval in hours between reports. / レポート間の間隔（時間）",
-        query="Research query for the report. / レポートのリサーチクエリ"
+        query="Research query for the report. / レポートのリサーチクエリ",
+        custom_prompt="Custom prompt instructions (optional). / カスタムプロンプト指示（任意）"
     )
-    async def report_schedule_add(self, interaction: discord.Interaction, interval_hours: float, query: str):
+    async def report_schedule_add(self, interaction: discord.Interaction, interval_hours: float, query: str, custom_prompt: str = None):
         """Add a new scheduled report."""
         if not self.reporter_manager:
             await interaction.response.send_message(
