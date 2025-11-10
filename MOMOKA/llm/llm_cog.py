@@ -266,7 +266,7 @@ class LLMCog(commands.Cog, name="LLM"):
                 
                 try:
                     # Execute the report
-                    result = await self.reporter_manager.deep_research.generate_report(query)
+                    result = await self.reporter_manager.deep_research._generate_report(query)
                     
                     if result:
                         # Send the report to the channel
