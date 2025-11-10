@@ -95,7 +95,48 @@ class DeepResearchAgent:
         return self.clients[self.current_key_index]
 
     def _build_prompt(self, query: str) -> str:
-        parts = ["**[DeepResearch Request]**", query.strip()]
+        detailed_report_instructions = """
+**[Detailed Report Instructions]**
+
+Please generate a comprehensive and detailed report on the requested topic. Follow these guidelines:
+
+1. **Depth and Detail**: Provide extensive information with in-depth analysis. Go beyond surface-level facts and explore nuanced aspects of the topic.
+
+2. **Structure and Organization**:
+   - Start with a clear executive summary
+   - Use well-organized sections with descriptive headings
+   - Include bullet points, numbered lists, and tables where appropriate
+   - End with conclusions and key takeaways
+
+3. **Comprehensive Coverage**:
+   - Include historical context and background information
+   - Cover current developments and recent trends
+   - Discuss various perspectives and viewpoints
+   - Include relevant data, statistics, and examples
+   - Address potential implications and future outlook
+
+4. **Clarity and Accessibility**:
+   - Explain complex concepts in clear, understandable language
+   - Define technical terms when necessary
+   - Use analogies and real-world examples to illustrate points
+   - Maintain a professional yet engaging tone
+
+5. **Research Quality**:
+   - Provide specific facts, figures, and evidence
+   - Include sources and references when applicable
+   - Distinguish between established facts and speculative analysis
+   - Acknowledge limitations or uncertainties in the information
+
+6. **Length and Thoroughness**: Aim for a substantial report (typically 1500-3000 words) that thoroughly explores the topic from multiple angles.
+
+Please ensure the report is valuable to readers seeking deep understanding of the subject matter.
+"""
+        
+        parts = [
+            "**[DeepResearch Request]**",
+            query.strip(),
+            detailed_report_instructions.strip()
+        ]
         if self.format_control:
             parts.append(self.format_control.strip())
         return "\n\n".join(part for part in parts if part)
