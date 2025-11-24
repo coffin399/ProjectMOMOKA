@@ -268,22 +268,19 @@ class MusicCog(commands.Cog, name="music_cog"):
         interaction = getattr(ctx, "interaction", None)
         try:
             if interaction:
+                kwargs_to_send = {
+                    "content": content,
+                    "embed": embed,
+                    "ephemeral": ephemeral,
+                    **kwargs,
+                }
+                if view is not None:
+                    kwargs_to_send["view"] = view
+
                 if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        content=content,
-                        embed=embed,
-                        view=view,
-                        ephemeral=ephemeral,
-                        **kwargs,
-                    )
+                    await interaction.response.send_message(**kwargs_to_send)
                 else:
-                    await interaction.followup.send(
-                        content=content,
-                        embed=embed,
-                        view=view,
-                        ephemeral=ephemeral,
-                        **kwargs,
-                    )
+                    await interaction.followup.send(**kwargs_to_send)
             else:
                 if ephemeral:
                     logger.debug("Ephemeral messages are not supported for prefix commands; sending normally.")

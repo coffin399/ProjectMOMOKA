@@ -14,6 +14,7 @@ from pathlib import Path
 import ctypes
 import platform
 from io import StringIO
+import aiohttp
 
 # --- グローバル変数 ---
 log_viewer_thread = None
@@ -344,7 +345,12 @@ class Momoka(commands.Bot):
             status_text = status_template  # プレースホルダーがない場合はそのまま使用
 
         # ステータスを更新
-        await self.change_presence(activity=discord.Game(name=status_text))
+        try:
+            await self.change_presence(activity=discord.Game(name=status_text))
+        except (aiohttp.client_exceptions.ClientConnectionResetError, ConnectionResetError) as e:
+            logging.warning(f"Failed to rotate status due to connection reset: {e}")
+        except Exception as e:
+            logging.error(f"Failed to rotate status: {e}")
 
     @rotate_status.before_loop
     async def before_rotate_status(self):

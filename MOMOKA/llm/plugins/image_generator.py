@@ -696,10 +696,11 @@ class ImageGenerator:
             thinking_message=thinking_message,  # thinkingメッセージをタスクに渡す
         )
 
-        try:
-            await interaction.followup.send(result, ephemeral=False)
-        except discord.HTTPException as exc:  # noqa: BLE001
-            logger.error("Failed to send modal follow-up message: %s", exc)
+        if result:
+            try:
+                await interaction.followup.send(result, ephemeral=False)
+            except discord.HTTPException as exc:  # noqa: BLE001
+                logger.error("Failed to send modal follow-up message: %s", exc)
 
     async def _update_queue_message(self, message: discord.Message, status: str, position: int, prompt: str) -> None:
         try:
