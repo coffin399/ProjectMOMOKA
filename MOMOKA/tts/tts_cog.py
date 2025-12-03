@@ -599,17 +599,27 @@ class TTSCog(commands.Cog, name="tts_cog"):
 
     async def _play_tts_directly(self, guild: discord.Guild, text: str, model_id: int, style: str, style_weight: float, speed: float, volume: float, interaction: Optional[discord.Interaction] = None) -> bool:
         voice_client = guild.voice_client
-        if not voice_client or voice_client.is_playing(): return False
+        # ボイス接続状態を確認（接続中かつ再生中でないこと）
+        if not voice_client or not voice_client.is_connected() or voice_client.is_playing():
+            return False
 
         wav_data = await self._api_call_to_audio_data(text, model_id, style, style_weight, speed)
         if not wav_data:
             if interaction: await interaction.followup.send("❌ 音声生成に失敗しました。", ephemeral=True)
             return False
 
-        source = TTSAudioSource(io.BytesIO(wav_data), text=text, guild_id=guild.id, pipe=True)
-        volume_source = discord.PCMVolumeTransformer(source, volume=volume)
-        voice_client.play(volume_source)
-        return True
+        # 再度接続状態を確認（音声生成中に切断された可能性）
+        if not voice_client.is_connected():
+            return False
+
+        try:
+            source = TTSAudioSource(io.BytesIO(wav_data), text=text, guild_id=guild.id, pipe=True)
+            volume_source = discord.PCMVolumeTransformer(source, volume=volume)
+            voice_client.play(volume_source)
+            return True
+        except discord.errors.ClientException as e:
+            logging.getLogger(__name__).warning(f"[TTSCog] 再生エラー: {e}")
+            return False
 
 
 async def setup(bot: commands.Bot):

@@ -6,11 +6,49 @@ try:
 except Exception:  # pragma: no cover - optional dependency at runtime
     pyopenjtalk = None
 
+# 全角記号から半角記号への変換マッピング
+FULLWIDTH_TO_HALFWIDTH = {
+    '！': '!',
+    '？': '?',
+    '。': '.',
+    '、': ',',
+    '：': ':',
+    '；': ';',
+    '（': '(',
+    '）': ')',
+    '［': '[',
+    '］': ']',
+    '｛': '{',
+    '｝': '}',
+    '＜': '<',
+    '＞': '>',
+    '＆': '&',
+    '＊': '*',
+    '＠': '@',
+    '＃': '#',
+    '＄': '$',
+    '％': '%',
+    '＾': '^',
+    '＿': '_',
+    '＝': '=',
+    '＋': '+',
+    '－': '-',
+    '／': '/',
+    '＼': '\\',
+    '｜': '|',
+    '～': '~',
+    '｀': '`',
+    '＂': '"',
+    '＇': "'",
+}
+
 
 def normalize_text(text: str, dictionary_dir: Optional[str] = None) -> str:
     """Normalize Japanese text for TTS.
 
     - Strips URLs
+    - Converts fullwidth punctuation to halfwidth
+    - Removes characters that may cause issues with TTS processing
     - Collapses whitespace
     - Optionally uses pyopenjtalk for reading normalization if available
     - Keeps it conservative to avoid overprocessing
@@ -20,6 +58,15 @@ def normalize_text(text: str, dictionary_dir: Optional[str] = None) -> str:
 
     # Remove URLs
     text = re.sub(r'https?://\S+', ' ', text)
+    
+    # 全角記号を半角に変換
+    for fullwidth, halfwidth in FULLWIDTH_TO_HALFWIDTH.items():
+        text = text.replace(fullwidth, halfwidth)
+    
+    # TTSで問題を起こす可能性のある記号を除去（スペースに置換）
+    # カタカナ変換で問題になる記号をフィルタリング
+    text = re.sub(r'[!?.,;:()[\]{}<>&*@#$%^_=+\-/\\|~`"\']', ' ', text)
+    
     text = re.sub(r'\s+', ' ', text).strip()
 
     if not text:

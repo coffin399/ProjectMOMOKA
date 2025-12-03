@@ -515,7 +515,11 @@ class MusicCog(commands.Cog, name="music_cog"):
             await state.mixer.add_source('music', source, volume=state.volume)
 
             if state.voice_client and state.voice_client.source is not state.mixer:
-                state.voice_client.play(state.mixer, after=lambda e: self.mixer_finished_callback(e, guild_id))
+                # すでに再生中の場合はスキップ（重複再生エラーを防止）
+                if state.voice_client.is_playing():
+                    logger.warning(f"Guild {guild_id}: Skipping play() - already playing audio")
+                else:
+                    state.voice_client.play(state.mixer, after=lambda e: self.mixer_finished_callback(e, guild_id))
 
             if is_seek_operation:
                 state.is_seeking = False

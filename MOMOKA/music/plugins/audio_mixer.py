@@ -115,9 +115,14 @@ class AudioMixer(discord.AudioSource):
         return self.sources.get(name)
 
     def cleanup(self):
-        for source in self.sources.values():
+        # コピーを作成してからイテレート（イテレーション中の辞書変更を防止）
+        sources_copy = list(self.sources.values())
+        for source in sources_copy:
             if hasattr(source, 'cleanup'):
-                source.cleanup()
+                try:
+                    source.cleanup()
+                except Exception as e:
+                    logger.error(f"Error cleaning up source: {e}")
         self.sources.clear()
         self.volumes.clear()
 
@@ -147,10 +152,6 @@ class TTSAudioSource(discord.FFmpegPCMAudio):
         except Exception as e:
             logger.error(f"Guild {guild_id}: Failed to initialize TTSAudioSource: {e}")
             raise
-
-    def cleanup(self):
-        logger.info(f"Guild {self.guild_id}: TTS FFmpeg process for '{self.text}' is being cleaned up.")
-        super().cleanup()
 
     def cleanup(self):
         logger.info(f"Guild {self.guild_id}: TTS FFmpeg process for '{self.text}' is being cleaned up.")
