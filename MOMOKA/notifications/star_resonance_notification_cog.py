@@ -148,16 +148,35 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             # デイリー通知シート（gidを試行錯誤）
             # 複数のパターンを試す
             logger.info("📊 定義_デイリー通知シートを取得中...")
-            daily_gids_to_try = [
+            
+            # URLからgidを抽出してみる（複数のgidが含まれている可能性）
+            extracted_gids = set()
+            if 'gid=' in spreadsheet_url:
+                import re
+                gids_in_url = re.findall(r'gid=(\d+)', spreadsheet_url)
+                extracted_gids.update(gids_in_url)
+                logger.info(f"URLから抽出したgid: {extracted_gids}")
+            
+            # 試行するgidのリスト
+            daily_gids_to_try = list(extracted_gids) + [
                 '0',  # デフォルト（初めに）
                 '1',  # 2番目のシート
-                '2',  # 3番目のシート
+                '2',  # 3番目のシート  
                 '3',
                 '4',
                 '5',
-                '1234567890',  # ランダムなgid
-                '987654321'
+                '10',
+                '100',
+                '1000',
+                '1234567890',
+                '987654321',
+                '1975346703',  # 予告通知の前
+                '1975346705',  # 予告通知の後
             ]
+            
+            # 重複を削除
+            daily_gids_to_try = list(dict.fromkeys(daily_gids_to_try))
+            logger.info(f"試行するgid: {daily_gids_to_try[:10]}... (全{len(daily_gids_to_try)}個)")
             
             for gid in daily_gids_to_try:
                 if await self._fetch_single_sheet(sheet_id, '定義_デイリー通知', gid, data):
@@ -165,6 +184,7 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                     break
             else:
                 logger.warning("⚠️ 定義_デイリー通知シートが見つかりませんでした")
+                logger.warning("💡 ヒント: スプレッドシートで「定義_デイリー通知」シートを開いて、URLからgidを確認してください")
             
             # データが取得できたか確認
             if not data:
@@ -255,18 +275,30 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             return events
 
         logger.info(f"パース開始 ({event_type}): 総行数={len(rows)}")
-        logger.debug(f"ヘッダー行: {rows[0]}")
+        
+        # ヘッダー行を確認
+        if rows:
+            header = rows[0] if len(rows) > 0 else []
+            logger.info(f"ヘッダー行 ({len(header)}列): {header[:6]}")
 
         # ヘッダー行をスキップ（1行目）
-        for idx, row in enumerate(rows[1:], start=2):  # 2行目から開始
-            # 空行をスキップ
-            if not row or not any(cell.strip() for cell in row if cell):
-                logger.debug(f"行{idx}: 空行をスキップ")
+        data_rows = rows[1:]
+        logger.info(f"データ行数: {len(data_rows)}")
+        
+        for idx, row in enumerate(data_rows, start=2):  # 2行目から開始
+            # 完全に空の行をスキップ
+            if not row:
+                logger.debug(f"行{idx}: 完全に空の行をスキップ")
+                continue
+            
+            # すべてのセルが空の行をスキップ
+            if not any(str(cell).strip() for cell in row):
+                logger.debug(f"行{idx}: すべてのセルが空")
                 continue
 
-            # 行の内容をデバッグ出力
-            if idx <= 5:  # 最初の5行のみ詳細出力
-                logger.debug(f"行{idx}: {row}")
+            # 行の内容をデバッグ出力（最初の10行のみ）
+            if idx <= 11:
+                logger.info(f"行{idx} ({len(row)}列): {[str(cell)[:30] for cell in row[:6]]}")
 
             try:
                 if event_type == 'daily':
@@ -275,23 +307,23 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                         logger.debug(f"行{idx}: 列数不足 (len={len(row)})")
                         continue
                         
-                    frequency = row[0].strip() if len(row) > 0 else ''
-                    event_name = row[1].strip() if len(row) > 1 else ''
-                    event_time = row[2].strip() if len(row) > 2 else ''
-                    description = row[3].strip() if len(row) > 3 else ''
+                    frequency = str(row[0]).strip() if len(row) > 0 and row[0] else ''
+                    event_name = str(row[1]).strip() if len(row) > 1 and row[1] else ''
+                    event_time = str(row[2]).strip() if len(row) > 2 and row[2] else ''
+                    description = str(row[3]).strip() if len(row) > 3 and row[3] else ''
 
-                    if not frequency and not event_name:
-                        logger.debug(f"行{idx}: frequency と event_name が両方空")
+                    if not event_name:
+                        logger.debug(f"行{idx}: イベント名が空")
                         continue
 
-                    if event_name:  # イベント名があればOK
-                        events.append({
-                            'frequency': frequency,
-                            'name': event_name,
-                            'time': event_time,
-                            'description': description
-                        })
-                        logger.debug(f"行{idx}: デイリーイベント追加 - {event_name}")
+                    events.append({
+                        'frequency': frequency,
+                        'name': event_name,
+                        'time': event_time,
+                        'description': description
+                    })
+                    if idx <= 11:
+                        logger.info(f"  ✅ 行{idx}: デイリーイベント追加 - [{frequency}] {event_name}")
 
                 elif event_type == 'upcoming':
                     # 予告通知: "notify頻度、イベント名、開放日時、テキスト"
@@ -299,26 +331,30 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                         logger.debug(f"行{idx}: 列数不足 (len={len(row)})")
                         continue
                         
-                    frequency = row[0].strip() if len(row) > 0 else ''
-                    event_name = row[1].strip() if len(row) > 1 else ''
-                    open_date = row[2].strip() if len(row) > 2 else ''
-                    description = row[3].strip() if len(row) > 3 else ''
+                    frequency = str(row[0]).strip() if len(row) > 0 and row[0] else ''
+                    event_name = str(row[1]).strip() if len(row) > 1 and row[1] else ''
+                    open_date = str(row[2]).strip() if len(row) > 2 and row[2] else ''
+                    description = str(row[3]).strip() if len(row) > 3 and row[3] else ''
 
-                    if not frequency and not event_name:
-                        logger.debug(f"行{idx}: frequency と event_name が両方空")
+                    if not event_name:
+                        logger.debug(f"行{idx}: イベント名が空")
+                        continue
+                    
+                    if not open_date:
+                        logger.debug(f"行{idx}: 開放日時が空 - {event_name}")
                         continue
 
-                    if event_name and open_date:  # イベント名と開放日時があればOK
-                        events.append({
-                            'frequency': frequency,
-                            'name': event_name,
-                            'open_date': open_date,
-                            'description': description
-                        })
-                        logger.debug(f"行{idx}: 予告イベント追加 - {event_name} ({open_date})")
+                    events.append({
+                        'frequency': frequency,
+                        'name': event_name,
+                        'open_date': open_date,
+                        'description': description
+                    })
+                    if idx <= 11:
+                        logger.info(f"  ✅ 行{idx}: 予告イベント追加 - [{frequency}] {event_name} ({open_date})")
 
             except Exception as e:
-                logger.warning(f"行{idx}のパースに失敗: {row}, エラー: {e}")
+                logger.warning(f"行{idx}のパースに失敗: エラー: {e}, row={row[:4]}")
                 continue
 
         logger.info(f"パース完了 ({event_type}): {len(events)}件のイベントを抽出")
