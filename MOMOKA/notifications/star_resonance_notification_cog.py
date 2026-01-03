@@ -134,82 +134,85 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             else:
                 raise ValueError("無効なスプレッドシートURLです")
 
-            # シート構造:
-            # - 初めに (gid=0)
-            # - 定義_デイリー通知 (gid不明、複数のgidを試行)
-            # - 定義_予告通知 (gid=1975346704)
-            
             data = {}
             
-            # 予告通知シート（gid確定）
-            logger.info("📊 定義_予告通知シートを取得中...")
-            await self._fetch_single_sheet(sheet_id, '定義_予告通知', '1975346704', data)
+            # すべてのシートをスキャンして、ヘッダーから判定する
+            # gid 0から順番に100個まで試す
+            logger.info("📊 スプレッドシートの全シートをスキャン中...")
             
-            # デイリー通知シート（gidを試行錯誤）
-            # 複数のパターンを試す
-            logger.info("📊 定義_デイリー通知シートを取得中...")
+            candidate_gids = []
             
-            # URLからgidを抽出してみる（複数のgidが含まれている可能性）
-            extracted_gids = set()
+            # 一般的なgidパターンを優先的に試す
+            priority_gids = ['0', '1', '2', '3', '4', '5', '10', '1975346704']
+            
+            # URLからgidを抽出
             if 'gid=' in spreadsheet_url:
                 import re
                 gids_in_url = re.findall(r'gid=(\d+)', spreadsheet_url)
-                extracted_gids.update(gids_in_url)
-                logger.info(f"URLから抽出したgid: {extracted_gids}")
+                priority_gids.extend(gids_in_url)
             
-            # 試行するgidのリスト
-            daily_gids_to_try = list(extracted_gids) + [
-                '0',  # デフォルト（初めに）
-                '1',  # 2番目のシート
-                '2',  # 3番目のシート  
-                '3',
-                '4',
-                '5',
-                '10',
-                '100',
-                '1000',
-                '1234567890',
-                '987654321',
-                '1975346703',  # 予告通知の前
-                '1975346705',  # 予告通知の後
-            ]
+            # さらに広範囲のgidを追加
+            for i in range(0, 20):
+                candidate_gids.append(str(i))
             
-            # 重複を削除
-            daily_gids_to_try = list(dict.fromkeys(daily_gids_to_try))
-            logger.info(f"試行するgid: {daily_gids_to_try[:10]}... (全{len(daily_gids_to_try)}個)")
+            # 大きな数値も試す
+            for i in [100, 1000, 10000, 100000, 1000000]:
+                candidate_gids.append(str(i))
             
-            for gid in daily_gids_to_try:
-                if await self._fetch_single_sheet(sheet_id, '定義_デイリー通知', gid, data):
-                    logger.info(f"✅ 定義_デイリー通知シートのgidを特定しました: {gid}")
-                    break
-            else:
-                logger.warning("⚠️ 定義_デイリー通知シートが見つかりませんでした")
-                logger.warning("💡 ヒント: スプレッドシートで「定義_デイリー通知」シートを開いて、URLからgidを確認してください")
+            # 予告通知のgid付近も試す
+            base = 1975346704
+            for offset in range(-10, 10):
+                candidate_gids.append(str(base + offset))
             
-            # データが取得できたか確認
-            if not data:
+            # 優先gidを先頭に
+            all_gids = priority_gids + [g for g in candidate_gids if g not in priority_gids]
+            
+            # 重複削除
+            all_gids = list(dict.fromkeys(all_gids))
+            
+            logger.info(f"スキャン対象: {len(all_gids)}個のgid")
+            
+            found_sheets = {}
+            
+            for idx, gid in enumerate(all_gids):
+                # 進捗表示（10個ごと）
+                if idx > 0 and idx % 10 == 0:
+                    logger.info(f"進捗: {idx}/{len(all_gids)} (発見: {len(found_sheets)}個)")
+                
+                sheet_data = await self._fetch_and_identify_sheet(sheet_id, gid)
+                
+                if sheet_data:
+                    sheet_name = sheet_data['name']
+                    rows = sheet_data['rows']
+                    found_sheets[sheet_name] = rows
+                    logger.info(f"✅ 発見: '{sheet_name}' (gid={gid}, {len(rows)}行)")
+                    
+                    # 両方のシートが見つかったら終了
+                    if '定義_デイリー通知' in found_sheets and '定義_予告通知' in found_sheets:
+                        logger.info("✅ 必要なシートをすべて発見しました")
+                        break
+            
+            if not found_sheets:
                 logger.error("❌ どのシートもデータを取得できませんでした")
             else:
-                logger.info(f"✅ {len(data)}個のシートからデータを取得しました: {list(data.keys())}")
+                logger.info(f"✅ {len(found_sheets)}個のシートからデータを取得しました: {list(found_sheets.keys())}")
             
-            return data
+            return found_sheets
 
         except Exception as e:
             logger.error(f"スプレッドシートの取得中にエラーが発生: {e}", exc_info=True)
             return {}
 
-    async def _fetch_single_sheet(
+    async def _fetch_and_identify_sheet(
         self,
         sheet_id: str,
-        sheet_name: str,
-        gid: str,
-        data_dict: Dict[str, List[List[str]]]
-    ) -> bool:
+        gid: str
+    ) -> Optional[Dict[str, Any]]:
         """
-        単一のシートを取得
+        シートを取得して、ヘッダーから種類を判定
         
         Returns:
-            成功した場合True
+            {'name': シート名, 'rows': データ} または None
         """
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
         
@@ -217,45 +220,46 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             self.http_session = aiohttp.ClientSession()
 
         try:
-            async with self.http_session.get(csv_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 200:
-                    content = await response.text(encoding='utf-8')
-                    # CSVをパース
-                    csv_reader = csv.reader(io.StringIO(content))
-                    rows = list(csv_reader)
-                    
-                    # データが有効かチェック
-                    if not rows or len(rows) < 2:
-                        logger.debug(f"シート '{sheet_name}' (gid={gid}): データが不十分 (行数={len(rows)})")
-                        return False
-                    
-                    # 最初の行に有効なデータがあるかチェック
-                    first_row = rows[0]
-                    if not any(cell.strip() for cell in first_row if cell):
-                        logger.debug(f"シート '{sheet_name}' (gid={gid}): ヘッダー行が空")
-                        return False
-                    
-                    # データを保存
-                    data_dict[sheet_name] = rows
-                    logger.info(f"✅ シート '{sheet_name}' (gid={gid}) から {len(rows)} 行を取得しました")
-                    
-                    # デバッグ: 最初の数行を表示
-                    logger.debug(f"  ヘッダー: {first_row[:4]}")
-                    if len(rows) > 1:
-                        logger.debug(f"  データ例: {rows[1][:4]}")
-                    
-                    return True
-                else:
-                    logger.debug(f"シート '{sheet_name}' (gid={gid}): HTTP {response.status}")
-                    return False
+            async with self.http_session.get(csv_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status != 200:
+                    return None
+                
+                content = await response.text(encoding='utf-8')
+                csv_reader = csv.reader(io.StringIO(content))
+                rows = list(csv_reader)
+                
+                if not rows or len(rows) < 2:
+                    return None
+                
+                # ヘッダー行から判定
+                header = rows[0] if rows else []
+                header_text = ''.join(str(cell) for cell in header).lower()
+                
+                # デイリー通知シートの判定
+                # ヘッダーに「notify頻度」「イベント名」「日時」などがある
+                if any(keyword in header_text for keyword in ['notify', 'イベント名', '日時']):
+                    # さらに詳細にチェック
+                    if len(header) >= 3:
+                        # 2行目以降にデータがあるか確認
+                        has_data = False
+                        for row in rows[1:5]:  # 最初の数行をチェック
+                            if len(row) >= 2 and any(str(cell).strip() for cell in row[:2]):
+                                has_data = True
+                                break
+                        
+                        if has_data:
+                            # ヘッダーの内容で判定
+                            if '開放日時' in header_text or '予告' in header_text:
+                                return {'name': '定義_予告通知', 'rows': rows}
+                            elif '日時' in header_text or 'デイリー' in header_text:
+                                return {'name': '定義_デイリー通知', 'rows': rows}
+                
+                return None
+                
         except asyncio.TimeoutError:
-            logger.warning(f"シート '{sheet_name}' (gid={gid}): タイムアウト")
-            return False
-        except Exception as e:
-            logger.debug(f"シート '{sheet_name}' (gid={gid}) の取得エラー: {type(e).__name__}: {e}")
-            return False
-        
-        return False
+            return None
+        except Exception:
+            return None
 
     def parse_event_data(self, rows: List[List[str]], event_type: str) -> List[Dict[str, str]]:
         """
