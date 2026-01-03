@@ -86,11 +86,8 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             "guild_id_1": {
                 "channel_id": 123456789,
                 "spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-                "last_notified_date": "2026-01-04"
-            },
-            "guild_id_2": {
-                "channel_id": 987654321,
-                "spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
+                "daily_gid": "0",  // デイリー通知シートのgid
+                "upcoming_gid": "1975346704",  // 予告通知シートのgid
                 "last_notified_date": "2026-01-04"
             }
         }
@@ -117,12 +114,19 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         except Exception as e:
             logger.error(f"設定ファイルの保存に失敗: {e}")
 
-    async def fetch_spreadsheet_data(self, spreadsheet_url: str) -> Dict[str, List[List[str]]]:
+    async def fetch_spreadsheet_data(
+        self,
+        spreadsheet_url: str,
+        daily_gid: Optional[str] = None,
+        upcoming_gid: Optional[str] = None
+    ) -> Dict[str, List[List[str]]]:
         """
         Google Sheetsから公開CSVとしてデータを取得
         
         Args:
             spreadsheet_url: スプレッドシートのURL
+            daily_gid: デイリー通知シートのgid（指定された場合）
+            upcoming_gid: 予告通知シートのgid（指定された場合）
             
         Returns:
             シート名をキーとした辞書
@@ -136,8 +140,31 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
 
             data = {}
             
-            # すべてのシートをスキャンして、ヘッダーから判定する
-            # gid 0から順番に100個まで試す
+            # gidが指定されている場合は直接取得
+            if daily_gid and upcoming_gid:
+                logger.info(f"📊 指定されたgidでシートを取得中...")
+                logger.info(f"  デイリー通知: gid={daily_gid}")
+                logger.info(f"  予告通知: gid={upcoming_gid}")
+                
+                # デイリー通知シート
+                daily_data = await self._fetch_sheet_by_gid(sheet_id, daily_gid)
+                if daily_data:
+                    data['定義_デイリー通知'] = daily_data
+                    logger.info(f"✅ デイリー通知シート取得成功 ({len(daily_data)}行)")
+                else:
+                    logger.error(f"❌ デイリー通知シート取得失敗 (gid={daily_gid})")
+                
+                # 予告通知シート
+                upcoming_data = await self._fetch_sheet_by_gid(sheet_id, upcoming_gid)
+                if upcoming_data:
+                    data['定義_予告通知'] = upcoming_data
+                    logger.info(f"✅ 予告通知シート取得成功 ({len(upcoming_data)}行)")
+                else:
+                    logger.error(f"❌ 予告通知シート取得失敗 (gid={upcoming_gid})")
+                
+                return data
+            
+            # gidが指定されていない場合は自動スキャン
             logger.info("📊 スプレッドシートの全シートをスキャン中...")
             
             candidate_gids = []
@@ -202,6 +229,41 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         except Exception as e:
             logger.error(f"スプレッドシートの取得中にエラーが発生: {e}", exc_info=True)
             return {}
+
+    async def _fetch_sheet_by_gid(self, sheet_id: str, gid: str) -> Optional[List[List[str]]]:
+        """
+        指定されたgidでシートを取得
+        
+        Returns:
+            行データのリスト、または None
+        """
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        
+        if not self.http_session:
+            self.http_session = aiohttp.ClientSession()
+
+        try:
+            async with self.http_session.get(csv_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+                if response.status != 200:
+                    logger.warning(f"gid={gid}: HTTP {response.status}")
+                    return None
+                
+                content = await response.text(encoding='utf-8')
+                csv_reader = csv.reader(io.StringIO(content))
+                rows = list(csv_reader)
+                
+                if not rows or len(rows) < 2:
+                    logger.warning(f"gid={gid}: データ不足 (行数={len(rows) if rows else 0})")
+                    return None
+                
+                return rows
+                
+        except asyncio.TimeoutError:
+            logger.warning(f"gid={gid}: タイムアウト")
+            return None
+        except Exception as e:
+            logger.warning(f"gid={gid}: エラー - {type(e).__name__}: {e}")
+            return None
 
     async def _fetch_and_identify_sheet(
         self,
@@ -529,6 +591,8 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                     
                     channel_id = guild_config.get('channel_id')
                     spreadsheet_url = guild_config.get('spreadsheet_url')
+                    daily_gid = guild_config.get('daily_gid')
+                    upcoming_gid = guild_config.get('upcoming_gid')
                     
                     if not channel_id or not spreadsheet_url:
                         logger.warning(f"ギルド {guild_id_str}: 設定が不完全です")
@@ -540,7 +604,7 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                         continue
                     
                     # スプレッドシートからデータを取得
-                    data = await self.fetch_spreadsheet_data(spreadsheet_url)
+                    data = await self.fetch_spreadsheet_data(spreadsheet_url, daily_gid, upcoming_gid)
                     
                     if not data:
                         logger.warning(f"ギルド {guild_id_str}: データ取得に失敗")
@@ -586,14 +650,18 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
     )
     @app_commands.describe(
         channel="通知を送信するチャンネル",
-        spreadsheet_url="スプレッドシートのURL"
+        spreadsheet_url="スプレッドシートのURL",
+        daily_gid="デイリー通知シートのgid（例: 0, 1, 2...）",
+        upcoming_gid="予告通知シートのgid（例: 1975346704）"
     )
     @app_commands.checks.has_permissions(manage_guild=True)
     async def set_notification(
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
-        spreadsheet_url: str
+        spreadsheet_url: str,
+        daily_gid: str,
+        upcoming_gid: str
     ):
         """スターレゾナンス通知を設定"""
         await interaction.response.defer()
@@ -609,7 +677,9 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             # 設定を保存
             self.config[guild_id] = {
                 'channel_id': channel.id,
-                'spreadsheet_url': spreadsheet_url
+                'spreadsheet_url': spreadsheet_url,
+                'daily_gid': daily_gid,
+                'upcoming_gid': upcoming_gid
             }
             self.save_config()
 
@@ -618,10 +688,13 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                 description=f"{channel.mention} に毎朝5時に通知を送信します。",
                 color=discord.Color.green()
             )
-            embed.add_field(name="スプレッドシートURL", value=spreadsheet_url, inline=False)
+            embed.add_field(name="スプレッドシートURL", value=f"[リンク]({spreadsheet_url})", inline=False)
+            embed.add_field(name="デイリー通知 gid", value=f"`{daily_gid}`", inline=True)
+            embed.add_field(name="予告通知 gid", value=f"`{upcoming_gid}`", inline=True)
+            embed.set_footer(text="💡 gidはスプレッドシートの各シートのURLから確認できます")
 
             await interaction.followup.send(embed=embed)
-            logger.info(f"ギルド {guild_id} の通知設定を保存しました")
+            logger.info(f"ギルド {guild_id} の通知設定を保存しました (daily_gid={daily_gid}, upcoming_gid={upcoming_gid})")
 
         except Exception as e:
             logger.error(f"設定コマンドでエラーが発生: {e}", exc_info=True)
@@ -646,6 +719,8 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             guild_config = self.config[guild_id]
             channel_id = guild_config.get('channel_id')
             spreadsheet_url = guild_config.get('spreadsheet_url')
+            daily_gid = guild_config.get('daily_gid')
+            upcoming_gid = guild_config.get('upcoming_gid')
 
             channel = self.bot.get_channel(channel_id)
             if not channel:
@@ -653,7 +728,7 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                 return
 
             # スプレッドシートからデータを取得
-            data = await self.fetch_spreadsheet_data(spreadsheet_url)
+            data = await self.fetch_spreadsheet_data(spreadsheet_url, daily_gid, upcoming_gid)
 
             if not data:
                 await interaction.followup.send("❌ スプレッドシートからデータを取得できませんでした。")
@@ -716,6 +791,8 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         guild_config = self.config[guild_id]
         channel_id = guild_config.get('channel_id')
         spreadsheet_url = guild_config.get('spreadsheet_url')
+        daily_gid = guild_config.get('daily_gid', '未設定')
+        upcoming_gid = guild_config.get('upcoming_gid', '未設定')
         last_notified = guild_config.get('last_notified_date', '未送信')
 
         channel = self.bot.get_channel(channel_id)
@@ -728,6 +805,8 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         )
         embed.add_field(name="📢 通知チャンネル", value=channel_mention, inline=False)
         embed.add_field(name="📊 スプレッドシートURL", value=f"[リンク]({spreadsheet_url})", inline=False)
+        embed.add_field(name="📋 デイリー通知 gid", value=f"`{daily_gid}`", inline=True)
+        embed.add_field(name="📋 予告通知 gid", value=f"`{upcoming_gid}`", inline=True)
         embed.add_field(name="📅 最終通知日", value=last_notified, inline=False)
         embed.add_field(name="⏰ 通知時刻", value="毎朝 5:00 (JST)", inline=False)
         embed.set_footer(text=f"ギルドID: {guild_id}")
@@ -793,9 +872,11 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
 
             guild_config = self.config[guild_id]
             spreadsheet_url = guild_config.get('spreadsheet_url')
+            daily_gid = guild_config.get('daily_gid')
+            upcoming_gid = guild_config.get('upcoming_gid')
 
             # スプレッドシートからデータを取得
-            data = await self.fetch_spreadsheet_data(spreadsheet_url)
+            data = await self.fetch_spreadsheet_data(spreadsheet_url, daily_gid, upcoming_gid)
 
             embed = discord.Embed(
                 title="🔍 スプレッドシート デバッグ情報",
