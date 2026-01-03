@@ -27,7 +27,7 @@ logger = logging.getLogger('StarResonanceCog')
 
 # --- 定数 ---
 DATA_DIR = 'data'
-CONFIG_FILE = os.path.join(DATA_DIR, 'star_resonance_notification_config.json')
+CONFIG_FILE = os.path.join(DATA_DIR, 'starresonance.json')
 JST = timezone(timedelta(hours=+9), 'JST')
 
 
@@ -43,9 +43,6 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         self.http_session: Optional[aiohttp.ClientSession] = None
         self.jst = JST
         self.exception_handler = StarResonanceExceptionHandler(self)
-
-        # 通知済み日付を記録（重複通知防止）
-        self.last_notified_date: Optional[str] = None
 
         logger.info("✅ StarResonanceNotificationCog 初期化完了")
 
@@ -81,11 +78,32 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             logger.error(f"データディレクトリの作成に失敗: {e}")
 
     def load_config(self) -> Dict[str, Any]:
-        """設定ファイルの読み込み"""
+        """
+        設定ファイルの読み込み
+        
+        設定ファイル構造 (data/starresonance.json):
+        {
+            "guild_id_1": {
+                "channel_id": 123456789,
+                "spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
+                "last_notified_date": "2026-01-04"
+            },
+            "guild_id_2": {
+                "channel_id": 987654321,
+                "spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
+                "last_notified_date": "2026-01-04"
+            }
+        }
+        
+        Returns:
+            ギルドIDをキーとした設定辞書
+        """
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    config = json.load(f)
+                    logger.info(f"✅ 設定ファイルを読み込みました: {len(config)} ギルド")
+                    return config
         except (json.JSONDecodeError, FileNotFoundError) as e:
             logger.warning(f"設定ファイル読み込みエラー: {e}")
         return {}
@@ -95,6 +113,7 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         try:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
+            logger.info(f"💾 設定ファイルを保存しました: {CONFIG_FILE}")
         except Exception as e:
             logger.error(f"設定ファイルの保存に失敗: {e}")
 
@@ -397,61 +416,66 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         try:
             now = datetime.now(self.jst)
             
-            # 5時0分〜5時30分の間に1回だけ通知
-            if now.hour == 5 and now.minute < 30:
-                # 今日の日付をチェック（重複防止）
-                today_str = now.strftime('%Y-%m-%d')
-                if self.last_notified_date == today_str:
-                    logger.debug("本日は既に通知済みです")
-                    return
-                
-                logger.info(f"🌅 デイリー通知を送信します: {today_str}")
-                
-                # 各ギルドの設定をチェックして通知
-                for guild_id_str, guild_config in self.config.items():
-                    try:
-                        channel_id = guild_config.get('channel_id')
-                        spreadsheet_url = guild_config.get('spreadsheet_url')
-                        
-                        if not channel_id or not spreadsheet_url:
-                            continue
-                        
-                        channel = self.bot.get_channel(channel_id)
-                        if not channel:
-                            logger.warning(f"チャンネル {channel_id} が見つかりません")
-                            continue
-                        
-                        # スプレッドシートからデータを取得
-                        data = await self.fetch_spreadsheet_data(spreadsheet_url)
-                        
-                        if not data:
-                            logger.warning(f"ギルド {guild_id_str} のデータ取得に失敗")
-                            continue
-                        
-                        # 予告通知のパース
-                        upcoming_events = []
-                        if '定義_予告通知' in data:
-                            upcoming_events = self.parse_event_data(data['定義_予告通知'], 'upcoming')
-                        
-                        # デイリー通知のパース
-                        daily_events = []
-                        if '定義_デイリー通知' in data:
-                            all_daily = self.parse_event_data(data['定義_デイリー通知'], 'daily')
-                            weekday_jp = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日']
-                            today_weekday = weekday_jp[now.weekday()]
-                            daily_events = self.filter_daily_events(all_daily, today_weekday)
-                        
-                        # Embedを作成して送信
-                        embed = self.create_notification_embed(upcoming_events, daily_events, now)
-                        await channel.send(embed=embed)
-                        
-                        logger.info(f"✅ ギルド {guild_id_str} に通知を送信しました")
+            # 5時0分〜5時30分の間に通知をチェック
+            if now.hour != 5 or now.minute >= 30:
+                return
+            
+            today_str = now.strftime('%Y-%m-%d')
+            logger.info(f"🌅 デイリー通知チェック開始: {today_str}")
+            
+            # 各ギルドの設定をチェックして通知
+            for guild_id_str, guild_config in list(self.config.items()):
+                try:
+                    # 今日既に通知済みかチェック
+                    last_notified = guild_config.get('last_notified_date')
+                    if last_notified == today_str:
+                        logger.debug(f"ギルド {guild_id_str}: 本日は既に通知済み")
+                        continue
                     
-                    except Exception as e:
-                        logger.error(f"ギルド {guild_id_str} への通知送信に失敗: {e}", exc_info=True)
+                    channel_id = guild_config.get('channel_id')
+                    spreadsheet_url = guild_config.get('spreadsheet_url')
+                    
+                    if not channel_id or not spreadsheet_url:
+                        logger.warning(f"ギルド {guild_id_str}: 設定が不完全です")
+                        continue
+                    
+                    channel = self.bot.get_channel(channel_id)
+                    if not channel:
+                        logger.warning(f"ギルド {guild_id_str}: チャンネル {channel_id} が見つかりません")
+                        continue
+                    
+                    # スプレッドシートからデータを取得
+                    data = await self.fetch_spreadsheet_data(spreadsheet_url)
+                    
+                    if not data:
+                        logger.warning(f"ギルド {guild_id_str}: データ取得に失敗")
+                        continue
+                    
+                    # 予告通知のパース
+                    upcoming_events = []
+                    if '定義_予告通知' in data:
+                        upcoming_events = self.parse_event_data(data['定義_予告通知'], 'upcoming')
+                    
+                    # デイリー通知のパース
+                    daily_events = []
+                    if '定義_デイリー通知' in data:
+                        all_daily = self.parse_event_data(data['定義_デイリー通知'], 'daily')
+                        weekday_jp = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日']
+                        today_weekday = weekday_jp[now.weekday()]
+                        daily_events = self.filter_daily_events(all_daily, today_weekday)
+                    
+                    # Embedを作成して送信
+                    embed = self.create_notification_embed(upcoming_events, daily_events, now)
+                    await channel.send(embed=embed)
+                    
+                    # 通知済みフラグを更新
+                    self.config[guild_id_str]['last_notified_date'] = today_str
+                    self.save_config()
+                    
+                    logger.info(f"✅ ギルド {guild_id_str} に通知を送信しました")
                 
-                # 通知済みフラグを更新
-                self.last_notified_date = today_str
+                except Exception as e:
+                    logger.error(f"ギルド {guild_id_str} への通知送信に失敗: {e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"デイリー通知タスクでエラーが発生: {e}", exc_info=True)
@@ -580,6 +604,81 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             logger.info(f"ギルド {guild_id} の通知設定を削除しました")
         else:
             await interaction.response.send_message("ℹ️ 通知設定が見つかりませんでした。")
+
+    @app_commands.command(
+        name="starresonance-status",
+        description="現在の通知設定を確認します"
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def show_status(self, interaction: discord.Interaction):
+        """通知設定の状態を表示"""
+        guild_id = str(interaction.guild.id)
+
+        if guild_id not in self.config:
+            await interaction.response.send_message("ℹ️ このサーバーには通知設定がありません。")
+            return
+
+        guild_config = self.config[guild_id]
+        channel_id = guild_config.get('channel_id')
+        spreadsheet_url = guild_config.get('spreadsheet_url')
+        last_notified = guild_config.get('last_notified_date', '未送信')
+
+        channel = self.bot.get_channel(channel_id)
+        channel_mention = channel.mention if channel else f"ID: {channel_id} (削除済み)"
+
+        embed = discord.Embed(
+            title="🌟 スターレゾナンス通知設定",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(self.jst)
+        )
+        embed.add_field(name="📢 通知チャンネル", value=channel_mention, inline=False)
+        embed.add_field(name="📊 スプレッドシートURL", value=f"[リンク]({spreadsheet_url})", inline=False)
+        embed.add_field(name="📅 最終通知日", value=last_notified, inline=False)
+        embed.add_field(name="⏰ 通知時刻", value="毎朝 5:00 (JST)", inline=False)
+        embed.set_footer(text=f"ギルドID: {guild_id}")
+
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="starresonance-list",
+        description="全サーバーの通知設定一覧を表示します（Bot管理者専用）"
+    )
+    async def list_all_configs(self, interaction: discord.Interaction):
+        """全サーバーの設定を表示（管理者専用）"""
+        # Bot管理者チェック
+        if not hasattr(self.bot, 'is_admin') or not self.bot.is_admin(interaction.user.id):
+            await interaction.response.send_message("❌ このコマンドはBot管理者のみ実行できます。", ephemeral=True)
+            return
+
+        if not self.config:
+            await interaction.response.send_message("ℹ️ 設定されているサーバーはありません。")
+            return
+
+        embed = discord.Embed(
+            title="🌟 スターレゾナンス通知設定一覧",
+            description=f"設定済みサーバー数: {len(self.config)}",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(self.jst)
+        )
+
+        for guild_id_str, guild_config in list(self.config.items())[:25]:  # Discord制限: 最大25フィールド
+            guild = self.bot.get_guild(int(guild_id_str))
+            guild_name = guild.name if guild else f"不明 (ID: {guild_id_str})"
+            
+            channel_id = guild_config.get('channel_id')
+            last_notified = guild_config.get('last_notified_date', '未送信')
+            
+            channel = self.bot.get_channel(channel_id) if guild else None
+            channel_info = f"#{channel.name}" if channel else f"ID: {channel_id}"
+            
+            embed.add_field(
+                name=f"🏠 {guild_name}",
+                value=f"チャンネル: {channel_info}\n最終通知: {last_notified}",
+                inline=True
+            )
+
+        embed.set_footer(text=f"設定ファイル: {CONFIG_FILE}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="starresonance-debug",
