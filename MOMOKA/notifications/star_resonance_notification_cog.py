@@ -142,16 +142,35 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             data = {}
             
             # 予告通知シート（gid確定）
+            logger.info("📊 定義_予告通知シートを取得中...")
             await self._fetch_single_sheet(sheet_id, '定義_予告通知', '1975346704', data)
             
             # デイリー通知シート（gidを試行錯誤）
-            # 一般的なパターン: 0, 1, 2, または計算された値
-            daily_gids_to_try = ['0', '1', '2', '1234567890']  # 可能性のあるgid
+            # 複数のパターンを試す
+            logger.info("📊 定義_デイリー通知シートを取得中...")
+            daily_gids_to_try = [
+                '0',  # デフォルト（初めに）
+                '1',  # 2番目のシート
+                '2',  # 3番目のシート
+                '3',
+                '4',
+                '5',
+                '1234567890',  # ランダムなgid
+                '987654321'
+            ]
             
             for gid in daily_gids_to_try:
                 if await self._fetch_single_sheet(sheet_id, '定義_デイリー通知', gid, data):
                     logger.info(f"✅ 定義_デイリー通知シートのgidを特定しました: {gid}")
                     break
+            else:
+                logger.warning("⚠️ 定義_デイリー通知シートが見つかりませんでした")
+            
+            # データが取得できたか確認
+            if not data:
+                logger.error("❌ どのシートもデータを取得できませんでした")
+            else:
+                logger.info(f"✅ {len(data)}個のシートからデータを取得しました: {list(data.keys())}")
             
             return data
 
@@ -178,31 +197,42 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
             self.http_session = aiohttp.ClientSession()
 
         try:
-            async with self.http_session.get(csv_url) as response:
+            async with self.http_session.get(csv_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
                     content = await response.text(encoding='utf-8')
                     # CSVをパース
                     csv_reader = csv.reader(io.StringIO(content))
                     rows = list(csv_reader)
                     
-                    # データが有効かチェック（ヘッダー行があるか）
-                    if rows and len(rows) > 1:
-                        # 最初の行に「notify頻度」などのヘッダーがあるかチェック
-                        first_row = rows[0]
-                        if any(cell for cell in first_row if cell.strip()):
-                            data_dict[sheet_name] = rows
-                            logger.info(f"✅ シート '{sheet_name}' (gid={gid}) から {len(rows)} 行を取得しました")
-                            
-                            # デバッグ: 最初の数行を表示
-                            logger.debug(f"シート '{sheet_name}' のヘッダー: {rows[0][:5]}")
-                            if len(rows) > 1:
-                                logger.debug(f"シート '{sheet_name}' のデータ例: {rows[1][:5]}")
-                            return True
+                    # データが有効かチェック
+                    if not rows or len(rows) < 2:
+                        logger.debug(f"シート '{sheet_name}' (gid={gid}): データが不十分 (行数={len(rows)})")
+                        return False
+                    
+                    # 最初の行に有効なデータがあるかチェック
+                    first_row = rows[0]
+                    if not any(cell.strip() for cell in first_row if cell):
+                        logger.debug(f"シート '{sheet_name}' (gid={gid}): ヘッダー行が空")
+                        return False
+                    
+                    # データを保存
+                    data_dict[sheet_name] = rows
+                    logger.info(f"✅ シート '{sheet_name}' (gid={gid}) から {len(rows)} 行を取得しました")
+                    
+                    # デバッグ: 最初の数行を表示
+                    logger.debug(f"  ヘッダー: {first_row[:4]}")
+                    if len(rows) > 1:
+                        logger.debug(f"  データ例: {rows[1][:4]}")
+                    
+                    return True
                 else:
                     logger.debug(f"シート '{sheet_name}' (gid={gid}): HTTP {response.status}")
                     return False
+        except asyncio.TimeoutError:
+            logger.warning(f"シート '{sheet_name}' (gid={gid}): タイムアウト")
+            return False
         except Exception as e:
-            logger.debug(f"シート '{sheet_name}' (gid={gid}) の取得エラー: {e}")
+            logger.debug(f"シート '{sheet_name}' (gid={gid}) の取得エラー: {type(e).__name__}: {e}")
             return False
         
         return False
@@ -221,52 +251,77 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
         events = []
         
         if not rows or len(rows) < 2:
+            logger.warning(f"パース失敗: 行数が不足 (rows={len(rows) if rows else 0})")
             return events
 
+        logger.info(f"パース開始 ({event_type}): 総行数={len(rows)}")
+        logger.debug(f"ヘッダー行: {rows[0]}")
+
         # ヘッダー行をスキップ（1行目）
-        for row in rows[1:]:
-            if len(row) < 4:
-                continue
-                
+        for idx, row in enumerate(rows[1:], start=2):  # 2行目から開始
             # 空行をスキップ
-            if not any(row):
+            if not row or not any(cell.strip() for cell in row if cell):
+                logger.debug(f"行{idx}: 空行をスキップ")
                 continue
+
+            # 行の内容をデバッグ出力
+            if idx <= 5:  # 最初の5行のみ詳細出力
+                logger.debug(f"行{idx}: {row}")
 
             try:
                 if event_type == 'daily':
                     # デイリー通知: "notify頻度、イベント名、日時、テキスト"
+                    if len(row) < 2:
+                        logger.debug(f"行{idx}: 列数不足 (len={len(row)})")
+                        continue
+                        
                     frequency = row[0].strip() if len(row) > 0 else ''
                     event_name = row[1].strip() if len(row) > 1 else ''
                     event_time = row[2].strip() if len(row) > 2 else ''
                     description = row[3].strip() if len(row) > 3 else ''
 
-                    if frequency and event_name:
+                    if not frequency and not event_name:
+                        logger.debug(f"行{idx}: frequency と event_name が両方空")
+                        continue
+
+                    if event_name:  # イベント名があればOK
                         events.append({
                             'frequency': frequency,
                             'name': event_name,
                             'time': event_time,
                             'description': description
                         })
+                        logger.debug(f"行{idx}: デイリーイベント追加 - {event_name}")
 
                 elif event_type == 'upcoming':
                     # 予告通知: "notify頻度、イベント名、開放日時、テキスト"
+                    if len(row) < 2:
+                        logger.debug(f"行{idx}: 列数不足 (len={len(row)})")
+                        continue
+                        
                     frequency = row[0].strip() if len(row) > 0 else ''
                     event_name = row[1].strip() if len(row) > 1 else ''
                     open_date = row[2].strip() if len(row) > 2 else ''
                     description = row[3].strip() if len(row) > 3 else ''
 
-                    if frequency and event_name and open_date:
+                    if not frequency and not event_name:
+                        logger.debug(f"行{idx}: frequency と event_name が両方空")
+                        continue
+
+                    if event_name and open_date:  # イベント名と開放日時があればOK
                         events.append({
                             'frequency': frequency,
                             'name': event_name,
                             'open_date': open_date,
                             'description': description
                         })
+                        logger.debug(f"行{idx}: 予告イベント追加 - {event_name} ({open_date})")
 
             except Exception as e:
-                logger.warning(f"行のパースに失敗: {row}, エラー: {e}")
+                logger.warning(f"行{idx}のパースに失敗: {row}, エラー: {e}")
                 continue
 
+        logger.info(f"パース完了 ({event_type}): {len(events)}件のイベントを抽出")
         return events
 
     def filter_daily_events(self, events: List[Dict[str, str]], weekday: str) -> List[Dict[str, str]]:
@@ -721,13 +776,49 @@ class StarResonanceNotificationCog(commands.Cog, name="StarResonanceNotification
                     info = f"**行数**: {len(rows)}\n"
                     info += f"**ヘッダー**: `{', '.join(str(h) for h in header)}`\n"
                     if sample:
-                        info += f"**サンプル**: `{', '.join(str(s) for s in sample)}`"
+                        info += f"**サンプル**: `{', '.join(str(s) for s in sample)}`\n"
+                    
+                    # パース結果も表示
+                    event_type = 'upcoming' if '予告' in sheet_name else 'daily'
+                    events = self.parse_event_data(rows, event_type)
+                    info += f"**パース結果**: {len(events)}件のイベント\n"
+                    
+                    if events:
+                        # 最初の3件のイベントを表示
+                        for i, event in enumerate(events[:3], 1):
+                            event_name = event.get('name', '不明')
+                            info += f"  {i}. {event_name}\n"
                     
                     embed.add_field(
                         name=f"📊 {sheet_name}",
                         value=info[:1024],
                         inline=False
                     )
+
+            # 現在の曜日でフィルタリングした結果も表示
+            if '定義_デイリー通知' in data:
+                now = datetime.now(self.jst)
+                weekday_jp = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日']
+                today_weekday = weekday_jp[now.weekday()]
+                
+                all_daily = self.parse_event_data(data['定義_デイリー通知'], 'daily')
+                filtered = self.filter_daily_events(all_daily, today_weekday)
+                
+                filter_info = f"**本日の曜日**: {today_weekday}\n"
+                filter_info += f"**全イベント数**: {len(all_daily)}件\n"
+                filter_info += f"**本日該当**: {len(filtered)}件\n"
+                
+                if filtered:
+                    for i, event in enumerate(filtered[:5], 1):
+                        event_name = event.get('name', '不明')
+                        frequency = event.get('frequency', '')
+                        filter_info += f"  {i}. [{frequency}] {event_name}\n"
+                
+                embed.add_field(
+                    name="🔍 フィルタリング結果",
+                    value=filter_info[:1024],
+                    inline=False
+                )
 
             await interaction.followup.send(embed=embed)
 
