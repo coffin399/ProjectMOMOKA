@@ -197,6 +197,7 @@ class Momoka(commands.Bot):
             'MOMOKA.music.music_cog',
             'MOMOKA.notifications.earthquake_notification_cog',
             'MOMOKA.notifications.twitch_notification_cog',
+            'MOMOKA.notifications.star_resonance_notification_cog',
             'MOMOKA.timer.timer_cog',
             'MOMOKA.tracker.r6s_tracker_cog',
             'MOMOKA.tracker.valorant_tracker_cog',
@@ -242,7 +243,7 @@ class Momoka(commands.Bot):
         self.status_templates = self.config.get('status_rotation', [
             "Ask @PLANA for command help",
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2025-12-03",
+            "prjMOMOKA Ver.2025-01-03",
             "Ask @PLANA <image generation>",
             "/say <audio generation>"
         ])
