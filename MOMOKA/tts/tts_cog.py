@@ -11,6 +11,7 @@ import re
 from typing import Dict, Optional, List, Any
 import time
 import logging
+import gc  # ガベージコレクションを追加
 
 try:
     from MOMOKA.music.music_cog import MusicCog
@@ -104,10 +105,21 @@ class TTSCog(commands.Cog, name="tts_cog"):
         await self.fetch_available_models()  # still useful for UI and IDs
 
     async def cog_unload(self):
+        """Cogのアンロード時にリソースをクリーンアップ"""
         self._save_settings()
         self._save_speech_settings()
         self._save_dictionary()
-        await self.session.close()
+        
+        # aiohttpセッションのクローズ
+        if self.session and not self.session.closed:
+            await self.session.close()
+        
+        # ロック辞書のクリア
+        self.tts_locks.clear()
+        
+        # ガベージコレクションを強制実行
+        gc.collect()
+        
         logging.getLogger(__name__).info("TTSCog unloaded and session closed.")
 
     def _load_settings(self):
@@ -572,13 +584,19 @@ class TTSCog(commands.Cog, name="tts_cog"):
         endpoint = f"{self.api_url}/voice"
         params = {"text": text, "model_id": model_id, "style": style, "style_weight": style_weight, "speed": speed, "encoding": "wav"}
         try:
-            async with self.session.post(endpoint, params=params) as response:
+            # タイムアウトを設定してメモリリークを防止
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with self.session.post(endpoint, params=params, timeout=timeout) as response:
                 if response.status == 200:
-                    return await response.read()
+                    audio_data = await response.read()
+                    return audio_data
                 logging.getLogger(__name__).error(
                     "[TTSCog] 音声生成APIエラー: %s %s", response.status, await response.text()
                 )
                 return None
+        except asyncio.TimeoutError:
+            logging.getLogger(__name__).error("[TTSCog] 音声生成APIタイムアウト")
+            return None
         except Exception as e:
             logging.getLogger(__name__).error("[TTSCog] 音声生成APIリクエストエラー: %s", e)
             return None
@@ -592,10 +610,19 @@ class TTSCog(commands.Cog, name="tts_cog"):
             if interaction: await interaction.followup.send("❌ 音声生成に失敗しました。", ephemeral=True)
             return False
 
-        tts_source = TTSAudioSource(io.BytesIO(wav_data), text=text, guild_id=guild.id, pipe=True)
-        source_name = f"tts_{int(time.time() * 1000)}"
-        await music_state.mixer.add_source(source_name, tts_source, volume=volume)
-        return True
+        try:
+            # BytesIOをwith文で管理してメモリリークを防止
+            audio_buffer = io.BytesIO(wav_data)
+            tts_source = TTSAudioSource(audio_buffer, text=text, guild_id=guild.id, pipe=True)
+            source_name = f"tts_{int(time.time() * 1000)}"
+            await music_state.mixer.add_source(source_name, tts_source, volume=volume)
+            # wav_dataの参照を明示的に削除
+            del wav_data
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(f"[TTSCog] ミキサーへのTTS追加エラー: {e}")
+            if interaction: await interaction.followup.send("❌ 音声の再生に失敗しました。", ephemeral=True)
+            return False
 
     async def _play_tts_directly(self, guild: discord.Guild, text: str, model_id: int, style: str, style_weight: float, speed: float, volume: float, interaction: Optional[discord.Interaction] = None) -> bool:
         voice_client = guild.voice_client
@@ -613,12 +640,27 @@ class TTSCog(commands.Cog, name="tts_cog"):
             return False
 
         try:
-            source = TTSAudioSource(io.BytesIO(wav_data), text=text, guild_id=guild.id, pipe=True)
+            # BytesIOをメモリ効率的に管理
+            audio_buffer = io.BytesIO(wav_data)
+            source = TTSAudioSource(audio_buffer, text=text, guild_id=guild.id, pipe=True)
             volume_source = discord.PCMVolumeTransformer(source, volume=volume)
-            voice_client.play(volume_source)
+            
+            # 再生完了後のクリーンアップコールバック
+            def after_playback(error):
+                if error:
+                    logging.getLogger(__name__).warning(f"[TTSCog] 再生エラー: {error}")
+                # メモリ解放を促進
+                gc.collect()
+            
+            voice_client.play(volume_source, after=after_playback)
+            # wav_dataの参照を明示的に削除
+            del wav_data
             return True
         except discord.errors.ClientException as e:
             logging.getLogger(__name__).warning(f"[TTSCog] 再生エラー: {e}")
+            return False
+        except Exception as e:
+            logging.getLogger(__name__).error(f"[TTSCog] TTS再生中の予期しないエラー: {e}")
             return False
 
 

@@ -143,7 +143,9 @@ class TTSAudioSource(discord.FFmpegPCMAudio):
         # BytesIOの場合はpipe=Trueを強制
         if isinstance(source, io.BytesIO):
             kwargs['pipe'] = True
-
+        
+        # BytesIOの参照を保持してクリーンアップ時にクローズ
+        self._source_buffer = source if isinstance(source, io.BytesIO) else None
         self.text = text if len(text) < 30 else text[:27] + "..."
         self.guild_id = guild_id
 
@@ -151,8 +153,24 @@ class TTSAudioSource(discord.FFmpegPCMAudio):
             super().__init__(source, **kwargs)
         except Exception as e:
             logger.error(f"Guild {guild_id}: Failed to initialize TTSAudioSource: {e}")
+            # 初期化失敗時にもバッファをクローズ
+            if self._source_buffer:
+                try:
+                    self._source_buffer.close()
+                except Exception:
+                    pass
             raise
 
     def cleanup(self):
         logger.info(f"Guild {self.guild_id}: TTS FFmpeg process for '{self.text}' is being cleaned up.")
-        super().cleanup()
+        try:
+            super().cleanup()
+        finally:
+            # BytesIOバッファを明示的にクローズしてメモリを解放
+            if self._source_buffer:
+                try:
+                    self._source_buffer.close()
+                except Exception as e:
+                    logger.warning(f"Guild {self.guild_id}: Failed to close TTS buffer: {e}")
+                finally:
+                    self._source_buffer = None
