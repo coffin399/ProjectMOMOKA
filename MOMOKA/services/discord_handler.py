@@ -8,6 +8,8 @@ import re
 from asyncio import Queue
 from typing import List
 
+import discord
+import discord.errors
 from discord import Client, TextChannel
 
 
@@ -337,19 +339,34 @@ class DiscordLogHandler(logging.Handler):
             await self._remove_invalid_channel(channel_id, reason)
 
     async def _log_sender_loop(self):
-        """バックグラウンドで定期的にキュー処理を呼び出すループ。"""
+        """
+        バックグラウンドで定期的にキュー処理を呼び出すループ。
+        個別の処理エラーではループを終了せず、ログ出力して継続する。
+        """
         try:
             await self.bot.wait_until_ready()
             while not self._closed:
-                await self._process_queue()
+                try:
+                    await self._process_queue()
+                except asyncio.CancelledError:
+                    # キャンセルはそのまま伝播させてループを終了
+                    raise
+                except Exception as e:
+                    # 個別のキュー処理エラーではループを終了しない
+                    # （NameError、接続エラー等もここで安全にキャッチ）
+                    print(f"DiscordLogHandler: Error in _process_queue (continuing): {e}")
                 await asyncio.sleep(self.interval)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"Error in DiscordLogHandler loop: {e}")
+            # ループ全体の致命的エラー（通常到達しない）
+            print(f"DiscordLogHandler: Fatal error in log sender loop: {e}")
         finally:
             # ループ終了時に残っているログを送信
-            await self._process_queue()
+            try:
+                await self._process_queue()
+            except Exception:
+                pass
 
     def close(self):
         """ハンドラを閉じる。"""

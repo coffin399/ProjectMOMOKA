@@ -368,17 +368,31 @@ class MusicCog(commands.Cog, name="music_cog"):
                 return None
             return vc
 
-    def mixer_finished_callback(self, error: Optional[Exception], guild_id: int):
+    def mixer_finished_callback(self, error: Optional[Exception], guild_id: int,
+                                expected_mixer=None):
         """
         ミキサー（voice_client.play()のafter）が終了した際のコールバック。
         mixer.stop()やvoice_client.stop()で呼ばれる。
         注意: オーディオスレッドから呼ばれるため、asyncio APIはrun_coroutine_threadsafeで実行。
+
+        Args:
+            error: 再生中に発生したエラー（あれば）
+            guild_id: ギルドID
+            expected_mixer: このコールバックが紐づくミキサー参照。
+                旧ミキサーのコールバックが新ミキサーのstateを破壊するのを防止する。
         """
         if error:
             logger.error(f"Guild {guild_id}: Mixer unexpectedly finished with error: {error}")
         logger.info(f"Guild {guild_id}: Mixer has finished.")
         state = self._get_guild_state(guild_id)
         if not state or state._playing_next:
+            return
+
+        # 旧ミキサーのコールバックが新ミキサーのstateを破壊するのを防止
+        # state.mixerが別のミキサーに差し替わっている場合はスキップ
+        if expected_mixer is not None and state.mixer is not expected_mixer:
+            logger.info(f"Guild {guild_id}: Mixer callback ignored (stale mixer, "
+                        f"expected={id(expected_mixer)}, current={id(state.mixer) if state.mixer else 'None'})")
             return
 
         # ミキサーが既にクリーンアップ済み（意図的な停止）ならスキップ
@@ -560,14 +574,36 @@ class MusicCog(commands.Cog, name="music_cog"):
                 
                 state.mixer = AudioMixer(on_source_removed_callback=on_source_removed)
 
-            await state.mixer.add_source('music', source, volume=state.volume)
+            # ミキサーをローカル変数に保持（awaitの間にstate.mixerがNoneに変更されるのを防止）
+            # mixer_finished_callbackの旧ミキサー競合でstate.mixer=Noneにされても、
+            # ローカル変数はオブジェクトを保持し続ける
+            current_mixer = state.mixer
 
-            if state.voice_client and state.voice_client.source is not state.mixer:
+            await current_mixer.add_source('music', source, volume=state.volume)
+
+            if state.voice_client and state.voice_client.source is not current_mixer:
                 # すでに再生中の場合はスキップ（重複再生エラーを防止）
                 if state.voice_client.is_playing():
                     logger.warning(f"Guild {guild_id}: Skipping play() - already playing audio")
                 else:
-                    state.voice_client.play(state.mixer, after=lambda e: self.mixer_finished_callback(e, guild_id))
+                    # lambdaにミキサー参照をキャプチャし、mixer_finished_callbackで照合する
+                    # これにより旧ミキサーのコールバックが新ミキサーのstateを破壊するのを防止
+                    state.voice_client.play(
+                        current_mixer,
+                        after=lambda e, m=current_mixer: self.mixer_finished_callback(e, guild_id, m)
+                    )
+
+            # 旧ミキサーのコールバックでstateが破壊された場合の復元処理
+            # （mixer_finished_callbackのミキサーID照合で防止されるが、念のため）
+            if state.mixer is None and current_mixer is not None:
+                logger.warning(f"Guild {guild_id}: state.mixer was cleared during playback setup, restoring")
+                state.mixer = current_mixer
+            if not state.is_playing:
+                logger.warning(f"Guild {guild_id}: state.is_playing was cleared during playback setup, restoring")
+                state.is_playing = True
+            if state.current_track is None and track_to_play is not None and not is_seek_operation:
+                logger.warning(f"Guild {guild_id}: state.current_track was cleared during playback setup, restoring")
+                state.current_track = track_to_play
 
             if is_seek_operation:
                 state.is_seeking = False
