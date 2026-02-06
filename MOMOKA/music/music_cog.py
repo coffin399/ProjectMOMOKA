@@ -552,6 +552,12 @@ class MusicCog(commands.Cog, name="music_cog"):
                     raise RuntimeError(f"'{track_to_play.title}' の有効なストリームURLを取得できませんでした。")
                 track_to_play.stream_url = updated_track.stream_url
 
+            # ストリームURLのログ出力（FFmpegクラッシュ時の原因特定用）
+            stream_url_preview = track_to_play.stream_url[:120] if track_to_play.stream_url else "(None)"
+            logger.info(f"Guild {guild_id}: Starting FFmpeg for '{track_to_play.title}' "
+                        f"stream_url={stream_url_preview}... "
+                        f"ffmpeg_path={self.ffmpeg_path}")
+
             ffmpeg_before_opts = self.ffmpeg_before_options
             if seek_seconds > 0:
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"

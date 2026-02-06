@@ -268,24 +268,13 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         # --- 本当にソース終了 ---
         if not self._has_produced_audio:
             # FFmpegが1フレームも出力せずに終了した → 本当の即死
-            stderr_output = ""
+            stderr_output = self._read_stderr()
             returncode = None
             try:
                 if hasattr(self, '_process') and self._process:
                     returncode = self._process.poll()
-                    # stderrはノンブロッキングで読み取り試行
-                    if self._process.stderr:
-                        import os
-                        try:
-                            # Windowsではselect不可なのでノンブロッキング読み取り
-                            stderr_output = self._process.stderr.read1(4096).decode('utf-8', errors='replace')
-                        except (AttributeError, BlockingIOError, OSError):
-                            try:
-                                stderr_output = self._process.stderr.read(0).decode('utf-8', errors='replace')
-                            except Exception:
-                                stderr_output = "(stderr read not available)"
-            except Exception as e:
-                stderr_output = f"(stderr read failed: {e})"
+            except Exception:
+                pass
 
             logger.error(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio! "
@@ -300,6 +289,33 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
             )
 
         return b''
+
+    def _read_stderr(self) -> str:
+        """FFmpegのstderrを安全に読み取る。プロセス終了後のブロッキング読み取り対応。"""
+        try:
+            if not hasattr(self, '_process') or not self._process:
+                return "(no process)"
+            proc = self._process
+            # プロセスが終了している場合はブロッキング読み取りが安全
+            if proc.poll() is not None and proc.stderr:
+                try:
+                    raw = proc.stderr.read()
+                    if raw:
+                        return raw.decode('utf-8', errors='replace')[:1000]
+                    return "(empty)"
+                except Exception as e:
+                    return f"(read failed after exit: {e})"
+            # プロセスがまだ生きている場合はノンブロッキング試行
+            if proc.stderr:
+                try:
+                    raw = proc.stderr.read1(4096)
+                    if raw:
+                        return raw.decode('utf-8', errors='replace')
+                except (AttributeError, BlockingIOError, OSError):
+                    return "(still running, stderr not readable)"
+            return "(no stderr pipe)"
+        except Exception as e:
+            return f"(stderr read error: {e})"
 
     def cleanup(self):
         """FFmpegプロセスのクリーンアップ"""
