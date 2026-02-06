@@ -369,71 +369,116 @@ class MusicCog(commands.Cog, name="music_cog"):
             return vc
 
     def mixer_finished_callback(self, error: Optional[Exception], guild_id: int):
+        """
+        ミキサー（voice_client.play()のafter）が終了した際のコールバック。
+        mixer.stop()やvoice_client.stop()で呼ばれる。
+        注意: オーディオスレッドから呼ばれるため、asyncio APIはrun_coroutine_threadsafeで実行。
+        """
         if error:
             logger.error(f"Guild {guild_id}: Mixer unexpectedly finished with error: {error}")
         logger.info(f"Guild {guild_id}: Mixer has finished.")
         state = self._get_guild_state(guild_id)
-        if state and not state._playing_next:
-            state._playing_next = True
-            
-            finished_track = state.current_track
-            state.mixer = None
-            state.is_playing = False
-            
-            # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
-            if state.loop_mode != LoopMode.ONE:
-                state.current_track = None
-            
-            state.reset_playback_tracking()
-            
-            if error:
-                guild = self.bot.get_guild(guild_id)
-                error_message = self.exception_handler.handle_error(error, guild)
-                if state.last_text_channel_id:
-                    asyncio.run_coroutine_threadsafe(
-                        self._send_background_message(state.last_text_channel_id, "error_message_wrapper",
-                                                      error=error_message),
-                        self.bot.loop
-                    )
-            
-            if finished_track and state.loop_mode == LoopMode.ALL:
-                asyncio.run_coroutine_threadsafe(state.queue.put(finished_track), self.bot.loop)
-            
-            def play_next_and_reset_flag():
-                async def _play():
-                    try:
-                        await self._play_next_song(guild_id)
-                    finally:
-                        if state:
-                            state._playing_next = False
-                asyncio.run_coroutine_threadsafe(_play(), self.bot.loop)
-            
-            play_next_and_reset_flag()
+        if not state or state._playing_next:
+            return
+
+        # ミキサーが既にクリーンアップ済み（意図的な停止）ならスキップ
+        # _cleanup_idle_mixer等で事前にmixer=Noneにされている場合
+        if state.mixer is None and not state.is_playing:
+            logger.info(f"Guild {guild_id}: Mixer callback ignored (already cleaned up)")
+            return
+
+        state._playing_next = True
+
+        # 終了時のトラック情報を保存
+        finished_track = state.current_track
+        # ミキサー参照をクリア
+        state.mixer = None
+        state.is_playing = False
+
+        # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
+        if state.loop_mode != LoopMode.ONE:
+            state.current_track = None
+
+        state.reset_playback_tracking()
+
+        # エラーがあればテキストチャンネルに通知
+        if error:
+            guild = self.bot.get_guild(guild_id)
+            error_message = self.exception_handler.handle_error(error, guild)
+            if state.last_text_channel_id:
+                asyncio.run_coroutine_threadsafe(
+                    self._send_background_message(state.last_text_channel_id, "error_message_wrapper",
+                                                  error=error_message),
+                    self.bot.loop
+                )
+
+        # LoopMode.ALLの場合はキューに再追加
+        if finished_track and state.loop_mode == LoopMode.ALL:
+            asyncio.run_coroutine_threadsafe(state.queue.put(finished_track), self.bot.loop)
+
+        # 次の曲を再生（非同期タスクとしてスケジュール）
+        def play_next_and_reset_flag():
+            async def _play():
+                try:
+                    await self._play_next_song(guild_id)
+                finally:
+                    if state:
+                        state._playing_next = False
+            asyncio.run_coroutine_threadsafe(_play(), self.bot.loop)
+
+        play_next_and_reset_flag()
 
     async def _on_music_source_removed(self, guild_id: int):
-        """音楽ソースが削除されたときに呼ばれる（ループモードやキューを考慮して次の曲を再生）"""
+        """
+        音楽ソースがミキサーから削除されたときに呼ばれる。
+        ループモードやキューを考慮して次の曲を再生する。
+        AudioMixerのon_source_removed_callbackから各ソース削除ごとに発火される。
+        """
         state = self._get_guild_state(guild_id)
+        # シーク中や既に次曲処理中の場合はスキップ
         if not state or state.is_seeking or state._playing_next:
             return
-        
+
         state._playing_next = True
-        
+
         try:
+            # 終了したトラック情報を保存
             finished_track = state.current_track
             state.is_playing = False
-            
+
             # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
             if state.loop_mode != LoopMode.ONE:
                 state.current_track = None
-            
+
             state.reset_playback_tracking()
-            
+
+            # LoopMode.ALLの場合はキューに再追加
             if finished_track and state.loop_mode == LoopMode.ALL:
                 await state.queue.put(finished_track)
-            
+
+            # 次の曲を再生（キューが空の場合はミキサーの停止も行う）
             await self._play_next_song(guild_id)
         finally:
             state._playing_next = False
+
+    async def _cleanup_idle_mixer(self, state: GuildState):
+        """
+        ミキサーにソースが残っていない場合、ミキサーを停止してクリーンアップする。
+        TTS等のソースが残っている場合はミキサーを維持する。
+        これにより voice_client.is_playing() が False になり、TTS直接再生が可能になる。
+        """
+        if not state.mixer:
+            return
+        # ミキサーにソースが残っているか確認
+        if state.mixer.has_sources():
+            return
+        # ソースなし→ミキサーを停止
+        logger.info(f"Guild {state.guild_id}: Cleaning up idle mixer (no sources remaining)")
+        mixer = state.mixer
+        # 先にstate.mixerをNoneにしてmixer_finished_callbackでの二重処理を防止
+        state.mixer = None
+        # ミキサーを停止（read()がb''を返す→voice_clientのプレイヤーが停止）
+        mixer.stop()
 
     async def _play_next_song(self, guild_id: int, seek_seconds: int = 0):
         state = self._get_guild_state(guild_id)
@@ -463,6 +508,9 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.reset_playback_tracking()
             if state.last_text_channel_id:
                 await self._send_background_message(state.last_text_channel_id, "queue_ended")
+            # キュー終了時：ミキサーにソースが残っていなければ停止してクリーンアップ
+            # （TTS等が残っている場合はミキサーを維持する）
+            await self._cleanup_idle_mixer(state)
             return
 
         if not is_seek_operation:
@@ -549,34 +597,6 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.is_playing = False
             state.reset_playback_tracking()
             asyncio.create_task(self._play_next_song(guild_id))
-
-    def _song_finished_callback(self, error: Optional[Exception], guild_id: int):
-        state = self._get_guild_state(guild_id)
-        if not state or state.is_seeking:
-            return
-
-        if state.mixer:
-            asyncio.run_coroutine_threadsafe(state.mixer.remove_source('music'), self.bot.loop)
-
-        finished_track = state.current_track
-        state.is_playing = False
-        state.current_track = None
-        state.reset_playback_tracking()
-
-        if error:
-            guild = self.bot.get_guild(guild_id)
-            error_message = self.exception_handler.handle_error(error, guild)
-            if state.last_text_channel_id:
-                asyncio.run_coroutine_threadsafe(
-                    self._send_background_message(state.last_text_channel_id, "error_message_wrapper",
-                                                  error=error_message),
-                    self.bot.loop
-                )
-
-        if finished_track and state.loop_mode == LoopMode.ALL:
-            asyncio.run_coroutine_threadsafe(state.queue.put(finished_track), self.bot.loop)
-
-        asyncio.run_coroutine_threadsafe(self._play_next_song(guild_id), self.bot.loop)
 
     def _schedule_auto_leave(self, guild_id: int):
         state = self._get_guild_state(guild_id)
@@ -751,13 +771,16 @@ class MusicCog(commands.Cog, name="music_cog"):
                                       duration=format_duration(state.current_track.duration))
             return
 
+        # シーク操作: is_seekingフラグでコールバックからの二重処理を防止
         state.is_seeking = True
-        self._song_finished_callback(None, ctx.guild.id)
-        await asyncio.sleep(0.5)
-        state.is_seeking = False
-
-        await self._send_response(ctx, "seeked_to_position", position=format_duration(seek_seconds))
-        await self._play_next_song(ctx.guild.id, seek_seconds=seek_seconds)
+        try:
+            # _play_next_songがseek_seconds > 0で呼ばれると、同じトラックをシーク位置から再生
+            # add_source('music', new_source) が旧ソースを自動的に置き換えるため、
+            # 旧ソースの明示的な削除は不要
+            await self._play_next_song(ctx.guild.id, seek_seconds=seek_seconds)
+            await self._send_response(ctx, "seeked_to_position", position=format_duration(seek_seconds))
+        finally:
+            state.is_seeking = False
 
     @commands.hybrid_command(name="pause", description="再生を一時停止します。")
     async def pause(self, ctx: commands.Context):
@@ -801,7 +824,6 @@ class MusicCog(commands.Cog, name="music_cog"):
         state = self._get_guild_state(ctx.guild.id)
         if not state:
             await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
-
             return
 
         await ctx.defer()
@@ -810,8 +832,16 @@ class MusicCog(commands.Cog, name="music_cog"):
             await self._send_response(ctx, "nothing_to_skip", ephemeral=True)
             return
 
-        await self._send_response(ctx, "skipped_song", title=state.current_track.title)
-        self._song_finished_callback(None, ctx.guild.id)
+        skipped_title = state.current_track.title
+        await self._send_response(ctx, "skipped_song", title=skipped_title)
+
+        # ミキサーから音楽ソースを削除
+        # remove_sourceのコールバックで_on_music_source_removedが呼ばれ、次の曲が自動再生される
+        if state.mixer:
+            await state.mixer.remove_source('music')
+        elif state.voice_client and state.voice_client.is_playing():
+            # ミキサーなしで再生中の場合（フォールバック）
+            state.voice_client.stop()
 
     @commands.hybrid_command(name="stop", description="再生を停止し、キューをクリアします。")
     async def stop(self, ctx: commands.Context):

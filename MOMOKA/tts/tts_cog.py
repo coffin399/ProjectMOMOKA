@@ -546,21 +546,33 @@ class TTSCog(commands.Cog, name="tts_cog"):
         await interaction.response.send_message(embed=embed)
 
     async def _handle_say_logic(self, guild: discord.Guild, text: str, model_id: int, style: str, style_weight: float, speed: float, volume: float, interaction: Optional[discord.Interaction] = None) -> bool:
+        """TTS音声の再生を制御するメインロジック。音楽再生中はミキサーでオーバーレイする。"""
         voice_client = guild.voice_client
-        if not voice_client: return False
+        # ボイス接続がなければ再生不可
+        if not voice_client:
+            return False
 
+        # テキストの前処理: URLを省略し、辞書変換を適用
         processed_text = re.sub(r'https?://[\S]+', ' URL省略 ', text)
         converted_text = self._apply_dictionary(processed_text)
+        # 200文字以上は切り詰め
         if len(converted_text) > 200:
             converted_text = converted_text[:200] + " 以下省略"
 
+        # MusicCogの状態を確認
         music_cog: Optional[MusicCog] = self.bot.get_cog("music_cog")
         music_state = music_cog._get_guild_state(guild.id) if music_cog else None
 
+        # 音楽が再生中（ミキサーあり & is_playing）ならミキサーでオーバーレイ
         if music_state and music_state.mixer and music_state.is_playing:
             return await self._overlay_tts_with_mixer(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
-        else:
-            return await self._play_tts_directly(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
+
+        # ミキサーが存在するがソースが残っている場合（TTS等）もミキサーを使う
+        if music_state and music_state.mixer and music_state.mixer.has_sources():
+            return await self._overlay_tts_with_mixer(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
+
+        # それ以外は直接再生（voice_clientから直接play）
+        return await self._play_tts_directly(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
 
     async def _api_call_to_audio_data(self, text: str, model_id: int, style: str, style_weight: float, speed: float) -> Optional[bytes]:
         # Prefer internal synthesizer; fall back to legacy HTTP if configured
@@ -625,9 +637,15 @@ class TTSCog(commands.Cog, name="tts_cog"):
             return False
 
     async def _play_tts_directly(self, guild: discord.Guild, text: str, model_id: int, style: str, style_weight: float, speed: float, volume: float, interaction: Optional[discord.Interaction] = None) -> bool:
+        """TTS音声をvoice_clientから直接再生する（音楽非再生時）"""
         voice_client = guild.voice_client
-        # ボイス接続状態を確認（接続中かつ再生中でないこと）
-        if not voice_client or not voice_client.is_connected() or voice_client.is_playing():
+        # ボイス接続状態を確認
+        if not voice_client or not voice_client.is_connected():
+            return False
+        # 既に別の音声が再生中の場合はスキップ
+        # ※ _handle_say_logicでミキサー再生中はオーバーレイに回されるため、
+        #   ここに来る場合はミキサー不在 = voice_client.is_playing()で正しく判定できる
+        if voice_client.is_playing():
             return False
 
         wav_data = await self._api_call_to_audio_data(text, model_id, style, style_weight, speed)
