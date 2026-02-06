@@ -90,8 +90,9 @@ class AudioMixer(discord.AudioSource):
 
                 final_frame = mixed_frame_data
 
-            except Exception:
+            except Exception as read_err:
                 # 読み取りエラーが発生したソースは終了扱い
+                logger.warning(f"AudioMixer: Source '{name}' raised exception during read(): {read_err}")
                 finished_sources.append((name, source))
 
         # 終了したソースを削除
@@ -213,6 +214,44 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         self.title = title
         # ギルドID（ログ用）
         self.guild_id = guild_id
+        # 最初のread()が空だったかを追跡（FFmpegが即死したかの判定用）
+        self._read_count = 0
+        self._has_produced_audio = False
+
+    def read(self) -> bytes:
+        """PCMフレームを読み取る。FFmpegが即座に終了した場合にエラーログを出力。"""
+        data = super().read()
+        self._read_count += 1
+
+        if data:
+            self._has_produced_audio = True
+            return data
+
+        # 空データ = ソース終了
+        if not self._has_produced_audio:
+            # FFmpegが1フレームも出力せずに終了した → 即死
+            stderr_output = ""
+            returncode = None
+            try:
+                if hasattr(self, '_process') and self._process:
+                    returncode = self._process.poll()
+                    if self._process.stderr:
+                        stderr_output = self._process.stderr.read().decode('utf-8', errors='replace')[:500]
+            except Exception as e:
+                stderr_output = f"(stderr read failed: {e})"
+
+            logger.error(
+                f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio! "
+                f"read_count={self._read_count}, returncode={returncode}, "
+                f"stderr={stderr_output or '(empty)'}"
+            )
+        else:
+            logger.info(
+                f"Guild {self.guild_id}: FFmpeg for '{self.title}' finished normally "
+                f"after {self._read_count} reads."
+            )
+
+        return data
 
     def cleanup(self):
         """FFmpegプロセスのクリーンアップ"""

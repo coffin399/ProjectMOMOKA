@@ -581,17 +581,23 @@ class MusicCog(commands.Cog, name="music_cog"):
 
             await current_mixer.add_source('music', source, volume=state.volume)
 
-            if state.voice_client and state.voice_client.source is not current_mixer:
-                # すでに再生中の場合はスキップ（重複再生エラーを防止）
+            if not state.voice_client or not state.voice_client.is_connected():
+                logger.error(f"Guild {guild_id}: voice_client is None or disconnected, cannot play")
+                raise RuntimeError("ボイスクライアントが切断されています。再接続してください。")
+
+            if state.voice_client.source is not current_mixer:
+                # 旧AudioPlayerが残留している場合（_cleanup_idle_mixer後のレース等）は
+                # 明示的に停止して新しいミキサーで再生開始
                 if state.voice_client.is_playing():
-                    logger.warning(f"Guild {guild_id}: Skipping play() - already playing audio")
-                else:
-                    # lambdaにミキサー参照をキャプチャし、mixer_finished_callbackで照合する
-                    # これにより旧ミキサーのコールバックが新ミキサーのstateを破壊するのを防止
-                    state.voice_client.play(
-                        current_mixer,
-                        after=lambda e, m=current_mixer: self.mixer_finished_callback(e, guild_id, m)
-                    )
+                    logger.info(f"Guild {guild_id}: Stopping stale AudioPlayer before starting new mixer")
+                    state.voice_client.stop()
+                # lambdaにミキサー参照をキャプチャし、mixer_finished_callbackで照合する
+                # これにより旧ミキサーのコールバックが新ミキサーのstateを破壊するのを防止
+                state.voice_client.play(
+                    current_mixer,
+                    after=lambda e, m=current_mixer: self.mixer_finished_callback(e, guild_id, m)
+                )
+                logger.info(f"Guild {guild_id}: Started new AudioPlayer with mixer {id(current_mixer)}")
 
             # 旧ミキサーのコールバックでstateが破壊された場合の復元処理
             # （mixer_finished_callbackのミキサーID照合で防止されるが、念のため）
