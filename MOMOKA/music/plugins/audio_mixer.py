@@ -3,6 +3,7 @@ import discord
 import struct
 import asyncio
 import io
+import tempfile
 import threading
 from typing import Dict, Optional, List, Tuple
 import logging
@@ -207,7 +208,11 @@ class AudioMixer(discord.AudioSource):
 
 
 class MusicAudioSource(discord.FFmpegPCMAudio):
-    """音楽再生用のFFmpegオーディオソース"""
+    """
+    音楽再生用のFFmpegオーディオソース。
+    stderrを一時ファイルにリダイレクトしてFFmpegエラーを確実にキャプチャする。
+    FFmpegの起動猶予（ストリーム接続待ち）機能つき。
+    """
 
     # 20ms × 250 = 5秒間のFFmpeg起動猶予（ストリームURL接続待ち）
     STARTUP_GRACE_FRAMES = 250
@@ -215,7 +220,14 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
     SILENCE_FRAME = b'\x00' * 3840
 
     def __init__(self, source, *, title: str = "Unknown Track", guild_id: int, **kwargs):
+        # stderrを一時ファイルにリダイレクト（PIPEより確実にエラーを捕捉できる）
+        self._stderr_file = tempfile.TemporaryFile(mode='w+b')
+        kwargs['stderr'] = self._stderr_file
+        # ストリームURLを保持（エラーログ用）
+        self._stream_url = source if isinstance(source, str) else "(pipe)"
+
         super().__init__(source, **kwargs)
+
         # トラックのタイトル（ログ用）
         self.title = title
         # ギルドID（ログ用）
@@ -225,12 +237,21 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         # 1フレームでもオーディオを出力したかどうか
         self._has_produced_audio = False
 
+        # FFmpegのPIDをログ出力
+        pid = "N/A"
+        try:
+            if hasattr(self, '_process') and self._process:
+                pid = self._process.pid
+        except Exception:
+            pass
+        logger.info(f"Guild {guild_id}: FFmpeg PID={pid} started for '{title}' "
+                    f"url={self._stream_url[:150]}...")
+
     def read(self) -> bytes:
         """
         PCMフレームを読み取る。
         FFmpegがストリームURL接続中でまだstdoutに書き込みを開始していない場合、
         discord.pyのFFmpegPCMAudio.read()は「3840バイト未満 → ソース終了」と判定してb''を返す。
-        これをWindowsパイプタイミング問題として検出し、
         FFmpegプロセスがまだ生きている間は無音フレームを返して即終了を防止する。
         """
         data = super().read()
@@ -256,7 +277,6 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
             pass
 
         # FFmpegがまだ生きていて、オーディオ未出力で、猶予フレーム内なら無音を返す
-        # （FFmpegがストリームURLに接続中で、stdoutにまだ書き込みを開始していない状態）
         if process_alive and not self._has_produced_audio and self._read_count <= self.STARTUP_GRACE_FRAMES:
             if self._read_count % 50 == 0:  # 1秒ごとにログ出力
                 logger.info(
@@ -266,9 +286,9 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
             return self.SILENCE_FRAME
 
         # --- 本当にソース終了 ---
+        stderr_output = self._read_stderr_file()
+
         if not self._has_produced_audio:
-            # FFmpegが1フレームも出力せずに終了した → 本当の即死
-            stderr_output = self._read_stderr()
             returncode = None
             try:
                 if hasattr(self, '_process') and self._process:
@@ -277,10 +297,11 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                 pass
 
             logger.error(
-                f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio! "
-                f"read_count={self._read_count}, returncode={returncode}, "
-                f"process_alive={process_alive}, "
-                f"stderr={stderr_output or '(empty)'}"
+                f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio!\n"
+                f"  read_count={self._read_count}, returncode={returncode}, "
+                f"process_alive={process_alive}\n"
+                f"  url={self._stream_url[:200]}\n"
+                f"  stderr={stderr_output}"
             )
         else:
             logger.info(
@@ -290,37 +311,30 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
 
         return b''
 
-    def _read_stderr(self) -> str:
-        """FFmpegのstderrを安全に読み取る。プロセス終了後のブロッキング読み取り対応。"""
+    def _read_stderr_file(self) -> str:
+        """一時ファイルからFFmpegのstderrを読み取る。"""
         try:
-            if not hasattr(self, '_process') or not self._process:
-                return "(no process)"
-            proc = self._process
-            # プロセスが終了している場合はブロッキング読み取りが安全
-            if proc.poll() is not None and proc.stderr:
-                try:
-                    raw = proc.stderr.read()
-                    if raw:
-                        return raw.decode('utf-8', errors='replace')[:1000]
-                    return "(empty)"
-                except Exception as e:
-                    return f"(read failed after exit: {e})"
-            # プロセスがまだ生きている場合はノンブロッキング試行
-            if proc.stderr:
-                try:
-                    raw = proc.stderr.read1(4096)
-                    if raw:
-                        return raw.decode('utf-8', errors='replace')
-                except (AttributeError, BlockingIOError, OSError):
-                    return "(still running, stderr not readable)"
-            return "(no stderr pipe)"
+            if not self._stderr_file:
+                return "(no stderr file)"
+            self._stderr_file.seek(0)
+            raw = self._stderr_file.read(4096)
+            if raw:
+                return raw.decode('utf-8', errors='replace').strip()
+            return "(empty)"
         except Exception as e:
-            return f"(stderr read error: {e})"
+            return f"(stderr file read error: {e})"
 
     def cleanup(self):
-        """FFmpegプロセスのクリーンアップ"""
+        """FFmpegプロセスと一時ファイルのクリーンアップ"""
         logger.info(f"Guild {self.guild_id}: Music FFmpeg process for '{self.title}' is being cleaned up.")
         super().cleanup()
+        # 一時ファイルをクローズ（自動削除される）
+        try:
+            if self._stderr_file:
+                self._stderr_file.close()
+                self._stderr_file = None
+        except Exception:
+            pass
 
 
 class TTSAudioSource(discord.FFmpegPCMAudio):
