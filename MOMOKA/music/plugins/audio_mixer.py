@@ -208,41 +208,89 @@ class AudioMixer(discord.AudioSource):
 
 class MusicAudioSource(discord.FFmpegPCMAudio):
     """音楽再生用のFFmpegオーディオソース"""
+
+    # 20ms × 250 = 5秒間のFFmpeg起動猶予（ストリームURL接続待ち）
+    STARTUP_GRACE_FRAMES = 250
+    # 3840バイト = 960サンプル × 2バイト(16bit) × 2チャンネル(ステレオ) = 20ms分の無音PCMフレーム
+    SILENCE_FRAME = b'\x00' * 3840
+
     def __init__(self, source, *, title: str = "Unknown Track", guild_id: int, **kwargs):
         super().__init__(source, **kwargs)
         # トラックのタイトル（ログ用）
         self.title = title
         # ギルドID（ログ用）
         self.guild_id = guild_id
-        # 最初のread()が空だったかを追跡（FFmpegが即死したかの判定用）
+        # read()呼び出し回数（FFmpeg起動猶予の判定に使用）
         self._read_count = 0
+        # 1フレームでもオーディオを出力したかどうか
         self._has_produced_audio = False
 
     def read(self) -> bytes:
-        """PCMフレームを読み取る。FFmpegが即座に終了した場合にエラーログを出力。"""
+        """
+        PCMフレームを読み取る。
+        FFmpegがストリームURL接続中でまだstdoutに書き込みを開始していない場合、
+        discord.pyのFFmpegPCMAudio.read()は「3840バイト未満 → ソース終了」と判定してb''を返す。
+        これをWindowsパイプタイミング問題として検出し、
+        FFmpegプロセスがまだ生きている間は無音フレームを返して即終了を防止する。
+        """
         data = super().read()
         self._read_count += 1
 
         if data:
+            if not self._has_produced_audio:
+                logger.info(
+                    f"Guild {self.guild_id}: FFmpeg for '{self.title}' started producing audio "
+                    f"after {self._read_count} reads ({self._read_count * 20}ms)"
+                )
             self._has_produced_audio = True
             return data
 
-        # 空データ = ソース終了
+        # --- 空データが返された ---
+
+        # FFmpegプロセスがまだ生きているか確認
+        process_alive = False
+        try:
+            if hasattr(self, '_process') and self._process:
+                process_alive = self._process.poll() is None
+        except Exception:
+            pass
+
+        # FFmpegがまだ生きていて、オーディオ未出力で、猶予フレーム内なら無音を返す
+        # （FFmpegがストリームURLに接続中で、stdoutにまだ書き込みを開始していない状態）
+        if process_alive and not self._has_produced_audio and self._read_count <= self.STARTUP_GRACE_FRAMES:
+            if self._read_count % 50 == 0:  # 1秒ごとにログ出力
+                logger.info(
+                    f"Guild {self.guild_id}: FFmpeg for '{self.title}' still starting up "
+                    f"(read #{self._read_count}, {self._read_count * 20}ms elapsed)"
+                )
+            return self.SILENCE_FRAME
+
+        # --- 本当にソース終了 ---
         if not self._has_produced_audio:
-            # FFmpegが1フレームも出力せずに終了した → 即死
+            # FFmpegが1フレームも出力せずに終了した → 本当の即死
             stderr_output = ""
             returncode = None
             try:
                 if hasattr(self, '_process') and self._process:
                     returncode = self._process.poll()
+                    # stderrはノンブロッキングで読み取り試行
                     if self._process.stderr:
-                        stderr_output = self._process.stderr.read().decode('utf-8', errors='replace')[:500]
+                        import os
+                        try:
+                            # Windowsではselect不可なのでノンブロッキング読み取り
+                            stderr_output = self._process.stderr.read1(4096).decode('utf-8', errors='replace')
+                        except (AttributeError, BlockingIOError, OSError):
+                            try:
+                                stderr_output = self._process.stderr.read(0).decode('utf-8', errors='replace')
+                            except Exception:
+                                stderr_output = "(stderr read not available)"
             except Exception as e:
                 stderr_output = f"(stderr read failed: {e})"
 
             logger.error(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio! "
                 f"read_count={self._read_count}, returncode={returncode}, "
+                f"process_alive={process_alive}, "
                 f"stderr={stderr_output or '(empty)'}"
             )
         else:
@@ -251,7 +299,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                 f"after {self._read_count} reads."
             )
 
-        return data
+        return b''
 
     def cleanup(self):
         """FFmpegプロセスのクリーンアップ"""
