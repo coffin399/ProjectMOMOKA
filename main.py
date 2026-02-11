@@ -198,6 +198,7 @@ class Momoka(commands.Bot):
             'MOMOKA.notifications.earthquake_notification_cog',
             'MOMOKA.notifications.twitch_notification_cog',
             'MOMOKA.notifications.star_resonance_notification_cog',
+            'MOMOKA.scheduler.match_time_cog',
             'MOMOKA.timer.timer_cog',
             'MOMOKA.tracker.r6s_tracker_cog',
             'MOMOKA.tracker.valorant_tracker_cog',
