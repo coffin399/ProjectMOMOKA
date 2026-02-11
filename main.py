@@ -244,7 +244,7 @@ class Momoka(commands.Bot):
         self.status_templates = self.config.get('status_rotation', [
             "Ask @PLANA for command help",
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-02-07",
+            "prjMOMOKA Ver.2026-02-11",
             "/say <audio generation>"
         ])
         self.rotate_status.start()
