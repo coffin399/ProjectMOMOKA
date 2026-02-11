@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
 
 import discord
+import torch
 from discord.abc import Messageable
 from PIL import Image
 
@@ -98,6 +99,9 @@ class ImageGenerator:
                     )
             self._enabled = True
 
+        # VRAM使用量しきい値（GB単位、0で無効）
+        self.vram_usage_threshold_gb = float(self.image_gen_config.get("vram_usage_threshold_gb", 6.0))
+
         self.default_size = self.image_gen_config.get("default_size", "1024x1024")
         self.save_images = self.image_gen_config.get("save_images", True)
         self.save_directory = self.image_gen_config.get("save_directory", "data/image")
@@ -173,7 +177,40 @@ class ImageGenerator:
 
     def get_available_models(self) -> List[str]:
         return self.available_models.copy()
-    
+
+    def _check_vram_available(self) -> tuple[bool, float]:
+        """GPU全体のVRAM使用量をチェックし、しきい値以下か判定する。
+
+        Returns:
+            (利用可能かどうか, 現在の使用量GB)
+        """
+        # しきい値が0以下の場合はチェック無効（常に利用可能）
+        if self.vram_usage_threshold_gb <= 0:
+            return True, 0.0
+
+        # CUDA が利用不可の場合はチェックをスキップ
+        if not torch.cuda.is_available():
+            return True, 0.0
+
+        try:
+            # torch.cuda.mem_get_info() はドライバレベルの空き/総メモリを返す
+            # 他プロセスの使用分も含めたGPU全体の情報を取得できる
+            free_bytes, total_bytes = torch.cuda.mem_get_info()
+            used_gb = (total_bytes - free_bytes) / (1024 ** 3)
+            logger.info(
+                "🔍 [VRAM_CHECK] Used: %.2f GB / Total: %.2f GB / Free: %.2f GB / Threshold: %.2f GB",
+                used_gb,
+                total_bytes / (1024 ** 3),
+                free_bytes / (1024 ** 3),
+                self.vram_usage_threshold_gb,
+            )
+            # 使用量がしきい値以上なら利用不可
+            return used_gb < self.vram_usage_threshold_gb, used_gb
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to check VRAM usage: %s", exc)
+            # チェック失敗時は安全のため続行を許可
+            return True, 0.0
+
     @staticmethod
     def _is_black_image(image_bytes: bytes, threshold: float = 0.01) -> bool:
         """Check if the image is mostly black (NSFW filter detected).
@@ -431,6 +468,54 @@ class ImageGenerator:
             sampler_name=sampler_name,
         )
 
+        # --- VRAM使用量チェック（他プログラムとの競合防止） ---
+        vram_ok, vram_used_gb = self._check_vram_available()
+        if not vram_ok:
+            logger.warning(
+                "⚠️ [IMAGE_GEN] VRAM usage %.2f GB exceeds threshold %.2f GB. Skipping generation.",
+                vram_used_gb,
+                self.vram_usage_threshold_gb,
+            )
+
+            # Discord上にVRAM不足メッセージを送信（日英両方）
+            channel = self.bot.get_channel(task.channel_id)
+            if channel:
+                embed = discord.Embed(
+                    title="⚠️ VRAM Unavailable / VRAM不足",
+                    description=(
+                        "Another program is currently using the GPU's VRAM.\n"
+                        "Please wait a while and try generating the image again.\n\n"
+                        "他のプログラムでVRAMが使用されています。\n"
+                        "しばらく待ってから再度画像生成を依頼してください。"
+                    ),
+                    color=discord.Color.orange(),
+                )
+                embed.add_field(
+                    name="VRAM Usage / VRAM使用量",
+                    value=f"{vram_used_gb:.2f} GB / Threshold: {self.vram_usage_threshold_gb:.1f} GB",
+                    inline=False,
+                )
+                embed.set_footer(text="Close GPU-intensive applications to free VRAM / GPU使用中のアプリを閉じてVRAMを解放してください")
+                await channel.send(embed=embed)
+
+            # thinkingメッセージを削除
+            if task.thinking_message:
+                try:
+                    await task.thinking_message.delete()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to delete thinking message on VRAM check: %s", exc)
+
+            # キューメッセージを削除
+            if task.queue_message:
+                try:
+                    await task.queue_message.delete()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to delete queue message on VRAM check: %s", exc)
+
+            # 次のタスクへ（またはキュー終了）
+            await self._schedule_next_task()
+            return None
+
         logger.info(
             "🎨 [IMAGE_GEN] Generating for user=%s | model=%s | size=%s | steps=%d | cfg=%.2f | seed=%d",
             task.user_name,
@@ -657,8 +742,13 @@ class ImageGenerator:
     async def _schedule_next_task(self) -> None:
         async with self.queue_lock:
             if not self.generation_queue:
+                # キューが空になった場合、生成状態をリセット
                 self.is_generating = False
                 self.current_task = None
+
+                # 全タスク完了 — モデルをVRAMから強制解放
+                logger.info("🧹 [IMAGE_GEN] Queue empty — unloading models to free VRAM")
+                self.pipeline.clear_cache()
                 return
 
             next_task = self.generation_queue.popleft()
