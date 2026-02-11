@@ -59,7 +59,8 @@ class StyleBertVITS2Synthesizer:
         self._engine = None  # Style-Bert-VITS2 TTSModel instance
 
         self._discover_model_paths()
-        self._maybe_warmup_model()
+        # モデルは遅延ロード: load_model() を明示的に呼ぶまでロードしない
+        # これにより起動時のVRAM消費を回避する
 
     def _discover_model_paths(self) -> None:
         # Get project root directory (where main.py is located)
@@ -196,8 +197,14 @@ class StyleBertVITS2Synthesizer:
         self._json_path = jsonf
         self._style_vectors_path = stylef
 
-    def _maybe_warmup_model(self) -> None:
-        """Style-Bert-VITS2モデルをロードします。"""
+    def load_model(self) -> None:
+        """Style-Bert-VITS2モデルをオンデマンドでロードする（遅延ロード対応）。
+        
+        既にロード済みの場合は何もしない。
+        """
+        # 既にロード済みならスキップ
+        if self._model_ready and self._engine is not None:
+            return
         logger = logging.getLogger(__name__)
         if torch is None:
             self._model_ready = False
@@ -375,12 +382,52 @@ class StyleBertVITS2Synthesizer:
                     f"Please ensure all dependencies are installed and model files are valid."
                 )
 
+    def unload_model(self) -> None:
+        """Style-Bert-VITS2モデルをアンロードしてVRAMを解放する。"""
+        logger = logging.getLogger(__name__)
+        if self._engine is None and not self._model_ready:
+            # 既にアンロード済み
+            return
+
+        logger.info("🧹 [TTS] Unloading Style-Bert-VITS2 model to free VRAM...")
+
+        # エンジン（TTSModel）を削除
+        if self._engine is not None:
+            try:
+                # モデル内部のテンソルをCPUに移動してからdelする
+                if hasattr(self._engine, 'model') and self._engine.model is not None:
+                    try:
+                        self._engine.model.cpu()
+                    except Exception:  # noqa: BLE001
+                        pass
+                del self._engine
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error while deleting TTS engine: %s", exc)
+            self._engine = None
+
+        # モデル状態をリセット（次回 load_model() で再ロード可能）
+        self._model_ready = False
+
+        # CUDAキャッシュをクリア
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # ガベージコレクション
+        import gc
+        gc.collect()
+
+        logger.info("🧹 [TTS] Style-Bert-VITS2 model unloaded successfully")
+
     def synthesize_to_wav(self, text: str, style: Optional[str] = None,
                            style_weight: float = 5.0, speed: float = 1.0,
                            noise_scale: Optional[float] = None,
                            noise_w: Optional[float] = None,
                            length_scale: Optional[float] = None) -> bytes:
-        """テキストを音声に変換します。Style-Bert-VITS2モデルが必要です。"""
+        """テキストを音声に変換します。モデル未ロード時は自動ロードします。"""
+        # モデル未ロード時はオンデマンドでロード
+        if not self._model_ready or self._engine is None:
+            self.load_model()
+        # ロード後もエンジンが無い場合はエラー
         if not self._model_ready or self._engine is None:
             error_msg = "Style-Bert-VITS2 model not loaded. Cannot synthesize audio."
             logging.getLogger(__name__).error(error_msg)

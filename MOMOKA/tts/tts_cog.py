@@ -110,6 +110,12 @@ class TTSCog(commands.Cog, name="tts_cog"):
         self._save_speech_settings()
         self._save_dictionary()
         
+        # TTSモデルをアンロードしてVRAMを解放
+        try:
+            self.synthesizer.unload_model()
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning("[TTSCog] モデルアンロードエラー: %s", e)
+        
         # aiohttpセッションのクローズ
         if self.session and not self.session.closed:
             await self.session.close()
@@ -277,6 +283,7 @@ class TTSCog(commands.Cog, name="tts_cog"):
         guild_settings = self._get_guild_speech_settings(guild.id)
         voice_client = guild.voice_client
 
+        # 自動参加: 登録ユーザーがVCに入室したらBotも自動接続
         if member.id in guild_settings.get("auto_join_users", []) and not before.channel and after.channel:
             if not voice_client or not voice_client.is_connected():
                 try:
@@ -287,35 +294,12 @@ class TTSCog(commands.Cog, name="tts_cog"):
         if not voice_client:
             return
 
+        # 自動退出: BotのいるVCに人間がいなくなったら切断
         if before.channel == voice_client.channel and not any(m for m in voice_client.channel.members if not m.bot):
             await voice_client.disconnect()
             guild_settings["speech_channel_id"] = None
             self._save_speech_settings()
             return
-
-        if not guild_settings.get("enable_notifications", True):
-            return
-
-        text_to_say = None
-        if before.channel != voice_client.channel and after.channel == voice_client.channel:
-            template = self.config.get('join_message_template', "{member_name}さんが参加しました。")
-            text_to_say = template.format(member_name=member.display_name)
-        elif before.channel == voice_client.channel and after.channel != voice_client.channel:
-            template = self.config.get('leave_message_template', "{member_name}さんが退出しました。")
-            text_to_say = template.format(member_name=member.display_name)
-
-        if text_to_say:
-            await self.trigger_tts_from_event(guild, text_to_say)
-
-    async def trigger_tts_from_event(self, guild: discord.Guild, text: str):
-        lock = self._get_tts_lock(guild.id)
-        guild_settings = self._get_guild_speech_settings(guild.id)
-        async with lock:
-            await self._handle_say_logic(
-                guild, text, self.default_model_id, self.default_style,
-                self.default_style_weight, self.default_speed,
-                guild_settings.get("volume", self.default_volume)
-            )
 
     tts_group = app_commands.Group(name="tts", description="TTS関連のコマンド")
 
@@ -416,26 +400,6 @@ class TTSCog(commands.Cog, name="tts_cog"):
         auto_join_users.remove(interaction.user.id)
         self._save_speech_settings()
         await interaction.response.send_message("✅ 自動参加を解除しました。")
-
-    notification_group = app_commands.Group(name="join-leave-notification", description="VCへの入退室通知に関するコマンド")
-
-    @notification_group.command(name="enable", description="VCへの入退室を音声で通知するようにします")
-    async def enable_notification(self, interaction: discord.Interaction):
-        guild_settings = self._get_guild_speech_settings(interaction.guild.id)
-        if guild_settings.get("enable_notifications", True):
-            return await interaction.response.send_message("ℹ️ 通知は既に有効です。", ephemeral=True)
-        guild_settings["enable_notifications"] = True
-        self._save_speech_settings()
-        await interaction.response.send_message("✅ 入退室通知を有効にしました。")
-
-    @notification_group.command(name="disable", description="VCへの入退室通知を無効にします")
-    async def disable_notification(self, interaction: discord.Interaction):
-        guild_settings = self._get_guild_speech_settings(interaction.guild.id)
-        if not guild_settings.get("enable_notifications", True):
-            return await interaction.response.send_message("ℹ️ 通知は既に無効です。", ephemeral=True)
-        guild_settings["enable_notifications"] = False
-        self._save_speech_settings()
-        await interaction.response.send_message("✅ 入退室通知を無効にしました。")
 
     @app_commands.command(name="say", description="テキストを音声で読み上げます")
     @app_commands.describe(text="読み上げるテキスト", model_id="モデルID", style="スタイル名", style_weight="スタイルの強さ", speed="話速")
@@ -575,8 +539,9 @@ class TTSCog(commands.Cog, name="tts_cog"):
         return await self._play_tts_directly(guild, converted_text, model_id, style, style_weight, speed, volume, interaction)
 
     async def _api_call_to_audio_data(self, text: str, model_id: int, style: str, style_weight: float, speed: float) -> Optional[bytes]:
-        # Prefer internal synthesizer; fall back to legacy HTTP if configured
+        # 内製シンセサイザーを優先。失敗時はレガシーHTTP APIにフォールバック
         try:
+            # synthesize_to_wav 内で未ロード時は自動ロードされる
             wav = self.synthesizer.synthesize_to_wav(
                 text=text,
                 style=style,
@@ -586,9 +551,16 @@ class TTSCog(commands.Cog, name="tts_cog"):
                 noise_w=self.config.get('noise_w', 0.8),
                 length_scale=self.config.get('length_scale', 1.0),
             )
+            # 合成完了後、モデルをアンロードしてVRAMを解放
+            self.synthesizer.unload_model()
             return wav
         except Exception as e:
             logging.getLogger(__name__).error("[TTSCog] 内製TTS処理エラー: %s", e)
+            # エラー時もVRAM解放を試みる
+            try:
+                self.synthesizer.unload_model()
+            except Exception:  # noqa: BLE001
+                pass
 
         if not self.api_url:
             return None
