@@ -40,15 +40,20 @@ class SearchAgent:
 
     def __init__(self, bot: commands.Bot, config: dict = None) -> None:
         self.bot = bot
+        gcfg = None
         if config:
+            logger.info(f"SearchAgent init with config. Keys: {list(config.keys())}")
             gcfg = config.get("search_agent")
+            if gcfg:
+                logger.info("SearchAgent config found in provided config.")
+            else:
+                logger.error("SearchAgent config NOT found in provided config.")
         elif hasattr(self.bot, 'cfg') and self.bot.cfg:
+            logger.info("SearchAgent init with bot.cfg.")
             gcfg = self.bot.cfg.get("search_agent")
-        else:
-            gcfg = None
-
+        
         if not gcfg:
-            logger.error("SearchAgent config is missing. Search will be disabled.")
+            logger.error("SearchAgent config is missing (gcfg is None). Search will be disabled.")
             self.clients = []
             self.current_key_index = 0
             return
