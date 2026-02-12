@@ -25,23 +25,8 @@ class TipsManager:
             },
             {
                 "title": "💡 AI Tips / AIのヒント",
-                "description": "**AIに情報を記憶させよう！**\n「私の名前は田中です。覚えておいて」のように話しかけると、AIがあなたの情報を記憶します。\n\n**Let AI remember your info!**\nSay things like \"My name is Tanaka. Please remember\" to have the AI store your information.",
-                "color": discord.Color.purple()
-            },
-            {
-                "title": "💡 AI Tips / AIのヒント",
                 "description": "**モデルを切り替えられます！**\n`/switch-models`コマンドでこのチャンネルのAIモデルを変更できます。\n\n**You can switch models!**\nUse `/switch-models` command to change the AI model for this channel.",
                 "color": discord.Color.orange()
-            },
-            {
-                "title": "💡 AI Tips / AIのヒント",
-                "description": "**AIの性格を設定できます！**\n`/set-ai-bio`コマンドでこのチャンネル専用のAIの性格や役割を設定できます。\n\n**You can set AI personality!**\nUse `/set-ai-bio` command to set a custom personality for the AI in this channel.",
-                "color": discord.Color.magenta()
-            },
-            {
-                "title": "💡 AI Tips / AIのヒント",
-                "description": "**グローバルメモリを活用！**\n`/memory-save`でサーバー全体で共有される情報を保存できます。\n\n**Use global memory!**\nUse `/memory-save` to store information shared across the entire server.",
-                "color": discord.Color.teal()
             },
             {
                 "title": "💡 AI Tips / AIのヒント",
@@ -52,11 +37,6 @@ class TipsManager:
                 "title": "💡 AI Tips / AIのヒント",
                 "description": "**検索機能を利用！**\nAIに最新情報を調べてもらうことができます。リアルタイムの情報取得が可能です。\n\n**Use search functionality!**\nAsk the AI to search for the latest information. Real-time information retrieval is available.",
                 "color": discord.Color.red()
-            },
-            {
-                "title": "💡 AI Tips / AIのヒント",
-                "description": "**会話履歴をクリア！**\n`/clear_history`コマンドで会話履歴をリセットできます。\n\n**Clear conversation history!**\nUse `/clear_history` command to reset conversation history.",
-                "color": discord.Color.dark_blue()
             }
         ]
 

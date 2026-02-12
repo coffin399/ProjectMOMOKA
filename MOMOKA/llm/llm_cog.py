@@ -1,4 +1,4 @@
-# MOMOKA/llm/llm_cog.py
+﻿# MOMOKA/llm/llm_cog.py
 from __future__ import annotations
 
 import asyncio
@@ -53,8 +53,6 @@ from MOMOKA.llm.error.errors import (
 )
 from MOMOKA.llm.plugins import (
     SearchAgent,
-    BioManager,
-    MemoryManager,
     ImageGenerator,
     CommandAgent,
     DeepResearchAgent,
@@ -83,7 +81,7 @@ IMAGE_URL_PATTERN = re.compile(
     re.IGNORECASE
 )
 DISCORD_MESSAGE_MAX_LENGTH = 2000
-SAFE_MESSAGE_LENGTH = 1990  # 安全マージン
+SAFE_MESSAGE_LENGTH = 1990  # 螳牙・繝槭・繧ｸ繝ｳ
 
 
 def _split_message_smartly(text: str, max_length: int) -> List[str]:
@@ -109,11 +107,11 @@ def _find_best_split_point(chunk: str) -> int:
     if paragraph_break > len(chunk) * 0.5: return paragraph_break + 2
     newline = chunk.rfind('\n')
     if newline > len(chunk) * 0.6: return newline + 1
-    japanese_period = max(chunk.rfind('。'), chunk.rfind('！'), chunk.rfind('？'))
+    japanese_period = max(chunk.rfind('縲・), chunk.rfind('・・), chunk.rfind('・・))
     if japanese_period > len(chunk) * 0.7: return japanese_period + 1
     english_period = max(chunk.rfind('. '), chunk.rfind('! '), chunk.rfind('? '))
     if english_period > len(chunk) * 0.7: return english_period + 2
-    comma = max(chunk.rfind('、'), chunk.rfind(', '))
+    comma = max(chunk.rfind('縲・), chunk.rfind(', '))
     if comma > len(chunk) * 0.7: return comma + 1
     space = chunk.rfind(' ')
     if space > len(chunk) * 0.7: return space + 1
@@ -121,29 +119,29 @@ def _find_best_split_point(chunk: str) -> int:
 
 
 class ThreadCreationView(discord.ui.View):
-    """スレッド作成ボタンのViewクラス"""
+    """繧ｹ繝ｬ繝・ラ菴懈・繝懊ち繝ｳ縺ｮView繧ｯ繝ｩ繧ｹ"""
     
     def __init__(self, llm_cog, original_message: discord.Message):
-        super().__init__(timeout=300)  # 5分でタイムアウト
+        super().__init__(timeout=300)  # 5蛻・〒繧ｿ繧､繝繧｢繧ｦ繝・
         self.llm_cog = llm_cog
         self.original_message = original_message
     
-    @discord.ui.button(label="スレッドを作成する / Create Thread", style=discord.ButtonStyle.primary, emoji="🧵")
+    @discord.ui.button(label="繧ｹ繝ｬ繝・ラ繧剃ｽ懈・縺吶ｋ / Create Thread", style=discord.ButtonStyle.primary, emoji="ｧｵ")
     async def create_thread(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # スレッドを作成
+            # 繧ｹ繝ｬ繝・ラ繧剃ｽ懈・
             thread = await self.original_message.create_thread(
                 name=f"AI Chat - {interaction.user.display_name}",
-                auto_archive_duration=60,  # 1時間でアーカイブ
+                auto_archive_duration=60,  # 1譎る俣縺ｧ繧｢繝ｼ繧ｫ繧､繝・
                 reason="AI conversation thread created by user"
             )
             
-            # 元のチャンネルの会話履歴を取得（スレッド作成前の履歴）
+            # 蜈・・繝√Ε繝ｳ繝阪Ν縺ｮ莨夊ｩｱ螻･豁ｴ繧貞叙蠕暦ｼ医せ繝ｬ繝・ラ菴懈・蜑阪・螻･豁ｴ・・
             messages = []
             try:
-                # 元のメッセージから遡って会話履歴を収集
+                # 蜈・・繝｡繝・そ繝ｼ繧ｸ縺九ｉ驕｡縺｣縺ｦ莨夊ｩｱ螻･豁ｴ繧貞庶髮・
                 current_msg = self.original_message
                 visited_ids = set()
                 message_count = 0
@@ -154,7 +152,7 @@ class ThreadCreationView(discord.ui.View):
                     visited_ids.add(current_msg.id)
                     
                     if current_msg.author != self.llm_cog.bot.user:
-                        # ユーザーメッセージを処理
+                        # 繝ｦ繝ｼ繧ｶ繝ｼ繝｡繝・そ繝ｼ繧ｸ繧貞・逅・
                         image_contents, text_content = await self.llm_cog._prepare_multimodal_content(current_msg)
                         text_content = text_content.replace(f'<@!{self.llm_cog.bot.user.id}>', '').replace(f'<@{self.llm_cog.bot.user.id}>', '').strip()
                         
@@ -169,7 +167,7 @@ class ThreadCreationView(discord.ui.View):
                             messages.append({"role": "user", "content": user_content_parts})
                             message_count += 1
                     
-                    # 前のメッセージを取得
+                    # 蜑阪・繝｡繝・そ繝ｼ繧ｸ繧貞叙蠕・
                     if current_msg.reference and current_msg.reference.message_id:
                         try:
                             current_msg = current_msg.reference.resolved or await current_msg.channel.fetch_message(current_msg.reference.message_id)
@@ -178,7 +176,7 @@ class ThreadCreationView(discord.ui.View):
                     else:
                         break
                 
-                # メッセージを逆順にして正しい順序にする
+                # 繝｡繝・そ繝ｼ繧ｸ繧帝・・↓縺励※豁｣縺励＞鬆・ｺ上↓縺吶ｋ
                 messages.reverse()
                 
             except Exception as e:
@@ -186,13 +184,13 @@ class ThreadCreationView(discord.ui.View):
                 messages = []
             
             if messages:
-                # LLMクライアントを取得
+                # LLM繧ｯ繝ｩ繧､繧｢繝ｳ繝医ｒ蜿門ｾ・
                 llm_client = await self.llm_cog._get_llm_client_for_channel(thread.id)
                 if not llm_client:
-                    await thread.send("❌ LLM client is not available for this thread.\nこのスレッドではLLMクライアントが利用できません。")
+                    await thread.send("笶・LLM client is not available for this thread.\n縺薙・繧ｹ繝ｬ繝・ラ縺ｧ縺ｯLLM繧ｯ繝ｩ繧､繧｢繝ｳ繝医′蛻ｩ逕ｨ縺ｧ縺阪∪縺帙ｓ縲・)
                     return
                 
-                # システムプロンプトを準備
+                # 繧ｷ繧ｹ繝・Β繝励Ο繝ｳ繝励ヨ繧呈ｺ門ｙ
                 system_prompt = await self.llm_cog._prepare_system_prompt(
                     thread.id, interaction.user.id, interaction.user.display_name
                 )
@@ -201,7 +199,7 @@ class ThreadCreationView(discord.ui.View):
                 
                 messages_for_api.extend(messages)
                 
-                # 言語検出で動的に言語プロンプトを生成（スレッドでは最後のユーザーメッセージから検出）
+                # 險隱樊､懷・縺ｧ蜍慕噪縺ｫ險隱槭・繝ｭ繝ｳ繝励ヨ繧堤函謌撰ｼ医せ繝ｬ繝・ラ縺ｧ縺ｯ譛蠕後・繝ｦ繝ｼ繧ｶ繝ｼ繝｡繝・そ繝ｼ繧ｸ縺九ｉ讀懷・・・
                 last_user_text = ""
                 for msg in reversed(messages):
                     if msg.get("role") == "user":
@@ -218,16 +216,16 @@ class ThreadCreationView(discord.ui.View):
                 if lang_prompt:
                     messages_for_api.append({"role": "system", "content": lang_prompt})
                 
-                # スレッド内でLLM応答を生成
+                # 繧ｹ繝ｬ繝・ラ蜀・〒LLM蠢懃ｭ斐ｒ逕滓・
                 model_name = llm_client.model_name_for_api_calls
-                waiting_message = f"⏳ Processing conversation history... / 会話履歴を処理中..."
+                waiting_message = f"竢ｳ Processing conversation history... / 莨夊ｩｱ螻･豁ｴ繧貞・逅・ｸｭ..."
                 temp_message = await thread.send(waiting_message)
                 
-                # スレッド内での会話方法を説明
-                await thread.send("💡 **スレッド内での会話方法 / How to chat in this thread:**\n"
-                                "• Botのメッセージにリプライして会話を続けられます / Reply to bot messages to continue chatting\n"
-                                "• 画像も送信可能です / Images are also supported\n"
-                                "• 会話履歴は自動的に保持されます / Conversation history is automatically maintained")
+                # 繧ｹ繝ｬ繝・ラ蜀・〒縺ｮ莨夊ｩｱ譁ｹ豕輔ｒ隱ｬ譏・
+                await thread.send("庁 **繧ｹ繝ｬ繝・ラ蜀・〒縺ｮ莨夊ｩｱ譁ｹ豕・/ How to chat in this thread:**\n"
+                                "窶｢ Bot縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｫ繝ｪ繝励Λ繧､縺励※莨夊ｩｱ繧堤ｶ壹￠繧峨ｌ縺ｾ縺・/ Reply to bot messages to continue chatting\n"
+                                "窶｢ 逕ｻ蜒上ｂ騾∽ｿ｡蜿ｯ閭ｽ縺ｧ縺・/ Images are also supported\n"
+                                "窶｢ 莨夊ｩｱ螻･豁ｴ縺ｯ閾ｪ蜍慕噪縺ｫ菫晄戟縺輔ｌ縺ｾ縺・/ Conversation history is automatically maintained")
                 
                 sent_messages, full_response_text, used_key_index = await self.llm_cog._process_streaming_and_send_response(
                     sent_message=temp_message,
@@ -238,51 +236,51 @@ class ThreadCreationView(discord.ui.View):
                 )
                 
                 if sent_messages and full_response_text:
-                    logger.info(f"✅ Thread conversation completed | model='{model_name}' | response_length={len(full_response_text)} chars")
+                    logger.info(f"笨・Thread conversation completed | model='{model_name}' | response_length={len(full_response_text)} chars")
                     
-                    # TTS Cogにカスタムイベントを発火
+                    # TTS Cog縺ｫ繧ｫ繧ｹ繧ｿ繝繧､繝吶Φ繝医ｒ逋ｺ轣ｫ
                     try:
                         self.llm_cog.bot.dispatch("llm_response_complete", sent_messages, full_response_text)
-                        logger.info("📢 Dispatched 'llm_response_complete' event for TTS from thread.")
+                        logger.info("討 Dispatched 'llm_response_complete' event for TTS from thread.")
                     except Exception as e:
                         logger.error(f"Failed to dispatch 'llm_response_complete' event from thread: {e}", exc_info=True)
                 
-                # ボタンを無効化
+                # 繝懊ち繝ｳ繧堤┌蜉ｹ蛹・
                 button.disabled = True
-                button.label = "✅ Thread Created / スレッド作成済み"
+                button.label = "笨・Thread Created / 繧ｹ繝ｬ繝・ラ菴懈・貂医∩"
                 await interaction.edit_original_response(view=self)
                 
             else:
-                await thread.send("ℹ️ No conversation history found, but you can start chatting!\n"
-                                "会話履歴は見つかりませんでしたが、ここから会話を始めることができます！\n\n"
-                                "💡 **スレッド内での会話方法 / How to chat in this thread:**\n"
-                                "• Botのメッセージにリプライして会話を続けられます / Reply to bot messages to continue chatting\n"
-                                "• 画像も送信可能です / Images are also supported\n"
-                                "• 会話履歴は自動的に保持されます / Conversation history is automatically maintained")
+                await thread.send("邃ｹ・・No conversation history found, but you can start chatting!\n"
+                                "莨夊ｩｱ螻･豁ｴ縺ｯ隕九▽縺九ｊ縺ｾ縺帙ｓ縺ｧ縺励◆縺後√％縺薙°繧我ｼ夊ｩｱ繧貞ｧ九ａ繧九％縺ｨ縺後〒縺阪∪縺呻ｼ―n\n"
+                                "庁 **繧ｹ繝ｬ繝・ラ蜀・〒縺ｮ莨夊ｩｱ譁ｹ豕・/ How to chat in this thread:**\n"
+                                "窶｢ Bot縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｫ繝ｪ繝励Λ繧､縺励※莨夊ｩｱ繧堤ｶ壹￠繧峨ｌ縺ｾ縺・/ Reply to bot messages to continue chatting\n"
+                                "窶｢ 逕ｻ蜒上ｂ騾∽ｿ｡蜿ｯ閭ｽ縺ｧ縺・/ Images are also supported\n"
+                                "窶｢ 莨夊ｩｱ螻･豁ｴ縺ｯ閾ｪ蜍慕噪縺ｫ菫晄戟縺輔ｌ縺ｾ縺・/ Conversation history is automatically maintained")
                 
         except Exception as e:
             logger.error(f"Failed to create thread: {e}", exc_info=True)
-            await interaction.followup.send("❌ Failed to create thread.\nスレッドの作成に失敗しました。", ephemeral=True)
+            await interaction.followup.send("笶・Failed to create thread.\n繧ｹ繝ｬ繝・ラ縺ｮ菴懈・縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・, ephemeral=True)
 
 
 class LLMCog(commands.Cog, name="LLM"):
     """A cog for interacting with Large Language Models, with tool support."""
 
     report_schedule_group = app_commands.Group(name="report-schedule",
-                                               description="Manage scheduled deep research reports. / 定期リサーチレポートを管理します。")
+                                               description="Manage scheduled deep research reports. / 螳壽悄繝ｪ繧ｵ繝ｼ繝√Ξ繝昴・繝医ｒ邂｡逅・＠縺ｾ縺吶・)
 
     @report_schedule_group.command(name="add",
-                                   description="Add a new scheduled report. / 新しい定期レポートを追加します。")
+                                   description="Add a new scheduled report. / 譁ｰ縺励＞螳壽悄繝ｬ繝昴・繝医ｒ霑ｽ蜉縺励∪縺吶・)
     @app_commands.describe(
-        interval_hours="Interval in hours between reports. / レポート間の間隔（時間）",
-        query="Research query for the report. / レポートのリサーチクエリ",
-        custom_prompt="Custom prompt instructions (optional). / カスタムプロンプト指示（任意）"
+        interval_hours="Interval in hours between reports. / 繝ｬ繝昴・繝磯俣縺ｮ髢馴囈・域凾髢難ｼ・,
+        query="Research query for the report. / 繝ｬ繝昴・繝医・繝ｪ繧ｵ繝ｼ繝√け繧ｨ繝ｪ",
+        custom_prompt="Custom prompt instructions (optional). / 繧ｫ繧ｹ繧ｿ繝繝励Ο繝ｳ繝励ヨ謖・､ｺ・井ｻｻ諢擾ｼ・
     )
     async def report_schedule_add(self, interaction: discord.Interaction, interval_hours: float, query: str, custom_prompt: str = None):
         """Add a new scheduled report."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
+                "笶・Scheduled reporter is not available. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ繝ｬ繝昴・繝域ｩ溯・縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・
             )
             return
         
@@ -301,7 +299,7 @@ class LLMCog(commands.Cog, name="LLM"):
             # Execute report immediately
             if self.reporter_manager.deep_research:
                 await interaction.followup.send(
-                    f"🔄 Executing initial report for query: {query}\nクエリの初回レポートを実行中: {query}"
+                    f"売 Executing initial report for query: {query}\n繧ｯ繧ｨ繝ｪ縺ｮ蛻晏屓繝ｬ繝昴・繝医ｒ螳溯｡御ｸｭ: {query}"
                 )
                 
                 try:
@@ -316,47 +314,47 @@ class LLMCog(commands.Cog, name="LLM"):
                             for i, chunk in enumerate(chunks):
                                 if i == 0:
                                     # Only add header to first chunk
-                                    await interaction.channel.send(f"📊 **Initial Report / 初回レポート**\n\n{chunk}")
+                                    await interaction.channel.send(f"投 **Initial Report / 蛻晏屓繝ｬ繝昴・繝・*\n\n{chunk}")
                                 else:
                                     await interaction.channel.send(chunk)
                         else:
-                            await interaction.channel.send("📊 **Initial Report / 初回レポート**\n\nReport generated but format was unexpected.")
+                            await interaction.channel.send("投 **Initial Report / 蛻晏屓繝ｬ繝昴・繝・*\n\nReport generated but format was unexpected.")
                     else:
-                        await interaction.channel.send("❌ Failed to generate initial report. / 初回レポートの生成に失敗しました。")
+                        await interaction.channel.send("笶・Failed to generate initial report. / 蛻晏屓繝ｬ繝昴・繝医・逕滓・縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・)
                         
                 except Exception as e:
                     logger.error(f"Error executing initial report: {e}", exc_info=True)
-                    await interaction.channel.send("❌ Error occurred while generating initial report. / 初回レポート生成中にエラーが発生しました。")
+                    await interaction.channel.send("笶・Error occurred while generating initial report. / 蛻晏屓繝ｬ繝昴・繝育函謌蝉ｸｭ縺ｫ繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆縲・)
             
             # Format next run time in JST
             from MOMOKA.llm.plugins.reporter_plugin import ScheduledReporter
             next_run_jst = ScheduledReporter._format_datetime_jst(schedule["next_run_at"])
             
             embed = discord.Embed(
-                title="✅ Schedule Added / スケジュール追加完了",
-                description=f"Report scheduled successfully! / レポートが正常にスケジュールされました！",
+                title="笨・Schedule Added / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ霑ｽ蜉螳御ｺ・,
+                description=f"Report scheduled successfully! / 繝ｬ繝昴・繝医′豁｣蟶ｸ縺ｫ繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺輔ｌ縺ｾ縺励◆・・,
                 color=discord.Color.green()
             )
-            embed.add_field(name="Schedule ID / スケジュールID", value=str(schedule["id"]))
-            embed.add_field(name="Interval / 間隔", value=f"{interval_hours} hours / 時間")
-            embed.add_field(name="Query / クエリ", value=query)
-            embed.add_field(name="Next Run / 次回実行 (JST)", value=next_run_jst)
+            embed.add_field(name="Schedule ID / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫID", value=str(schedule["id"]))
+            embed.add_field(name="Interval / 髢馴囈", value=f"{interval_hours} hours / 譎る俣")
+            embed.add_field(name="Query / 繧ｯ繧ｨ繝ｪ", value=query)
+            embed.add_field(name="Next Run / 谺｡蝗槫ｮ溯｡・(JST)", value=next_run_jst)
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
             logger.error(f"Error adding schedule: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to add schedule. / スケジュールの追加に失敗しました。"
+                "笶・Failed to add schedule. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺ｮ霑ｽ蜉縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・
             )
 
     @report_schedule_group.command(name="list",
-                                   description="List all scheduled reports. / すべての定期レポートを一覧表示します。")
+                                   description="List all scheduled reports. / 縺吶∋縺ｦ縺ｮ螳壽悄繝ｬ繝昴・繝医ｒ荳隕ｧ陦ｨ遉ｺ縺励∪縺吶・)
     async def report_schedule_list(self, interaction: discord.Interaction):
         """List all scheduled reports."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
+                "笶・Scheduled reporter is not available. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ繝ｬ繝昴・繝域ｩ溯・縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・
             )
             return
         
@@ -367,7 +365,7 @@ class LLMCog(commands.Cog, name="LLM"):
             
             if not schedules:
                 await interaction.followup.send(
-                    "📋 No scheduled reports found. / スケジュールされたレポートが見つかりません。"
+                    "搭 No scheduled reports found. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺輔ｌ縺溘Ξ繝昴・繝医′隕九▽縺九ｊ縺ｾ縺帙ｓ縲・
                 )
                 return
             
@@ -375,8 +373,8 @@ class LLMCog(commands.Cog, name="LLM"):
             from MOMOKA.llm.plugins.reporter_plugin import ScheduledReporter
             
             embed = discord.Embed(
-                title="📋 Scheduled Reports / スケジュールされたレポート",
-                description=f"Found {len(schedules)} schedule(s) / {len(schedules)}個のスケジュールが見つかりました",
+                title="搭 Scheduled Reports / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺輔ｌ縺溘Ξ繝昴・繝・,
+                description=f"Found {len(schedules)} schedule(s) / {len(schedules)}蛟九・繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺瑚ｦ九▽縺九ｊ縺ｾ縺励◆",
                 color=discord.Color.blue()
             )
             
@@ -385,10 +383,10 @@ class LLMCog(commands.Cog, name="LLM"):
                 next_run_jst = ScheduledReporter._format_datetime_jst(schedule["next_run_at"])
                 
                 field_value = (
-                    f"**Query / クエリ:** {schedule['query']}\n"
-                    f"**Interval / 間隔:** {schedule['interval_hours']}h\n"
-                    f"**Next Run / 次回実行 (JST):** {next_run_jst}\n"
-                    f"**Channel / チャンネル:** <#{schedule['channel_id']}>"
+                    f"**Query / 繧ｯ繧ｨ繝ｪ:** {schedule['query']}\n"
+                    f"**Interval / 髢馴囈:** {schedule['interval_hours']}h\n"
+                    f"**Next Run / 谺｡蝗槫ｮ溯｡・(JST):** {next_run_jst}\n"
+                    f"**Channel / 繝√Ε繝ｳ繝阪Ν:** <#{schedule['channel_id']}>"
                 )
                 embed.add_field(
                     name=f"ID: {schedule['id']}",
@@ -401,19 +399,19 @@ class LLMCog(commands.Cog, name="LLM"):
         except Exception as e:
             logger.error(f"Error listing schedules: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to list schedules. / スケジュールの一覧表示に失敗しました。"
+                "笶・Failed to list schedules. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺ｮ荳隕ｧ陦ｨ遉ｺ縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・
             )
 
     @report_schedule_group.command(name="delete",
-                                   description="Delete a scheduled report. / 定期レポートを削除します。")
+                                   description="Delete a scheduled report. / 螳壽悄繝ｬ繝昴・繝医ｒ蜑企勁縺励∪縺吶・)
     @app_commands.describe(
-        schedule_id="ID of the schedule to delete. / 削除するスケジュールのID"
+        schedule_id="ID of the schedule to delete. / 蜑企勁縺吶ｋ繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺ｮID"
     )
     async def report_schedule_delete(self, interaction: discord.Interaction, schedule_id: int):
         """Delete a scheduled report."""
         if not self.reporter_manager:
             await interaction.response.send_message(
-                "❌ Scheduled reporter is not available. / スケジュールレポート機能が利用できません。"
+                "笶・Scheduled reporter is not available. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ繝ｬ繝昴・繝域ｩ溯・縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・
             )
             return
         
@@ -424,22 +422,22 @@ class LLMCog(commands.Cog, name="LLM"):
             
             if success:
                 await interaction.followup.send(
-                    f"✅ Schedule {schedule_id} deleted successfully. / スケジュール {schedule_id} が正常に削除されました。"
+                    f"笨・Schedule {schedule_id} deleted successfully. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ {schedule_id} 縺梧ｭ｣蟶ｸ縺ｫ蜑企勁縺輔ｌ縺ｾ縺励◆縲・
                 )
             else:
                 await interaction.followup.send(
-                    f"❌ Schedule {schedule_id} not found. / スケジュール {schedule_id} が見つかりません。"
+                    f"笶・Schedule {schedule_id} not found. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ {schedule_id} 縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・
                 )
                 
         except Exception as e:
             logger.error(f"Error deleting schedule: {e}", exc_info=True)
             await interaction.followup.send(
-                "❌ Failed to delete schedule. / スケジュールの削除に失敗しました。"
+                "笶・Failed to delete schedule. / 繧ｹ繧ｱ繧ｸ繝･繝ｼ繝ｫ縺ｮ蜑企勁縺ｫ螟ｱ謨励＠縺ｾ縺励◆縲・
             )
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
         current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
-        support_text = "\n問題がありますか？開発者にご連絡ください！ / Having issues? Contact the developer!"
+        support_text = "\n蝠城｡後′縺ゅｊ縺ｾ縺吶°・滄幕逋ｺ閠・↓縺秘｣邨｡縺上□縺輔＞・・/ Having issues? Contact the developer!"
         if current_footer:
             embed.set_footer(text=current_footer + support_text)
         else:
@@ -447,8 +445,8 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def _create_support_view(self) -> discord.ui.View:
         view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="サポートサーバー / Support Server", style=discord.ButtonStyle.link,
-                                        url="https://discord.gg/H79HKKqx3s", emoji="💬"))
+        view.add_item(discord.ui.Button(label="繧ｵ繝昴・繝医し繝ｼ繝舌・ / Support Server", style=discord.ButtonStyle.link,
+                                        url="https://discord.gg/H79HKKqx3s", emoji="町"))
         return view
 
     def __init__(self, bot: commands.Bot):
@@ -473,9 +471,6 @@ class LLMCog(commands.Cog, name="LLM"):
         self.channel_models: Dict[str, str] = self._load_json_data(self.channel_settings_path)
         # Plugin placeholders (populated by _initialize_plugins)
         self.search_agent: Optional[SearchAgent] = None
-        self.bio_manager: Optional[BioManager] = None
-        self.memory_manager: Optional[MemoryManager] = None
-
         self.image_generator: Optional[ImageGenerator] = None
         self.command_agent: Optional[CommandAgent] = None
         self.tips_manager: Optional[TipsManager] = None
@@ -486,8 +481,6 @@ class LLMCog(commands.Cog, name="LLM"):
         self.jst = timezone(timedelta(hours=+9))
         (
             self.search_agent,
-            self.bio_manager,
-            self.memory_manager,
             self.image_generator,
             self.command_agent,
             self.tips_manager,
@@ -505,12 +498,10 @@ class LLMCog(commands.Cog, name="LLM"):
         else:
             logger.error("Default LLM model is not configured in config.yaml.")
 
-    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager], Optional[DeepResearchAgent], Optional[ScheduledReporter]]:
-        """Initializes and returns all registered plugins."""
+    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager], Optional[DeepResearchAgent], Optional[ScheduledReporter]]:
+        """逋ｻ骭ｲ貂医∩繝励Λ繧ｰ繧､繝ｳ繧貞・譛溷喧縺励※霑斐☆"""
         plugins = {
             "SearchAgent": None,
-            "BioManager": None,
-            "MemoryManager": None,
             "ImageGenerator": None,
             "CommandAgent": None,
             "TipsManager": None,
@@ -518,50 +509,30 @@ class LLMCog(commands.Cog, name="LLM"):
             "ScheduledReporter": None
         }
 
-        # Initialize plugins that are always needed or don't have a specific config toggle
-        if BioManager: plugins["BioManager"] = BioManager(self.bot)
-        if MemoryManager: plugins["MemoryManager"] = MemoryManager(self.bot)
+        # 蟶ｸ縺ｫ蠢・ｦ√↑繝励Λ繧ｰ繧､繝ｳ繧貞・譛溷喧
         if TipsManager: plugins["TipsManager"] = TipsManager()
 
-        # Initialize plugins based on config
+        # config.yaml縺ｮactive_tools縺ｫ蝓ｺ縺･縺・※繝励Λ繧ｰ繧､繝ｳ繧貞・譛溷喧
         active_tools = self.llm_config.get('active_tools', [])
-
-        logger.info(f"🔍 [TOOLS] Active tools from config: {active_tools}")
+        logger.info(f"剥 [TOOLS] Active tools from config: {active_tools}")
 
         if 'search' in active_tools:
             if SearchAgent:
                 plugins["SearchAgent"] = SearchAgent(self.bot)
-                #logger.info(f"✅ [TOOLS] Added 'search' tool (name: {self.search_agent.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'search' is in active_tools but search_agent is None")
-
-        if 'user_bio' in active_tools:
-            if BioManager:
-                plugins["BioManager"] = BioManager(self.bot)
-                #logger.info(f"✅ [TOOLS] Added 'user_bio' tool (name: {self.bio_manager.tool_spec['function']['name']})")
-            else:
-                logger.warning(f"⚠️ [TOOLS] 'user_bio' is in active_tools but bio_manager is None")
-
-        if 'memory' in active_tools:
-            if MemoryManager:
-                plugins["MemoryManager"] = MemoryManager(self.bot)
-                #logger.info(f"✅ [TOOLS] Added 'memory' tool (name: {self.memory_manager.tool_spec['function']['name']})")
-            else:
-                logger.warning(f"⚠️ [TOOLS] 'memory' is in active_tools but memory_manager is None")
+                logger.warning(f"笞・・[TOOLS] 'search' is in active_tools but search_agent is None")
 
         if 'image_generator' in active_tools:
             if ImageGenerator:
                 plugins["ImageGenerator"] = ImageGenerator(self.bot)
-                #logger.info(f"✅ [TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'image_generator' is in active_tools but image_generator is None")
+                logger.warning(f"笞・・[TOOLS] 'image_generator' is in active_tools but image_generator is None")
 
         if 'command_executor' in active_tools:
             if CommandAgent:
                 plugins["CommandAgent"] = CommandAgent(self.bot)
-                #logger.info(f"✅ [TOOLS] Added 'command_executor' tool (name: {self.command_agent.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'command_executor' is in active_tools but command_agent is None")
+                logger.warning(f"笞・・[TOOLS] 'command_executor' is in active_tools but command_agent is None")
 
         try:
             plugins["DeepResearchAgent"] = DeepResearchAgent(self.bot, search_agent=plugins["SearchAgent"])
@@ -573,7 +544,7 @@ class LLMCog(commands.Cog, name="LLM"):
         except Exception as e:
             logger.error(f"ScheduledReporter failed to initialize: {e}", exc_info=True)
 
-        # Log initialized plugins
+        # 蛻晄悄蛹也ｵ先棡繧偵Ο繧ｰ蜃ｺ蜉・
         for name, instance in plugins.items():
             if instance:
                 logger.info(f"{name} initialized successfully.")
@@ -582,8 +553,6 @@ class LLMCog(commands.Cog, name="LLM"):
 
         return (
             plugins["SearchAgent"],
-            plugins["BioManager"],
-            plugins["MemoryManager"],
             plugins["ImageGenerator"],
             plugins["CommandAgent"],
             plugins["TipsManager"],
@@ -634,10 +603,10 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.error(f"Configuration for LLM provider '{provider_name}' not found.")
                 return None
             
-            # KoboldCPP固有の処理
+            # KoboldCPP蝗ｺ譛峨・蜃ｦ逅・
             is_koboldcpp = provider_name.lower() == 'koboldcpp'
             if is_koboldcpp:
-                logger.info(f"🔧 [KoboldCPP] Detected KoboldCPP provider. Applying KoboldCPP-specific settings.")
+                logger.info(f"肌 [KoboldCPP] Detected KoboldCPP provider. Applying KoboldCPP-specific settings.")
             
             if provider_name not in self.provider_api_keys:
                 api_keys, i = [], 1
@@ -650,10 +619,10 @@ class LLMCog(commands.Cog, name="LLM"):
                 if not api_keys:
                     logger.info(
                         f"No API keys found for provider '{provider_name}'. Assuming local model or keyless API.")
-                    # KoboldCPPの場合、ダミーキーを使用
+                    # KoboldCPP縺ｮ蝣ｴ蜷医√ム繝溘・繧ｭ繝ｼ繧剃ｽｿ逕ｨ
                     if is_koboldcpp:
                         self.provider_api_keys[provider_name] = ["koboldcpp-dummy-key"]
-                        logger.info(f"🔧 [KoboldCPP] Using dummy API key (KoboldCPP usually doesn't require authentication)")
+                        logger.info(f"肌 [KoboldCPP] Using dummy API key (KoboldCPP usually doesn't require authentication)")
                     else:
                         self.provider_api_keys[provider_name] = ["no-key-required"]
                 else:
@@ -666,25 +635,25 @@ class LLMCog(commands.Cog, name="LLM"):
             
             base_url = provider_config.get('base_url')
             if is_koboldcpp:
-                # KoboldCPPのベースURLが正しい形式か確認
+                # KoboldCPP縺ｮ繝吶・繧ｹURL縺梧ｭ｣縺励＞蠖｢蠑上°遒ｺ隱・
                 if not base_url.endswith('/v1'):
                     if base_url.endswith('/'):
                         base_url = base_url.rstrip('/') + '/v1'
                     else:
                         base_url = base_url + '/v1'
-                    logger.info(f"🔧 [KoboldCPP] Adjusted base_url to: {base_url}")
+                    logger.info(f"肌 [KoboldCPP] Adjusted base_url to: {base_url}")
             
             client = openai.AsyncOpenAI(base_url=base_url, api_key=api_key_to_use, timeout=provider_config.get('timeout', 300.0) if is_koboldcpp else None)
             client.model_name_for_api_calls, client.provider_name = model_name, provider_name
-            # KoboldCPP固有のメタデータを設定
+            # KoboldCPP蝗ｺ譛峨・繝｡繧ｿ繝・・繧ｿ繧定ｨｭ螳・
             if is_koboldcpp:
                 client.supports_tools = provider_config.get('supports_tools', True)
-                logger.info(f"🔧 [KoboldCPP] Initialized client with model '{model_name}'")
-                logger.info(f"🔧 [KoboldCPP] Base URL: {base_url}")
-                logger.info(f"🔧 [KoboldCPP] Tools support: {client.supports_tools}")
-                logger.info(f"🔧 [KoboldCPP] Timeout: {provider_config.get('timeout', 300.0)}s")
+                logger.info(f"肌 [KoboldCPP] Initialized client with model '{model_name}'")
+                logger.info(f"肌 [KoboldCPP] Base URL: {base_url}")
+                logger.info(f"肌 [KoboldCPP] Tools support: {client.supports_tools}")
+                logger.info(f"肌 [KoboldCPP] Timeout: {provider_config.get('timeout', 300.0)}s")
             else:
-                client.supports_tools = True  # 他のプロバイダーはデフォルトでTrue
+                client.supports_tools = True  # 莉悶・繝励Ο繝舌う繝繝ｼ縺ｯ繝・ヵ繧ｩ繝ｫ繝医〒True
             
             logger.info(
                 f"Initialized LLM client for provider '{provider_name}' with model '{model_name}' using key index {current_key_index}.")
@@ -728,79 +697,60 @@ class LLMCog(commands.Cog, name="LLM"):
             return self.language_prompt  # fallback to static config prompt
 
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
-        if not self.bio_manager or not self.memory_manager:
-            logger.error("BioManager or MemoryManager is not initialized.")
-            return "Error: Core components for prompt generation are missing."
-        system_prompt_template = self.bio_manager.get_system_prompt(channel_id=channel_id, user_id=user_id,
-                                                                    user_display_name=user_display_name).replace(
-            "必ず日本語で応答してください", "").replace("日本語で答えてください", "").replace(
-            "Please respond in Japanese", "")
+        """config.yaml縺ｮsystem_prompt縺ｮ縺ｿ繧剃ｽｿ逕ｨ縺励※繧ｷ繧ｹ繝・Β繝励Ο繝ｳ繝励ヨ繧堤ｵ・∩遶九※繧・""
+        # config.yaml縺九ｉ繧ｷ繧ｹ繝・Β繝励Ο繝ｳ繝励ヨ繝・Φ繝励Ξ繝ｼ繝医ｒ蜿門ｾ・
+        system_prompt_template = self.llm_config.get('system_prompt', '')
+        # 迴ｾ蝨ｨ譌･譎ゅｒJST縺ｧ蜿門ｾ・
+        current_date_str = datetime.now(self.jst).strftime('%Y-%m-%d')
+        current_time_str = datetime.now(self.jst).strftime('%H:%M')
         try:
-            now, current_date_str, current_time_str = datetime.now(self.jst), datetime.now(self.jst).strftime(
-                '%Y-%m-%d'), datetime.now(self.jst).strftime('%H:%M')
+            # 繝・Φ繝励Ξ繝ｼ繝亥､画焚繧堤ｽｮ謠・
             system_prompt = system_prompt_template.format(current_date=current_date_str,
                                                           current_time=current_time_str)
         except (KeyError, ValueError) as e:
             logger.warning(f"Could not format system_prompt: {e}")
+            # 繝輔か繝ｼ繝ｫ繝舌ャ繧ｯ: 譁・ｭ怜・鄂ｮ謠帙〒蟇ｾ蠢・
             system_prompt = system_prompt_template.replace('{current_date}', current_date_str).replace('{current_time}',
                                                                                                        current_time_str)
-        if formatted_memories := self.memory_manager.get_formatted_memories(user_id): system_prompt += f"\n\n{formatted_memories}"
-        logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
+        logger.info(f"肌 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         return system_prompt
 
     def get_tools_definition(self) -> Optional[List[Dict[str, Any]]]:
         definitions = []
         active_tools = self.llm_config.get('active_tools', [])
 
-        logger.info(f"🔍 [TOOLS] Active tools from config: {active_tools}")
-        logger.debug(f"🔍 [TOOLS] Plugin status: search_agent={self.search_agent is not None}, "
-                     f"bio_manager={self.bio_manager is not None}, "
-                     f"memory_manager={self.memory_manager is not None}, "
+        logger.info(f"剥 [TOOLS] Active tools from config: {active_tools}")
+        logger.debug(f"剥 [TOOLS] Plugin status: search_agent={self.search_agent is not None}, "
                      f"image_generator={self.image_generator is not None}, "
                      f"command_agent={self.command_agent is not None}")
 
         if 'search' in active_tools:
             if self.search_agent:
                 definitions.append(self.search_agent.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'search' tool (name: {self.search_agent.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'search' is in active_tools but search_agent is None")
-
-        if 'user_bio' in active_tools:
-            if self.bio_manager:
-                definitions.append(self.bio_manager.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'user_bio' tool (name: {self.bio_manager.tool_spec['function']['name']})")
-            else:
-                logger.warning(f"⚠️ [TOOLS] 'user_bio' is in active_tools but bio_manager is None")
-
-        if 'memory' in active_tools:
-            if self.memory_manager:
-                definitions.append(self.memory_manager.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'memory' tool (name: {self.memory_manager.tool_spec['function']['name']})")
-            else:
-                logger.warning(f"⚠️ [TOOLS] 'memory' is in active_tools but memory_manager is None")
+                logger.warning(f"笞・・[TOOLS] 'search' is in active_tools but search_agent is None")
 
         if 'image_generator' in active_tools:
             if self.image_generator:
                 definitions.append(self.image_generator.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
+                #logger.info(f"笨・[TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'image_generator' is in active_tools but image_generator is None")
+                logger.warning(f"笞・・[TOOLS] 'image_generator' is in active_tools but image_generator is None")
 
         if 'command_executor' in active_tools:
             if self.command_agent:
                 definitions.append(self.command_agent.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'command_executor' tool (name: {self.command_agent.tool_spec['function']['name']})")
+                #logger.info(f"笨・[TOOLS] Added 'command_executor' tool (name: {self.command_agent.tool_spec['function']['name']})")
             else:
-                logger.warning(f"⚠️ [TOOLS] 'command_executor' is in active_tools but command_agent is None")
+                logger.warning(f"笞・・[TOOLS] 'command_executor' is in active_tools but command_agent is None")
 
         if 'deep_research' in active_tools:
             if self.deep_research_agent:
                 definitions.append(self.deep_research_agent.tool_spec)
             else:
-                logger.warning(f"⚠️ [TOOLS] 'deep_research' is in active_tools but deep_research_agent is None")
+                logger.warning(f"笞・・[TOOLS] 'deep_research' is in active_tools but deep_research_agent is None")
 
-        logger.info(f"🔧 [TOOLS] Total tools to return: {len(definitions)}")
+        logger.info(f"肌 [TOOLS] Total tools to return: {len(definitions)}")
 
         return definitions or None
 
@@ -820,16 +770,16 @@ class LLMCog(commands.Cog, name="LLM"):
         return f"<#{channel_id}>"
 
     def _reporter_unavailable_embed(self) -> discord.Embed:
-        embed = discord.Embed(title="❌ Reporter Not Available / レポーター機能が利用できません",
-                              description="ScheduledReporter plugin is not initialized. / ScheduledReporterプラグインが初期化されていません。",
+        embed = discord.Embed(title="笶・Reporter Not Available / 繝ｬ繝昴・繧ｿ繝ｼ讖溯・縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ",
+                              description="ScheduledReporter plugin is not initialized. / ScheduledReporter繝励Λ繧ｰ繧､繝ｳ縺悟・譛溷喧縺輔ｌ縺ｦ縺・∪縺帙ｓ縲・,
                               color=discord.Color.red())
         self._add_support_footer(embed)
         return embed
 
     async def _get_conversation_thread_id(self, message: discord.Message) -> int:
-        guild_id = message.guild.id if message.guild else 0  # DMの場合は0
+        guild_id = message.guild.id if message.guild else 0  # DM縺ｮ蝣ｴ蜷医・0
         
-        # ギルド固有の辞書を初期化
+        # 繧ｮ繝ｫ繝牙崋譛峨・霎樊嶌繧貞・譛溷喧
         if guild_id not in self.message_to_thread:
             self.message_to_thread[guild_id] = {}
         
@@ -852,18 +802,18 @@ class LLMCog(commands.Cog, name="LLM"):
         return thread_id
 
     async def _collect_conversation_history(self, message: discord.Message) -> List[Dict[str, Any]]:
-        guild_id = message.guild.id if message.guild else 0  # DMの場合は0
+        guild_id = message.guild.id if message.guild else 0  # DM縺ｮ蝣ｴ蜷医・0
         
-        # ギルド固有の会話履歴を初期化
+        # 繧ｮ繝ｫ繝牙崋譛峨・莨夊ｩｱ螻･豁ｴ繧貞・譛溷喧
         if guild_id not in self.conversation_threads:
             self.conversation_threads[guild_id] = {}
         
         history = []
         current_msg = message
         visited_ids = set()
-        max_depth = 50  # 無限ループ防止
+        max_depth = 50  # 辟｡髯舌Ν繝ｼ繝鈴亟豁｢
         
-        # リプライチェーンを遡って会話履歴を収集
+        # 繝ｪ繝励Λ繧､繝√ぉ繝ｼ繝ｳ繧帝■縺｣縺ｦ莨夊ｩｱ螻･豁ｴ繧貞庶髮・
         depth = 0
         while current_msg.reference and current_msg.reference.message_id and depth < max_depth:
             if current_msg.reference.message_id in visited_ids:
@@ -872,7 +822,7 @@ class LLMCog(commands.Cog, name="LLM"):
             depth += 1
             
             try:
-                # 参照メッセージを取得
+                # 蜿ら・繝｡繝・そ繝ｼ繧ｸ繧貞叙蠕・
                 parent_msg = current_msg.reference.resolved
                 if not parent_msg:
                     parent_msg = await message.channel.fetch_message(current_msg.reference.message_id)
@@ -881,30 +831,30 @@ class LLMCog(commands.Cog, name="LLM"):
                     logger.debug(f"Encountered deleted referenced message in history collection.")
                     break
                 
-                # Botのメッセージの場合、保存された会話履歴から取得
+                # Bot縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｮ蝣ｴ蜷医∽ｿ晏ｭ倥＆繧後◆莨夊ｩｱ螻･豁ｴ縺九ｉ蜿門ｾ・
                 if parent_msg.author == self.bot.user:
                     thread_id = await self._get_conversation_thread_id(parent_msg)
                     if thread_id in self.conversation_threads[guild_id]:
-                        # このメッセージIDに対応するassistantメッセージを検索
+                        # 縺薙・繝｡繝・そ繝ｼ繧ｸID縺ｫ蟇ｾ蠢懊☆繧蟻ssistant繝｡繝・そ繝ｼ繧ｸ繧呈､懃ｴ｢
                         found_assistant = False
                         for msg in reversed(self.conversation_threads[guild_id][thread_id]):
                             if msg.get("role") == "assistant" and msg.get("message_id") == parent_msg.id:
                                 history.append({"role": "assistant", "content": msg["content"]})
                                 found_assistant = True
-                                # このassistantメッセージより前の会話履歴も含める
+                                # 縺薙・assistant繝｡繝・そ繝ｼ繧ｸ繧医ｊ蜑阪・莨夊ｩｱ螻･豁ｴ繧ょ性繧√ｋ
                                 thread_history = self.conversation_threads[guild_id][thread_id]
                                 assistant_index = thread_history.index(msg)
-                                # assistantより前のメッセージを追加（時系列順に）
+                                # assistant繧医ｊ蜑阪・繝｡繝・そ繝ｼ繧ｸ繧定ｿｽ蜉・域凾邉ｻ蛻鈴・↓・・
                                 for prev_msg in thread_history[:assistant_index]:
                                     history.append(prev_msg)
                                 break
                         
                         if not found_assistant:
-                            # 履歴にない場合は、そのメッセージの内容を直接取得
+                            # 螻･豁ｴ縺ｫ縺ｪ縺・ｴ蜷医・縲√◎縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｮ蜀・ｮｹ繧堤峩謗･蜿門ｾ・
                             if parent_msg.content:
                                 history.append({"role": "assistant", "content": parent_msg.content})
                 
-                # ユーザーのメッセージの場合
+                # 繝ｦ繝ｼ繧ｶ繝ｼ縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｮ蝣ｴ蜷・
                 elif parent_msg.author != self.bot.user:
                     image_contents, text_content = await self._prepare_multimodal_content(parent_msg)
                     text_content = text_content.replace(f'<@!{self.bot.user.id}>', '').replace(f'<@{self.bot.user.id}>', '').strip()
@@ -918,7 +868,7 @@ class LLMCog(commands.Cog, name="LLM"):
                         user_content_parts.extend(image_contents)
                         history.append({"role": "user", "content": user_content_parts})
                 
-                # 親メッセージに移動
+                # 隕ｪ繝｡繝・そ繝ｼ繧ｸ縺ｫ遘ｻ蜍・
                 current_msg = parent_msg
                 
             except (discord.NotFound, discord.HTTPException) as e:
@@ -928,10 +878,10 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.error(f"Error collecting conversation history: {e}", exc_info=True)
                 break
         
-        # 会話履歴を時系列順に並び替え（古いものから新しいものへ）
+        # 莨夊ｩｱ螻･豁ｴ繧呈凾邉ｻ蛻鈴・↓荳ｦ縺ｳ譖ｿ縺茨ｼ亥商縺・ｂ縺ｮ縺九ｉ譁ｰ縺励＞繧ゅ・縺ｸ・・
         history.reverse()
         
-        # 最大履歴数で制限
+        # 譛螟ｧ螻･豁ｴ謨ｰ縺ｧ蛻ｶ髯・
         max_history_entries = self.llm_config.get('max_messages', 10) * 2
         if len(history) > max_history_entries:
             history = history[-max_history_entries:]
@@ -957,26 +907,26 @@ class LLMCog(commands.Cog, name="LLM"):
                             gif_image = Image.open(io.BytesIO(image_bytes))
                             if getattr(gif_image, 'is_animated', False):
                                 logger.info(
-                                    f"🎬 [IMAGE] Detected animated GIF. Converting to static image: {url[:100]}...")
+                                    f"汐 [IMAGE] Detected animated GIF. Converting to static image: {url[:100]}...")
                                 gif_image.seek(0)
                                 if gif_image.mode != 'RGBA': gif_image = gif_image.convert('RGBA')
                                 output_buffer = io.BytesIO()
                                 gif_image.save(output_buffer, format='PNG', optimize=True)
                                 image_bytes, mime_type = output_buffer.getvalue(), 'image/png'
                                 logger.debug(
-                                    f"🖼️ [IMAGE] Converted animated GIF to PNG (Size: {len(image_bytes)} bytes)")
+                                    f"名・・[IMAGE] Converted animated GIF to PNG (Size: {len(image_bytes)} bytes)")
                             else:
-                                logger.debug(f"🖼️ [IMAGE] Static GIF detected, processing normally")
+                                logger.debug(f"名・・[IMAGE] Static GIF detected, processing normally")
                         except ImportError:
                             logger.warning(
-                                "⚠️ Pillow (PIL) library not found. Cannot process animated GIFs. Skipping image.")
+                                "笞・・Pillow (PIL) library not found. Cannot process animated GIFs. Skipping image.")
                             return None
                         except Exception as gif_error:
-                            logger.error(f"❌ Error processing GIF image: {gif_error}", exc_info=True)
+                            logger.error(f"笶・Error processing GIF image: {gif_error}", exc_info=True)
                             return None
                     encoded_image = base64.b64encode(image_bytes).decode('utf-8')
                     logger.debug(
-                        f"🖼️ [IMAGE] Successfully processed image: {url[:100]}... (MIME: {mime_type}, Size: {len(image_bytes)} bytes)")
+                        f"名・・[IMAGE] Successfully processed image: {url[:100]}... (MIME: {mime_type}, Size: {len(image_bytes)} bytes)")
                     return {"type": "image_url",
                             "image_url": {"url": f"data:{mime_type};base64,{encoded_image}", "detail": "auto"}}
                 else:
@@ -1026,7 +976,7 @@ class LLMCog(commands.Cog, name="LLM"):
         if len(source_urls) > max_images:
             try:
                 await message.channel.send(self.llm_config.get('error_msg', {}).get('msg_max_image_size',
-                                                                                    "⚠️ Max images ({max_images}) reached.\n⚠️ 一度に処理できる画像の最大枚数({max_images}枚)を超えました。").format(
+                                                                                    "笞・・Max images ({max_images}) reached.\n笞・・荳蠎ｦ縺ｫ蜃ｦ逅・〒縺阪ｋ逕ｻ蜒上・譛螟ｧ譫壽焚({max_images}譫・繧定ｶ・∴縺ｾ縺励◆縲・).format(
                     max_images=max_images), delete_after=10, silent=True)
             except discord.HTTPException:
                 pass
@@ -1037,35 +987,35 @@ class LLMCog(commands.Cog, name="LLM"):
     async def on_message(self, message: discord.Message):
         if message.author.bot: return
         
-        # スレッド内ではBotのメッセージへのリプライのみに反応
+        # 繧ｹ繝ｬ繝・ラ蜀・〒縺ｯBot縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｸ縺ｮ繝ｪ繝励Λ繧､縺ｮ縺ｿ縺ｫ蜿榊ｿ・
         is_thread = isinstance(message.channel, discord.Thread)
         is_mentioned = self.bot.user.mentioned_in(message) and not message.mention_everyone
         is_reply_to_bot = (message.reference and message.reference.resolved and 
                            isinstance(message.reference.resolved, discord.Message) and 
                            message.reference.resolved.author == self.bot.user)
         
-        # リプライの場合はメンション必須、通常チャンネルではメンションのみ
+        # 繝ｪ繝励Λ繧､縺ｮ蝣ｴ蜷医・繝｡繝ｳ繧ｷ繝ｧ繝ｳ蠢・医・壼ｸｸ繝√Ε繝ｳ繝阪Ν縺ｧ縺ｯ繝｡繝ｳ繧ｷ繝ｧ繝ｳ縺ｮ縺ｿ
         if is_reply_to_bot:
-            # リプライの場合はメンションが必要
+            # 繝ｪ繝励Λ繧､縺ｮ蝣ｴ蜷医・繝｡繝ｳ繧ｷ繝ｧ繝ｳ縺悟ｿ・ｦ・
             if not is_mentioned:
                 return
         elif not is_mentioned:
-            # リプライでない場合もメンションが必要
+            # 繝ｪ繝励Λ繧､縺ｧ縺ｪ縺・ｴ蜷医ｂ繝｡繝ｳ繧ｷ繝ｧ繝ｳ縺悟ｿ・ｦ・
             return
         try:
             llm_client = await self._get_llm_client_for_channel(message.channel.id)
             if not llm_client:
-                # 修正点：デフォルトのエラーメッセージを一度変数に格納する
-                default_error_msg = 'LLM client is not available for this channel.\nこのチャンネルではLLMクライアントが利用できません。'
+                # 菫ｮ豁｣轤ｹ・壹ョ繝輔か繝ｫ繝医・繧ｨ繝ｩ繝ｼ繝｡繝・そ繝ｼ繧ｸ繧剃ｸ蠎ｦ螟画焚縺ｫ譬ｼ邏阪☆繧・
+                default_error_msg = 'LLM client is not available for this channel.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｧ縺ｯLLM繧ｯ繝ｩ繧､繧｢繝ｳ繝医′蛻ｩ逕ｨ縺ｧ縺阪∪縺帙ｓ縲・
                 error_msg = self.llm_config.get('error_msg', {}).get('general_error', default_error_msg)
 
                 await message.reply(
-                    content=f"❌ **Error / エラー** ❌\n\n{error_msg}",  # 修正点：変数を使ってf-stringを構成する
+                    content=f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{error_msg}",  # 菫ｮ豁｣轤ｹ・壼､画焚繧剃ｽｿ縺｣縺ｦf-string繧呈ｧ区・縺吶ｋ
                     view=self._create_support_view(), silent=True)
                 return
         except Exception as e:
             logger.error(f"Failed to get LLM client for channel {message.channel.id}: {e}", exc_info=True)
-            await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
+            await message.reply(content=f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{self.exception_handler.handle_exception(e)}",
                                 view=self._create_support_view(), silent=True)
             return
         guild_log = f"guild='{message.guild.name}({message.guild.id})'" if message.guild else "guild='DM'"
@@ -1076,25 +1026,20 @@ class LLMCog(commands.Cog, name="LLM"):
         if not text_content and not image_contents:
             error_key = 'empty_reply' if is_reply_to_bot and not is_mentioned else 'empty_mention_reply'
             await message.reply(content=self.llm_config.get('error_msg', {}).get(error_key,
-                                                                                 "Please say something.\n何かお話しください。" if error_key == 'empty_reply' else "Yes, how can I help you?\nはい、何か御用でしょうか?"),
+                                                                                 "Please say something.\n菴輔°縺願ｩｱ縺励￥縺縺輔＞縲・ if error_key == 'empty_reply' else "Yes, how can I help you?\n縺ｯ縺・∽ｽ輔°蠕｡逕ｨ縺ｧ縺励ｇ縺・°?"),
                                 view=self._create_support_view(), silent=True)
             return
         logger.info(
-            f"📨 Received LLM request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(text_content)} chars | images={len(image_contents)}")
+            f"鐙 Received LLM request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(text_content)} chars | images={len(image_contents)}")
         if text_content: logger.info(
-            f"[on_message] {message.guild.name if message.guild else 'DM'}({message.guild.id if message.guild else 0}),{message.author.name}({message.author.id})💬 [USER_INPUT] {((text_content[:200] + '...') if len(text_content) > 203 else text_content).replace(chr(10), ' ')}")
+            f"[on_message] {message.guild.name if message.guild else 'DM'}({message.guild.id if message.guild else 0}),{message.author.name}({message.author.id})町 [USER_INPUT] {((text_content[:200] + '...') if len(text_content) > 203 else text_content).replace(chr(10), ' ')}")
         thread_id = await self._get_conversation_thread_id(message)
-        if not self.bio_manager or not self.memory_manager:
-            await message.reply(
-                content="❌ **Error / エラー** ❌\n\nCannot respond because required plugins are not initialized.\n必要なプラグインが初期化されていないため、応答できません。",
-                view=self._create_support_view(), silent=True)
-            return
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         conversation_history = await self._collect_conversation_history(message)
         messages_for_api.extend(conversation_history)
-        # 言語検出で動的に言語プロンプトを生成し、ユーザーメッセージの直前に配置
+        # 險隱樊､懷・縺ｧ蜍慕噪縺ｫ險隱槭・繝ｭ繝ｳ繝励ヨ繧堤函謌舌＠縲√Θ繝ｼ繧ｶ繝ｼ繝｡繝・そ繝ｼ繧ｸ縺ｮ逶ｴ蜑阪↓驟咲ｽｮ
         lang_prompt = self._build_language_prompt(text_content)
         if lang_prompt:
             messages_for_api.append({"role": "system", "content": lang_prompt})
@@ -1105,12 +1050,12 @@ class LLMCog(commands.Cog, name="LLM"):
         if image_contents: logger.debug(f"Including {len(image_contents)} image(s) in request")
         user_message_for_api = {"role": "user", "content": user_content_parts}
         messages_for_api.append(user_message_for_api)
-        logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
+        logger.info(f"鳩 [API] Sending {len(messages_for_api)} messages to LLM")
         logger.debug(
             # FIX IS HERE
             f"Messages structure: system={len(messages_for_api[0]['content'])} chars, lang_override={'present' if len(messages_for_api) > 1 and 'CRITICAL' in str(messages_for_api) else 'absent'}")
         try:
-            # スレッド作成ボタンは削除（常にFalse）
+            # 繧ｹ繝ｬ繝・ラ菴懈・繝懊ち繝ｳ縺ｯ蜑企勁・亥ｸｸ縺ｫFalse・・
             is_first_response = False
             sent_messages, llm_response, used_key_index = await self._handle_llm_streaming_response(message,
                                                                                                     messages_for_api,
@@ -1118,14 +1063,14 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                                                     is_first_response)
             if sent_messages and llm_response:
                 logger.info(
-                    f"✅ LLM response completed | model='{model_in_use}' | response_length={len(llm_response)} chars")
+                    f"笨・LLM response completed | model='{model_in_use}' | response_length={len(llm_response)} chars")
                 log_response = (llm_response[:200] + '...') if len(llm_response) > 203 else llm_response
                 key_log_str = f" [key{used_key_index + 1}]" if used_key_index is not None else ""
-                logger.info(f"🤖 [LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
+                logger.info(f"､・[LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
                 logger.debug(f"LLM full response (length: {len(llm_response)} chars):\n{llm_response}")
-                guild_id = message.guild.id if message.guild else 0  # DMの場合は0
+                guild_id = message.guild.id if message.guild else 0  # DM縺ｮ蝣ｴ蜷医・0
                 
-                # ギルド固有の会話履歴を初期化
+                # 繧ｮ繝ｫ繝牙崋譛峨・莨夊ｩｱ螻･豁ｴ繧貞・譛溷喧
                 if guild_id not in self.conversation_threads:
                     self.conversation_threads[guild_id] = {}
                 if thread_id not in self.conversation_threads[guild_id]: 
@@ -1141,15 +1086,15 @@ class LLMCog(commands.Cog, name="LLM"):
                     self.message_to_thread[guild_id_for_msg][msg.id] = thread_id
                 self._cleanup_old_threads()
 
-                # TTS Cogにカスタムイベントを発火させる
+                # TTS Cog縺ｫ繧ｫ繧ｹ繧ｿ繝繧､繝吶Φ繝医ｒ逋ｺ轣ｫ縺輔○繧・
                 try:
                     self.bot.dispatch("llm_response_complete", sent_messages, llm_response)
-                    logger.info("📢 Dispatched 'llm_response_complete' event for TTS.")
+                    logger.info("討 Dispatched 'llm_response_complete' event for TTS.")
                 except Exception as e:
                     logger.error(f"Failed to dispatch 'llm_response_complete' event: {e}", exc_info=True)
 
         except Exception as e:
-            await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
+            await message.reply(content=f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{self.exception_handler.handle_exception(e)}",
                                 view=self._create_support_view(), silent=True)
 
     def _cleanup_old_threads(self):
@@ -1188,8 +1133,8 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                    messages_for_api=initial_messages, llm_client=client,
                                                                    is_first_response=is_first_response)
         except Exception as e:
-            logger.error(f"❌ Error during LLM streaming response: {e}", exc_info=True)
-            error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
+            logger.error(f"笶・Error during LLM streaming response: {e}", exc_info=True)
+            error_msg = f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{self.exception_handler.handle_exception(e)}"
             if sent_message:
                 try:
                     await sent_message.edit(content=error_msg, embed=None, view=self._create_support_view())
@@ -1229,7 +1174,7 @@ class LLMCog(commands.Cog, name="LLM"):
                 is_first_update = False
                 display_length = len(full_response_text)
                 if display_length > SAFE_MESSAGE_LENGTH:
-                    display_text = f"{emoji_prefix}{full_response_text[:SAFE_MESSAGE_LENGTH - len(emoji_prefix) - len(emoji_suffix) - 100]}\n\n⚠️ (Output is long, will be split...)\n⚠️ (出力が長いため分割します...){emoji_suffix}"
+                    display_text = f"{emoji_prefix}{full_response_text[:SAFE_MESSAGE_LENGTH - len(emoji_prefix) - len(emoji_suffix) - 100]}\n\n笞・・(Output is long, will be split...)\n笞・・(蜃ｺ蜉帙′髟ｷ縺・◆繧∝・蜑ｲ縺励∪縺・..){emoji_suffix}"
                 else:
                     display_text = f"{emoji_prefix}{full_response_text[:SAFE_MESSAGE_LENGTH - len(emoji_prefix) - len(emoji_suffix)]}{emoji_suffix}"
                 if display_text != sent_message.content:
@@ -1238,23 +1183,23 @@ class LLMCog(commands.Cog, name="LLM"):
                         last_update, last_displayed_length = current_time, len(full_response_text)
                         logger.debug(f"Updated Discord message (displayed: {len(display_text)} chars)")
                     except discord.NotFound:
-                        logger.warning(f"⚠️ Message deleted during stream (ID: {sent_message.id}). Aborting.")
+                        logger.warning(f"笞・・Message deleted during stream (ID: {sent_message.id}). Aborting.")
                         return None, "", None
                     except discord.HTTPException as e:
                         if e.status == 429:
                             retry_after = (e.retry_after or 1.0) + 0.5
                             logger.warning(
-                                f"⚠️ Rate limited on message edit (ID: {sent_message.id}). Waiting {retry_after:.2f}s")
+                                f"笞・・Rate limited on message edit (ID: {sent_message.id}). Waiting {retry_after:.2f}s")
                             await asyncio.sleep(retry_after)
                             last_update = time.time()
                         else:
                             logger.warning(
-                                f"⚠️ Failed to edit message (ID: {sent_message.id}): {e.status} - {getattr(e, 'text', str(e))}")
+                                f"笞・・Failed to edit message (ID: {sent_message.id}): {e.status} - {getattr(e, 'text', str(e))}")
                             await asyncio.sleep(retry_sleep_time)
         logger.debug(f"Stream completed | Total chunks: {chunk_count} | Final length: {len(full_response_text)} chars")
         if full_response_text:
             if len(full_response_text) <= SAFE_MESSAGE_LENGTH:
-                # スレッド作成ボタンは削除
+                # 繧ｹ繝ｬ繝・ラ菴懈・繝懊ち繝ｳ縺ｯ蜑企勁
                 view = None
                 
                 for attempt in range(max_final_retries):
@@ -1264,27 +1209,27 @@ class LLMCog(commands.Cog, name="LLM"):
                         logger.debug(f"Final message updated successfully (attempt {attempt + 1})")
                         break
                     except discord.NotFound:
-                        logger.error(f"❌ Message was deleted before final update")
+                        logger.error(f"笶・Message was deleted before final update")
                         return None, "", None
                     except discord.HTTPException as e:
                         if e.status == 429:
                             retry_after = (e.retry_after or 1.0) + 0.5
                             logger.warning(
-                                f"⚠️ Rate limited on final update (attempt {attempt + 1}/{max_final_retries}). Waiting {retry_after:.2f}s")
+                                f"笞・・Rate limited on final update (attempt {attempt + 1}/{max_final_retries}). Waiting {retry_after:.2f}s")
                             await asyncio.sleep(retry_after)
                         else:
                             logger.warning(
-                                f"⚠️ Failed to update final message (attempt {attempt + 1}/{max_final_retries}): {e.status} - {getattr(e, 'text', str(e))}")
+                                f"笞・・Failed to update final message (attempt {attempt + 1}/{max_final_retries}): {e.status} - {getattr(e, 'text', str(e))}")
                             if attempt < max_final_retries - 1: await asyncio.sleep(final_retry_delay)
                 return [sent_message], full_response_text, getattr(llm_client, 'last_used_key_index', None)
             else:
                 logger.debug(f"Response is {len(full_response_text)} chars, splitting into multiple messages")
-                # 修正: タプル作成のバグを修正
+                # 菫ｮ豁｣: 繧ｿ繝励Ν菴懈・縺ｮ繝舌げ繧剃ｿｮ豁｣
                 chunks = _split_message_smartly(full_response_text, SAFE_MESSAGE_LENGTH)
                 all_messages = []
-                first_chunk = chunks[0]  # 最初のチャンクを取得
+                first_chunk = chunks[0]  # 譛蛻昴・繝√Ε繝ｳ繧ｯ繧貞叙蠕・
 
-                # スレッド作成ボタンは削除
+                # 繧ｹ繝ｬ繝・ラ菴懈・繝懊ち繝ｳ縺ｯ蜑企勁
                 view = None
 
                 for attempt in range(max_final_retries):
@@ -1296,10 +1241,10 @@ class LLMCog(commands.Cog, name="LLM"):
                     except discord.HTTPException as e:
                         if e.status == 429:
                             retry_after = (e.retry_after or 1.0) + 0.5
-                            logger.warning(f"⚠️ Rate limited on first chunk update, waiting {retry_after:.2f}s")
+                            logger.warning(f"笞・・Rate limited on first chunk update, waiting {retry_after:.2f}s")
                             await asyncio.sleep(retry_after)
                         else:
-                            logger.error(f"❌ Failed to update first message: {e}")
+                            logger.error(f"笶・Failed to update first message: {e}")
                             if attempt < max_final_retries - 1: await asyncio.sleep(final_retry_delay)
                 for i, chunk in enumerate(chunks[1:], start=2):
                     for attempt in range(max_final_retries):
@@ -1311,25 +1256,25 @@ class LLMCog(commands.Cog, name="LLM"):
                         except discord.HTTPException as e:
                             if e.status == 429:
                                 retry_after = (e.retry_after or 1.0) + 0.5
-                                logger.warning(f"⚠️ Rate limited on continuation {i}, waiting {retry_after:.2f}s")
+                                logger.warning(f"笞・・Rate limited on continuation {i}, waiting {retry_after:.2f}s")
                                 await asyncio.sleep(retry_after)
                             else:
-                                logger.error(f"❌ Failed to send continuation message {i}: {e}")
+                                logger.error(f"笶・Failed to send continuation message {i}: {e}")
                                 if attempt < max_final_retries - 1: await asyncio.sleep(final_retry_delay)
                 return all_messages, full_response_text, getattr(llm_client, 'last_used_key_index', None)
         else:
             finish_reason = getattr(llm_client, 'last_finish_reason', None)
             if finish_reason == 'content_filter':
                 error_msg = self.llm_config.get('error_msg', {}).get('content_filter_error',
-                                                                     "The response was blocked by the content filter.\nAIの応答がコンテンツフィルターによってブロックされました。");
+                                                                     "The response was blocked by the content filter.\nAI縺ｮ蠢懃ｭ斐′繧ｳ繝ｳ繝・Φ繝・ヵ繧｣繝ｫ繧ｿ繝ｼ縺ｫ繧医▲縺ｦ繝悶Ο繝・け縺輔ｌ縺ｾ縺励◆縲・);
                 logger.warning(
-                    f"⚠️ Empty response from LLM due to content filter.")
+                    f"笞・・Empty response from LLM due to content filter.")
             else:
                 error_msg = self.llm_config.get('error_msg', {}).get('empty_response_error',
-                                                                     "There was no response from the AI. Please try rephrasing your message.\nAIから応答がありませんでした。表現を変えてもう一度お試しください。");
+                                                                     "There was no response from the AI. Please try rephrasing your message.\nAI縺九ｉ蠢懃ｭ斐′縺ゅｊ縺ｾ縺帙ｓ縺ｧ縺励◆縲り｡ｨ迴ｾ繧貞､峨∴縺ｦ繧ゅ≧荳蠎ｦ縺願ｩｦ縺励￥縺縺輔＞縲・);
                 logger.warning(
-                    f"⚠️ Empty response from LLM (Finish reason: {finish_reason})")
-            await sent_message.edit(content=f"❌ **Error / エラー** ❌\n\n{error_msg}", embed=None,
+                    f"笞・・Empty response from LLM (Finish reason: {finish_reason})")
+            await sent_message.edit(content=f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{error_msg}", embed=None,
                                     view=self._create_support_view())
             return None, "", None
 
@@ -1345,7 +1290,7 @@ class LLMCog(commands.Cog, name="LLM"):
         if not has_system_message: return messages, ""
         combined_system_prompt = "\n\n".join(system_prompts_content)
         converted_messages = [{"role": "user", "content": combined_system_prompt},
-                              {"role": "assistant", "content": "承知いたしました。指示に従います。"}]
+                              {"role": "assistant", "content": "謇ｿ遏･縺・◆縺励∪縺励◆縲よ欠遉ｺ縺ｫ蠕薙＞縺ｾ縺吶・}]
         converted_messages.extend(other_messages)
         return converted_messages, combined_system_prompt
 
@@ -1358,7 +1303,7 @@ class LLMCog(commands.Cog, name="LLM"):
             original_messages_for_log = messages
             messages, combined_system_prompt = self._convert_messages_for_gemini(messages)
             if combined_system_prompt:
-                logger.info(f"🔄 [GEMINI ADAPTER] Converting system prompts for Gemini model '{model_string}'.")
+                logger.info(f"売 [GEMINI ADAPTER] Converting system prompts for Gemini model '{model_string}'.")
                 logger.debug(
                     f"  - Combined system prompt ({len(combined_system_prompt)} chars): {combined_system_prompt.replace(chr(10), ' ')[:300]}...")
                 logger.debug(f"  - Message count changed: {len(original_messages_for_log)} -> {len(messages)}")
@@ -1393,19 +1338,19 @@ class LLMCog(commands.Cog, name="LLM"):
                 "max_tokens": extra_params.get('max_tokens', 4096)
             }
 
-            # ✅ Gemini でも tools を正しく渡す
-            # KoboldCPPの場合はツールサポートをチェック
+            # 笨・Gemini 縺ｧ繧・tools 繧呈ｭ｣縺励￥貂｡縺・
+            # KoboldCPP縺ｮ蝣ｴ蜷医・繝・・繝ｫ繧ｵ繝昴・繝医ｒ繝√ぉ繝・け
             is_koboldcpp = provider_name.lower() == 'koboldcpp'
             supports_tools = getattr(client, 'supports_tools', True)
             
             if tools_def and supports_tools:
                 api_kwargs["tools"] = tools_def
-                # Geminiモデルでは tool_choice パラメータを設定しない
-                # Geminiは tool_choice をサポートしていないか、異なる形式を要求する可能性がある
+                # Gemini繝｢繝・Ν縺ｧ縺ｯ tool_choice 繝代Λ繝｡繝ｼ繧ｿ繧定ｨｭ螳壹＠縺ｪ縺・
+                # Gemini縺ｯ tool_choice 繧偵し繝昴・繝医＠縺ｦ縺・↑縺・°縲∫焚縺ｪ繧句ｽ｢蠑上ｒ隕∵ｱゅ☆繧句庄閭ｽ諤ｧ縺後≠繧・
                 if not is_gemini:
                     api_kwargs["tool_choice"] = "auto"
                 else:
-                    logger.debug(f"🔧 [GEMINI] Skipping tool_choice parameter for Gemini model")
+                    logger.debug(f"肌 [GEMINI] Skipping tool_choice parameter for Gemini model")
                 # Safely get tool names, handling cases where the structure might be different
                 tool_names = []
                 for t in tools_def:
@@ -1420,22 +1365,22 @@ class LLMCog(commands.Cog, name="LLM"):
                         else:
                             tool_names.append(str(t))
                     except Exception as e:
-                        logger.warning(f"⚠️ [TOOLS] Error processing tool: {e}")
+                        logger.warning(f"笞・・[TOOLS] Error processing tool: {e}")
                         tool_names.append('error_processing_tool')
                 
-                logger.info(f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
+                logger.info(f"肌 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
                 if is_koboldcpp:
-                    logger.info(f"🔧 [KoboldCPP] Tools are enabled for this model")
+                    logger.info(f"肌 [KoboldCPP] Tools are enabled for this model")
                 if is_gemini:
-                    logger.info(f"🔧 [GEMINI] Tools are enabled for Gemini model (without tool_choice)")
+                    logger.info(f"肌 [GEMINI] Tools are enabled for Gemini model (without tool_choice)")
             elif tools_def and not supports_tools:
                 logger.warning(
-                    f"⚠️ [TOOLS] Tools are disabled for provider '{provider_name}' (supports_tools=false). Skipping tools.")
+                    f"笞・・[TOOLS] Tools are disabled for provider '{provider_name}' (supports_tools=false). Skipping tools.")
                 if is_koboldcpp:
                     logger.warning(
-                        f"⚠️ [KoboldCPP] This KoboldCPP model may not support tools. Consider enabling 'supports_tools: true' in config if the model supports it.")
+                        f"笞・・[KoboldCPP] This KoboldCPP model may not support tools. Consider enabling 'supports_tools: true' in config if the model supports it.")
             else:
-                logger.warning(f"⚠️ [TOOLS] No tools available to pass to API")
+                logger.warning(f"笞・・[TOOLS] No tools available to pass to API")
 
             stream = None
             api_keys = self.provider_api_keys.get(client.provider_name, [])
@@ -1457,23 +1402,23 @@ class LLMCog(commands.Cog, name="LLM"):
                     error_type = "Rate limit" if isinstance(e, openai.RateLimitError) else "Server"
                     status_code = getattr(e, 'status_code', 'N/A')
                     logger.warning(
-                        f"⚠️ {error_type} error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                        f"笞・・{error_type} error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
                     if attempt + 1 >= num_keys:
                         error_msg = f"Tried {num_keys} API key(s), but no response was received."
-                        logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                        logger.error(f"笶・{error_msg} Provider: '{provider_name}'")
                         raise Exception(error_msg)
                     next_key_index = (current_key_index + 1) % num_keys
                     self.provider_key_index[provider_name] = next_key_index
                     next_key = api_keys[next_key_index]
                     logger.info(
-                        f"🔄 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) and retrying.")
+                        f"売 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) and retrying.")
                     provider_config = self.llm_config.get('providers', {}).get(provider_name, {})
                     is_koboldcpp = provider_name.lower() == 'koboldcpp'
                     timeout = provider_config.get('timeout', 300.0) if is_koboldcpp else None
                     new_client = openai.AsyncOpenAI(base_url=client.base_url, api_key=next_key, timeout=timeout)
                     new_client.model_name_for_api_calls = client.model_name_for_api_calls
                     new_client.provider_name = client.provider_name
-                    # KoboldCPPメタデータを保持
+                    # KoboldCPP繝｡繧ｿ繝・・繧ｿ繧剃ｿ晄戟
                     if is_koboldcpp:
                         new_client.supports_tools = getattr(client, 'supports_tools', provider_config.get('supports_tools', True))
                     else:
@@ -1483,11 +1428,11 @@ class LLMCog(commands.Cog, name="LLM"):
                     await asyncio.sleep(1)
                 except (openai.BadRequestError, openai.APIStatusError) as e:
                     status_code = getattr(e, 'status_code', None)
-                    # デバッグ用にapi_kwargsの内容をログに記録（機密情報を除外）
+                    # 繝・ヰ繝・げ逕ｨ縺ｫapi_kwargs縺ｮ蜀・ｮｹ繧偵Ο繧ｰ縺ｫ險倬鹸・域ｩ溷ｯ・ュ蝣ｱ繧帝勁螟厄ｼ・
                     debug_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
                     debug_kwargs['messages_count'] = len(api_kwargs.get('messages', []))
                     if 'messages' in api_kwargs and api_kwargs['messages']:
-                        # 最初と最後のメッセージの概要のみ記録
+                        # 譛蛻昴→譛蠕後・繝｡繝・そ繝ｼ繧ｸ縺ｮ讎りｦ√・縺ｿ險倬鹸
                         first_msg = api_kwargs['messages'][0]
                         last_msg = api_kwargs['messages'][-1]
                         debug_kwargs['first_message'] = {
@@ -1498,30 +1443,30 @@ class LLMCog(commands.Cog, name="LLM"):
                             'role': last_msg.get('role'),
                             'content_preview': str(last_msg.get('content', ''))[:100] if isinstance(last_msg.get('content'), str) else type(last_msg.get('content')).__name__
                         }
-                    logger.error(f"❌ [API ERROR] Provider: '{provider_name}', Status: {status_code}")
-                    logger.error(f"❌ [API ERROR] Request parameters: {debug_kwargs}")
-                    logger.error(f"❌ [API ERROR] Full error: {e}")
+                    logger.error(f"笶・[API ERROR] Provider: '{provider_name}', Status: {status_code}")
+                    logger.error(f"笶・[API ERROR] Request parameters: {debug_kwargs}")
+                    logger.error(f"笶・[API ERROR] Full error: {e}")
                     
                     if isinstance(status_code, int) and status_code >= 500:
                         logger.warning(
-                            f"⚠️ Server-like status error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                            f"笞・・Server-like status error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
                     elif isinstance(status_code, int) and status_code >= 400:
                         logger.warning(
-                            f"⚠️ Client error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                            f"笞・・Client error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
                     else:
                         logger.warning(
-                            f"⚠️ Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                            f"笞・・Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
 
                     if attempt + 1 >= num_keys:
                         error_msg = f"Tried {num_keys} API key(s), but no response was received."
-                        logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                        logger.error(f"笶・{error_msg} Provider: '{provider_name}'")
                         raise Exception(error_msg)
 
                     next_key_index = (current_key_index + 1) % num_keys
                     self.provider_key_index[provider_name] = next_key_index
                     next_key = api_keys[next_key_index]
                     logger.info(
-                        f"🔄 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) after error and retrying.")
+                        f"売 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) after error and retrying.")
                     provider_config = self.llm_config.get('providers', {}).get(provider_name, {})
                     is_koboldcpp = provider_name.lower() == 'koboldcpp'
                     timeout = provider_config.get('timeout', 300.0) if is_koboldcpp else None
@@ -1536,12 +1481,12 @@ class LLMCog(commands.Cog, name="LLM"):
                     self.llm_clients[f"{provider_name}/{client.model_name_for_api_calls}"] = new_client
                     await asyncio.sleep(1)
                 except Exception as e:
-                    logger.error(f"❌ Unhandled error calling LLM API: {e}", exc_info=True)
+                    logger.error(f"笶・Unhandled error calling LLM API: {e}", exc_info=True)
                     raise
 
             if stream is None:
                 error_msg = f"Tried {num_keys} API key(s), but no response was received."
-                logger.error(f"❌ {error_msg} Provider: '{provider_name}'")
+                logger.error(f"笶・{error_msg} Provider: '{provider_name}'")
                 raise Exception(error_msg)
 
             tool_calls_buffer = []
@@ -1583,7 +1528,7 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.debug(f"No tool calls, returning final response (Finish reason: {finish_reason})")
                 return
 
-            logger.info(f"🔧 [TOOL] LLM requested {len(tool_calls_buffer)} tool call(s)")
+            logger.info(f"肌 [TOOL] LLM requested {len(tool_calls_buffer)} tool call(s)")
             for tc in tool_calls_buffer:
                 logger.debug(
                     f"Tool call details: {tc['function']['name']} with args: {tc['function']['arguments'][:200]}")
@@ -1599,9 +1544,9 @@ class LLMCog(commands.Cog, name="LLM"):
             ]
             await self._process_tool_calls(tool_calls_obj, current_messages, channel_id, user_id)
 
-        logger.warning(f"⚠️ Tool processing exceeded max iterations ({max_iterations})")
+        logger.warning(f"笞・・Tool processing exceeded max iterations ({max_iterations})")
         yield self.llm_config.get('error_msg', {}).get('tool_loop_timeout',
-                                                       "Tool processing exceeded max iterations.\nツールの処理が最大反復回数を超えました.")
+                                                       "Tool processing exceeded max iterations.\n繝・・繝ｫ縺ｮ蜃ｦ逅・′譛螟ｧ蜿榊ｾｩ蝗樊焚繧定ｶ・∴縺ｾ縺励◆.")
 
     async def _process_tool_calls(self, tool_calls: List[Any], messages: List[Dict[str, Any]], channel_id: int,
                                   user_id: int) -> None:
@@ -1612,89 +1557,83 @@ class LLMCog(commands.Cog, name="LLM"):
             search_result = None
             function_args = {}
 
-            # ✅ Gemini の "default_api.search" → "search" に正規化
+            # 笨・Gemini 縺ｮ "default_api.search" 竊・"search" 縺ｫ豁｣隕丞喧
             function_name = raw_function_name.split('.')[-1] if '.' in raw_function_name else raw_function_name
 
             try:
                 function_args = json.loads(tool_call.function.arguments)
-                logger.info(f"🔧 [TOOL] Executing {raw_function_name} (normalized: {function_name})")
-                logger.debug(f"🔧 [TOOL] Arguments: {json.dumps(function_args, ensure_ascii=False, indent=2)}")
+                logger.info(f"肌 [TOOL] Executing {raw_function_name} (normalized: {function_name})")
+                logger.debug(f"肌 [TOOL] Arguments: {json.dumps(function_args, ensure_ascii=False, indent=2)}")
 
                 if self.search_agent and function_name == self.search_agent.name:
                     search_result = await self.search_agent.run(arguments=function_args, bot=self.bot,
                                                                 channel_id=channel_id)
-                    # search_resultはresponseオブジェクトまたは文字列
+                    # search_result縺ｯresponse繧ｪ繝悶ず繧ｧ繧ｯ繝医∪縺溘・譁・ｭ怜・
                     if hasattr(search_result, 'text'):
-                        # レスポンスオブジェクトからテキストを取得
+                        # 繝ｬ繧ｹ繝昴Φ繧ｹ繧ｪ繝悶ず繧ｧ繧ｯ繝医°繧峨ユ繧ｭ繧ｹ繝医ｒ蜿門ｾ・
                         tool_response_content = search_result.text
                     else:
-                        # 文字列の場合（フォールバック）
+                        # 譁・ｭ怜・縺ｮ蝣ｴ蜷茨ｼ医ヵ繧ｩ繝ｼ繝ｫ繝舌ャ繧ｯ・・
                         tool_response_content = str(search_result)
                     logger.debug(
-                        f"🔧 [TOOL] Result (length: {len(str(tool_response_content))} chars):\n{str(tool_response_content)[:1000]}")
-                elif self.bio_manager and function_name == self.bio_manager.name:
-                    tool_response_content = await self.bio_manager.run_tool(arguments=function_args, user_id=user_id)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
-                elif self.memory_manager and function_name == self.memory_manager.name:
-                    tool_response_content = await self.memory_manager.run_tool(arguments=function_args, user_id=user_id)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
+                        f"肌 [TOOL] Result (length: {len(str(tool_response_content))} chars):\n{str(tool_response_content)[:1000]}")
                 elif self.image_generator and function_name == self.image_generator.name:
                     tool_response_content = await self.image_generator.run(arguments=function_args,
                                                                            channel_id=channel_id)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
+                    logger.debug(f"肌 [TOOL] Result:\n{tool_response_content}")
                 elif self.command_agent and function_name == self.command_agent.name:
-                    logger.info(f"🔧 [TOOL] CommandAgent called with arguments: {function_args}")
+                    logger.info(f"肌 [TOOL] CommandAgent called with arguments: {function_args}")
                     tool_response_content = await self.command_agent.run(arguments=function_args,
                                                                           bot=self.bot,
                                                                           channel_id=channel_id,
                                                                           user_id=user_id)
-                    logger.info(f"🔧 [TOOL] CommandAgent result: {tool_response_content[:200] if tool_response_content else 'None'}...")
-                    logger.debug(f"🔧 [TOOL] Full result:\n{tool_response_content}")
+                    logger.info(f"肌 [TOOL] CommandAgent result: {tool_response_content[:200] if tool_response_content else 'None'}...")
+                    logger.debug(f"肌 [TOOL] Full result:\n{tool_response_content}")
                 elif self.deep_research_agent and function_name == self.deep_research_agent.name:
                     tool_response_content = await self.deep_research_agent.run_tool(arguments=function_args,
                                                                                    channel_id=channel_id)
-                    logger.debug(f"🔧 [TOOL] DeepResearch result (len={len(tool_response_content)}):\n{tool_response_content[:500]}")
+                    logger.debug(f"肌 [TOOL] DeepResearch result (len={len(tool_response_content)}):\n{tool_response_content[:500]}")
                 else:
-                    logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")
+                    logger.warning(f"笞・・Unsupported tool called: {raw_function_name} (normalized: {function_name})")
                     error_content = f"Error: Tool '{function_name}' is not available."
             except json.JSONDecodeError as e:
-                logger.error(f"❌ Error decoding tool arguments for {function_name}: {e}", exc_info=True)
+                logger.error(f"笶・Error decoding tool arguments for {function_name}: {e}", exc_info=True)
                 error_content = f"Error: Invalid JSON arguments - {str(e)}"
             except SearchAPIRateLimitError as e:
-                logger.warning(f"⚠️ SearchAgent rate limit hit: {e}")
+                logger.warning(f"笞・・SearchAgent rate limit hit: {e}")
                 error_content = "[Google Search Error]\nThe Google Search API rate limit has been reached. Please tell the user to try again later."
             except SearchAPIServerError as e:
-                logger.error(f"❌ SearchAgent server error: {e}")
+                logger.error(f"笶・SearchAgent server error: {e}")
                 error_content = "[Google Search Error]\nA temporary server error occurred with the search service. Please tell the user to try again later."
             except SearchAgentError as e:
-                logger.error(f"❌ Error during SearchAgent execution for {function_name}: {e}", exc_info=True)
+                logger.error(f"笶・Error during SearchAgent execution for {function_name}: {e}", exc_info=True)
                 error_content = f"[Google Search Error]\nAn error occurred during the search execution: {str(e)}"
             except Exception as e:
-                logger.error(f"❌ Unexpected error during tool call for {function_name}: {e}", exc_info=True)
+                logger.error(f"笶・Unexpected error during tool call for {function_name}: {e}", exc_info=True)
                 error_content = f"[Tool Error]\nAn unexpected error occurred: {str(e)}"
 
             final_content = error_content if error_content else tool_response_content
-            logger.debug(f"🔧 [TOOL] Sending tool response back to LLM (length: {len(final_content)} chars)")
+            logger.debug(f"肌 [TOOL] Sending tool response back to LLM (length: {len(final_content)} chars)")
             messages.append(
                 {"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": final_content})
             
-            # 検索が成功し、レスポンスオブジェクトが存在する場合、ソースをembedで表示
+            # 讀懃ｴ｢縺梧・蜉溘＠縲√Ξ繧ｹ繝昴Φ繧ｹ繧ｪ繝悶ず繧ｧ繧ｯ繝医′蟄伜惠縺吶ｋ蝣ｴ蜷医√た繝ｼ繧ｹ繧弾mbed縺ｧ陦ｨ遉ｺ
             if search_result and hasattr(search_result, 'candidates'):
                 await self._send_search_sources_embed(search_result, channel_id, function_args.get('query', ''))
 
     async def _send_search_sources_embed(self, response, channel_id: int, query: str) -> None:
-        """検索結果のソースをembedで表示"""
+        """讀懃ｴ｢邨先棡縺ｮ繧ｽ繝ｼ繧ｹ繧弾mbed縺ｧ陦ｨ遉ｺ"""
         try:
-            # チャンネルを取得
+            # 繝√Ε繝ｳ繝阪Ν繧貞叙蠕・
             channel = self.bot.get_channel(channel_id)
             if not channel:
                 logger.warning(f"Channel {channel_id} not found")
                 return
 
-            # レスポンスから引用情報を抽出
+            # 繝ｬ繧ｹ繝昴Φ繧ｹ縺九ｉ蠑慕畑諠・ｱ繧呈歓蜃ｺ
             sources = []
             try:
-                # candidatesからgrounding metadataを取得
+                # candidates縺九ｉgrounding metadata繧貞叙蠕・
                 for candidate in response.candidates:
                     if hasattr(candidate, 'grounding_metadata'):
                         grounding = candidate.grounding_metadata
@@ -1711,19 +1650,19 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.error(f"Error extracting search sources: {e}", exc_info=True)
                 return
 
-            # ソースが見つからない場合は何もしない
+            # 繧ｽ繝ｼ繧ｹ縺瑚ｦ九▽縺九ｉ縺ｪ縺・ｴ蜷医・菴輔ｂ縺励↑縺・
             if not sources:
                 logger.debug("No sources found in search response")
                 return
 
-            # Embedを作成して送信
+            # Embed繧剃ｽ懈・縺励※騾∽ｿ｡
             embed = discord.Embed(
-                title="📚 Search Sources / 検索ソース",
-                description=f"**Query / クエリ:** {query}",
+                title="答 Search Sources / 讀懃ｴ｢繧ｽ繝ｼ繧ｹ",
+                description=f"**Query / 繧ｯ繧ｨ繝ｪ:** {query}",
                 color=discord.Color.blue()
             )
 
-            # ソースを最大10個表示
+            # 繧ｽ繝ｼ繧ｹ繧呈怙螟ｧ10蛟玖｡ｨ遉ｺ
             sources_text = ""
             for i, source in enumerate(sources[:10], 1):
                 title = source.get('title', 'No Title') or 'No Title'
@@ -1733,14 +1672,14 @@ class LLMCog(commands.Cog, name="LLM"):
                 sources_text += f"{i}. [{title}]({uri})\n"
 
             if sources_text:
-                embed.description += f"\n\n**Sources / ソース一覧:**\n{sources_text}"
+                embed.description += f"\n\n**Sources / 繧ｽ繝ｼ繧ｹ荳隕ｧ:**\n{sources_text}"
 
-            # サポートフッターを追加
+            # 繧ｵ繝昴・繝医ヵ繝・ち繝ｼ繧定ｿｽ蜉
             self._add_support_footer(embed)
 
-            # メッセージを送信
+            # 繝｡繝・そ繝ｼ繧ｸ繧帝∽ｿ｡
             await channel.send(embed=embed, silent=True)
-            logger.info(f"✅ Search sources embed sent to channel {channel_id}")
+            logger.info(f"笨・Search sources embed sent to channel {channel_id}")
 
         except Exception as e:
             logger.error(f"Error sending search sources embed: {e}", exc_info=True)
@@ -1759,8 +1698,8 @@ class LLMCog(commands.Cog, name="LLM"):
                     channel = self.bot.get_channel(channel_id)
                     if channel and isinstance(channel, discord.TextChannel):
                         try:
-                            embed = discord.Embed(title="ℹ️ AI Model Reset / AIモデルをリセットしました",
-                                                  description=f"The AI model for this channel has been reset to the default (`{default_model}`) after 3 hours.\n3時間が経過したため、このチャンネルのAIモデルをデフォルト (`{default_model}`) に戻しました。",
+                            embed = discord.Embed(title="邃ｹ・・AI Model Reset / AI繝｢繝・Ν繧偵Μ繧ｻ繝・ヨ縺励∪縺励◆",
+                                                  description=f"The AI model for this channel has been reset to the default (`{default_model}`) after 3 hours.\n3譎る俣縺檎ｵ碁℃縺励◆縺溘ａ縲√％縺ｮ繝√Ε繝ｳ繝阪Ν縺ｮAI繝｢繝・Ν繧偵ョ繝輔か繝ｫ繝・(`{default_model}`) 縺ｫ謌ｻ縺励∪縺励◆縲・,
                                                   color=discord.Color.blue())
                             self._add_support_footer(embed)
                             await channel.send(embed=embed, view=self._create_support_view())
@@ -1774,26 +1713,26 @@ class LLMCog(commands.Cog, name="LLM"):
             self.model_reset_tasks.pop(channel_id, None)
 
     @app_commands.command(name="chat",
-                          description="Chat with the AI without needing to mention.\nAIと対話します。メンション不要で会話できます。")
-    @app_commands.describe(message="The message you want to send to the AI.\nAIに送信したいメッセージ",
-                           image_url="URL of an image (optional).\n画像のURL（オプション）")
+                          description="Chat with the AI without needing to mention.\nAI縺ｨ蟇ｾ隧ｱ縺励∪縺吶ゅΓ繝ｳ繧ｷ繝ｧ繝ｳ荳崎ｦ√〒莨夊ｩｱ縺ｧ縺阪∪縺吶・)
+    @app_commands.describe(message="The message you want to send to the AI.\nAI縺ｫ騾∽ｿ｡縺励◆縺・Γ繝・そ繝ｼ繧ｸ",
+                           image_url="URL of an image (optional).\n逕ｻ蜒上・URL・医が繝励す繝ｧ繝ｳ・・)
     async def chat_slash(self, interaction: discord.Interaction, message: str, image_url: str = None):
         await interaction.response.defer(ephemeral=False)
         temp_message = None
         try:
             llm_client = await self._get_llm_client_for_channel(interaction.channel_id)
             if not llm_client:
-                # 修正点：デフォルトのエラーメッセージを一度変数に格納する
-                default_error_msg = 'LLM client is not available for this channel.\nこのチャンネルではLLMクライアントが利用できません。'
+                # 菫ｮ豁｣轤ｹ・壹ョ繝輔か繝ｫ繝医・繧ｨ繝ｩ繝ｼ繝｡繝・そ繝ｼ繧ｸ繧剃ｸ蠎ｦ螟画焚縺ｫ譬ｼ邏阪☆繧・
+                default_error_msg = 'LLM client is not available for this channel.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｧ縺ｯLLM繧ｯ繝ｩ繧､繧｢繝ｳ繝医′蛻ｩ逕ｨ縺ｧ縺阪∪縺帙ｓ縲・
                 error_msg = self.llm_config.get('error_msg', {}).get('general_error', default_error_msg)
 
                 await interaction.followup.send(
-                    content=f"❌ **Error / エラー** ❌\n\n{error_msg}",  # 修正点：変数を使ってf-stringを構成する
+                    content=f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{error_msg}",  # 菫ｮ豁｣轤ｹ・壼､画焚繧剃ｽｿ縺｣縺ｦf-string繧呈ｧ区・縺吶ｋ
                     view=self._create_support_view())
                 return
             if not message.strip():
                 await interaction.followup.send(
-                    content="⚠️ **Input Required / 入力が必要です** ⚠️\n\nPlease enter a message.\nメッセージを入力してください。",
+                    content="笞・・**Input Required / 蜈･蜉帙′蠢・ｦ√〒縺・* 笞・十n\nPlease enter a message.\n繝｡繝・そ繝ｼ繧ｸ繧貞・蜉帙＠縺ｦ縺上□縺輔＞縲・,
                     view=self._create_support_view())
                 return
             model_in_use, image_contents = llm_client.model_name_for_api_calls, []
@@ -1802,31 +1741,26 @@ class LLMCog(commands.Cog, name="LLM"):
                     image_contents.append(image_data)
                 else:
                     await interaction.followup.send(
-                        content="⚠️ **Image Error / 画像エラー** ⚠️\n\nFailed to process the specified image URL.\n指定された画像URLの処理に失敗しました。",
+                        content="笞・・**Image Error / 逕ｻ蜒上お繝ｩ繝ｼ** 笞・十n\nFailed to process the specified image URL.\n謖・ｮ壹＆繧後◆逕ｻ蜒酋RL縺ｮ蜃ｦ逅・↓螟ｱ謨励＠縺ｾ縺励◆縲・,
                         view=self._create_support_view())
                     return
             guild_log, user_log = f"guild='{interaction.guild.name}({interaction.guild.id})'" if interaction.guild else "guild='DM'", f"user='{interaction.user.name}({interaction.user.id})'"
             logger.info(
-                f"📨 Received /chat request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(message)} chars | images={len(image_contents)}")
+                f"鐙 Received /chat request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(message)} chars | images={len(image_contents)}")
             logger.info(
-                f"[/chat] {interaction.guild.name if interaction.guild else 'DM'}({interaction.guild.id if interaction.guild else 0}),{interaction.user.name}({interaction.user.id})💬 [USER_INPUT] {((message[:200] + '...') if len(message) > 203 else message).replace(chr(10), ' ')}")
-            if not self.bio_manager or not self.memory_manager:
-                await interaction.followup.send(
-                    content="❌ **Plugin Error / プラグインエラー** ❌\n\nCannot respond because required plugins are not initialized.\n必要なプラグインが初期化されていないため、応答できません。",
-                    view=self._create_support_view())
-                return
+                f"[/chat] {interaction.guild.name if interaction.guild else 'DM'}({interaction.guild.id if interaction.guild else 0}),{interaction.user.name}({interaction.user.id})町 [USER_INPUT] {((message[:200] + '...') if len(message) > 203 else message).replace(chr(10), ' ')}")
             system_prompt = await self._prepare_system_prompt(interaction.channel_id, interaction.user.id,
                                                               interaction.user.display_name)
             messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
             user_content_parts = [{"type": "text",
                                    "text": f"{interaction.created_at.astimezone(self.jst).strftime('[%H:%M]')} {message}"}]
             user_content_parts.extend(image_contents)
-            # 言語検出で動的に言語プロンプトを生成
+            # 險隱樊､懷・縺ｧ蜍慕噪縺ｫ險隱槭・繝ｭ繝ｳ繝励ヨ繧堤函謌・
             lang_prompt = self._build_language_prompt(message)
             if lang_prompt:
                 messages_for_api.append({"role": "system", "content": lang_prompt})
             messages_for_api.append({"role": "user", "content": user_content_parts})
-            logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
+            logger.info(f"鳩 [API] Sending {len(messages_for_api)} messages to LLM")
             model_name = llm_client.model_name_for_api_calls
             if self.tips_manager:
                 waiting_embed = self.tips_manager.get_waiting_embed(model_name)
@@ -1834,31 +1768,31 @@ class LLMCog(commands.Cog, name="LLM"):
             else:
                 waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
                 temp_message = await interaction.followup.send(waiting_message, ephemeral=False, wait=True)
-            # スレッド作成ボタンは削除（常にFalse）
+            # 繧ｹ繝ｬ繝・ラ菴懈・繝懊ち繝ｳ縺ｯ蜑企勁・亥ｸｸ縺ｫFalse・・
             sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
                 sent_message=temp_message, channel=interaction.channel, user=interaction.user,
                 messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
             if sent_messages and full_response_text:
                 logger.info(
-                    f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
+                    f"笨・LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
                 log_response, key_log_str = (full_response_text[:200] + '...') if len(
                     full_response_text) > 203 else full_response_text, f" [key{used_key_index + 1}]" if used_key_index is not None else ""
-                logger.info(f"🤖 [LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
+                logger.info(f"､・[LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
                 logger.debug(
                     f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
 
-                # TTS Cogにカスタムイベントを発火させる
+                # TTS Cog縺ｫ繧ｫ繧ｹ繧ｿ繝繧､繝吶Φ繝医ｒ逋ｺ轣ｫ縺輔○繧・
                 try:
                     self.bot.dispatch("llm_response_complete", sent_messages, full_response_text)
-                    logger.info("📢 Dispatched 'llm_response_complete' event for TTS from /chat command.")
+                    logger.info("討 Dispatched 'llm_response_complete' event for TTS from /chat command.")
                 except Exception as e:
                     logger.error(f"Failed to dispatch 'llm_response_complete' event from /chat: {e}", exc_info=True)
 
             elif not sent_messages:
                 logger.warning("LLM response for /chat was empty or an error occurred.")
         except Exception as e:
-            logger.error(f"❌ Error during /chat command execution: {e}", exc_info=True)
-            error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
+            logger.error(f"笶・Error during /chat command execution: {e}", exc_info=True)
+            error_msg = f"笶・**Error / 繧ｨ繝ｩ繝ｼ** 笶圭n\n{self.exception_handler.handle_exception(e)}"
             try:
                 if temp_message:
                     await temp_message.edit(content=error_msg, embed=None, view=self._create_support_view())
@@ -1867,307 +1801,9 @@ class LLMCog(commands.Cog, name="LLM"):
             except discord.HTTPException:
                 pass
 
-    # --- (以降のコマンドは変更なし) ---
-    @app_commands.command(name="set-ai-bio",
-                          description="Set the AI's personality/role (bio) for this channel.\nこのチャンネルのAIの性格や役割(bio)を設定します。")
-    async def set_ai_bio_slash(self, interaction: discord.Interaction, bio: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        if len(bio) > 1024:
-            embed = discord.Embed(title="⚠️ Input Too Long / 入力が長すぎます",
-                                  description="The AI bio is too long. Please set it within 1024 characters.\nAIのbioが長すぎます。1024文字以内で設定してください。",
-                                  color=discord.Color.gold())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.bio_manager.set_channel_bio(interaction.channel_id, bio)
-            logger.info(f"AI bio for channel {interaction.channel_id} set by {interaction.user.name}")
-            embed = discord.Embed(title="✅ AI Bio Set / AIのbioを設定しました",
-                                  description=f"The AI's role in this channel has been set as follows.\nこのチャンネルでのAIの役割が以下のように設定されました。\n\n**New AI Bio / 新しいAIのbio:**\n```\n{bio}\n```",
-                                  color=discord.Color.green())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save channel AI bio settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save AI bio settings.\nAIのbio設定の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
-    @app_commands.command(name="show-ai-bio",
-                          description="Show the AI's current bio for this channel.\nこのチャンネルのAIに現在設定されているbioを表示します。")
-    async def show_ai_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        current_bio = self.bio_manager.get_channel_bio(interaction.channel_id)
-        if current_bio:
-            title, description, color = "Current AI Bio / 現在のAIのbio", f"In this channel, the AI has the following role set.\nこのチャンネルでは、AIに以下の役割が設定されています。\n\n**AI Bio / AIのbio:**\n```\n{current_bio}\n```", discord.Color.blue()
-        else:
-            default_prompt = self.llm_config.get('system_prompt', "Not set. / 設定されていません。")
-            try:
-                formatted_prompt = default_prompt.format(current_date=datetime.now(self.jst).strftime('%Y年%m月%d日'),
-                                                         current_time=datetime.now(self.jst).strftime('%H:%M'))
-            except (KeyError, ValueError):
-                formatted_prompt = default_prompt
-            title, description, color = "Current AI Bio / 現在のAIのbio", f"No specific AI bio is set for this channel. The server's default setting is used.\nこのチャンネルには専用のAI bioが設定されていません。サーバーのデフォルト設定が使用されます。\n\n**Default Setting / デフォルト設定:**\n```\n{formatted_prompt}\n```", discord.Color.greyple()
-        embed = discord.Embed(title=title, description=description, color=color)
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
-    @app_commands.command(name="reset-ai-bio",
-                          description="Reset the AI's bio to default for this channel.\nこのチャンネルのAIのbioをデフォルト設定に戻します。")
-    async def reset_ai_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.bio_manager.reset_channel_bio(interaction.channel_id):
-                logger.info(f"AI bio for channel {interaction.channel_id} reset by {interaction.user.name}")
-                default_prompt = self.llm_config.get('system_prompt', 'Not set / 未設定')
-                try:
-                    formatted_prompt = default_prompt.format(
-                        current_date=datetime.now(self.jst).strftime('%Y年%m月%d日'),
-                        current_time=datetime.now(self.jst).strftime('%H:%M'))
-                except (KeyError, ValueError):
-                    formatted_prompt = default_prompt
-                display_prompt = (formatted_prompt[:100] + '...') if len(formatted_prompt) > 103 else formatted_prompt
-                embed = discord.Embed(title="✅ AI Bio Reset / AIのbioをリセットしました",
-                                      description=f"The AI bio for this channel has been reset to the default.\nこのチャンネルのAIのbioをデフォルト設定に戻しました。\n> Current Default / 現在のデフォルト: `{display_prompt}`",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="ℹ️ No Custom AI Bio / 専用のAI bioはありません",
-                                      description="No custom AI bio is set for this channel.\nこのチャンネルには専用のAI bioが設定されていません。",
-                                      color=discord.Color.blue())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save channel AI bio settings after reset: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save AI bio settings.\nAIのbio設定の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
-    @app_commands.command(name="set-user-bio",
-                          description="Save your information for the AI to remember.\nAIにあなたの情報を記憶させます。")
-    @app_commands.describe(
-        bio="Information about you for the AI to remember (e.g., My name is Tanaka. My hobby is reading.).\nAIに覚えてほしいあなたの情報を記述してください。(例: 私の名前は田中です。趣味は読書です。)",
-        mode="Select save mode. 'Overwrite' or 'Append' is available.\n保存モードを選択してください。'上書き'または'追記'が可能です。")
-    @app_commands.choices(mode=[app_commands.Choice(name="Overwrite / 上書き", value="overwrite"),
-                                app_commands.Choice(name="Append / 追記", value="append"), ])
-    async def set_user_bio_slash(self, interaction: discord.Interaction, bio: str, mode: app_commands.Choice[str]):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        if len(bio) > 1024:
-            embed = discord.Embed(title="⚠️ Input Too Long / 入力が長すぎます",
-                                  description="User bio is too long. Please set it within 1024 characters.\nユーザー情報(bio)が長すぎます。1024文字以内で設定してください。",
-                                  color=discord.Color.gold())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.bio_manager.set_user_bio(interaction.user.id, bio, mode=mode.value)
-            logger.info(
-                f"User bio for {interaction.user.name} ({interaction.user.id}) was set with mode '{mode.value}'.")
-            updated_bio = self.bio_manager.get_user_bio(interaction.user.id)
-            embed = discord.Embed(
-                title=f"✅ Your information has been saved ({mode.name}).\n✅ あなたの情報を記憶しました ({mode.name})",
-                description=f"The AI has stored your information as follows.\nAIはあなたの情報を以下のように記憶しました。\n\n**Your Bio / あなたのbio:**\n```\n{updated_bio}\n```",
-                color=discord.Color.green())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save user bio settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save your information.\nあなたの情報の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="show-user-bio",
-                          description="Show the information the AI has stored about you.\nAIが記憶しているあなたの情報を表示します。")
-    async def show_user_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        current_bio = self.bio_manager.get_user_bio(interaction.user.id)
-        if current_bio:
-            embed = discord.Embed(
-                title=f"💡 {interaction.user.display_name}'s Information / {interaction.user.display_name}さんの情報",
-                description=f"**Bio:**\n```\n{current_bio}\n```", color=discord.Color.blue())
-        else:
-            embed = discord.Embed(
-                title=f"💡 {interaction.user.display_name}'s Information / {interaction.user.display_name}さんの情報",
-                description="Currently, no information is stored about you.\nYou can set it using the `/set-user-bio` command or by asking the AI to remember it in conversation.\n現在、あなたに関する情報は何も記憶されていません。\n`/set-user-bio` コマンドか、会話の中でAIに記憶を頼むことで設定できます。",
-                color=discord.Color.greyple())
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="reset-user-bio",
-                          description="Delete all information the AI has stored about you.\nAIが記憶しているあなたの情報をすべて削除します。")
-    async def reset_user_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.bio_manager.reset_user_bio(interaction.user.id):
-                logger.info(f"User bio for {interaction.user.name} ({interaction.user.id}) was reset.")
-                embed = discord.Embed(title="✅ Information Deleted / 情報を削除しました",
-                                      description=f"All information about {interaction.user.display_name} has been deleted.\n{interaction.user.display_name}さんに関する情報をすべて削除しました。",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="ℹ️ No Information Stored / 情報はありません",
-                                      description="No information is stored about you.\nあなたに関する情報は何も記憶されていません。",
-                                      color=discord.Color.blue())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save user bio settings after reset: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Deletion Error / 削除エラー",
-                                  description="Failed to delete your information.\nあなたの情報の削除に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="memory-save",
-                          description="Save information to your personal memory.\nあなたのメモリに情報を保存します。")
-    @app_commands.describe(
-        key="The key for the information (e.g., 'Developer Announcement').\n情報のキー（項目名） 例: '開発者からのお知らせ'",
-        value="The content of the information (e.g., 'Next maintenance is...').\n情報の内容 例: '次回のメンテナンスは...'")
-    async def memory_save_slash(self, interaction: discord.Interaction, key: str, value: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.memory_manager.save_memory(interaction.user.id, key, value)
-            embed = discord.Embed(title="✅ Saved to Your Memory / あなたのメモリに保存しました",
-                                  color=discord.Color.green())
-            embed.add_field(name="Key / キー", value=f"```{key}```", inline=False)
-            embed.add_field(name="Value / 値", value=f"```{value}```", inline=False)
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save memory for user {interaction.user.id} via command: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save to your memory.\nメモリへの保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="memory-list",
-                          description="List your personal memories.\nあなたのメモリの情報を一覧表示します。")
-    async def memory_list_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        memories = self.memory_manager.list_memories(interaction.user.id)
-        if not memories:
-            embed = discord.Embed(title="ℹ️ No Memories / メモリに情報はありません",
-                                  description="Nothing is saved in your memory.\nあなたのメモリには何も保存されていません。",
-                                  color=discord.Color.blue())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        embed = discord.Embed(title="📝 Your Memory / あなたのメモリ", color=discord.Color.blue())
-        description = ""
-        for key, value in memories.items():
-            field_text = f"**{key}**: {value}\n"
-            if len(description) + len(field_text) > 4000:
-                description += "\n... (partially omitted due to display limit / 表示制限のため一部省略)"
-                break
-            description += field_text
-        embed.description = description
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    async def memory_key_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
-        app_commands.Choice[str]]:
-        if not self.memory_manager: return []
-        keys = self.memory_manager.list_memories(interaction.user.id).keys()
-        return [app_commands.Choice(name=key, value=key) for key in keys if current.lower() in key.lower()][:25]
-
-    @app_commands.command(name="memory-delete",
-                          description="Delete a memory from your personal memories.\nあなたのメモリから情報を削除します。")
-    @app_commands.describe(key="The key of the memory to delete.\n削除したい情報のキー")
-    @app_commands.autocomplete(key=memory_key_autocomplete)
-    async def memory_delete_slash(self, interaction: discord.Interaction, key: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.memory_manager.delete_memory(interaction.user.id, key):
-                embed = discord.Embed(title="✅ Memory Deleted / メモリを削除しました",
-                                      description=f"Deleted key '{key}' from your memory.\nあなたのメモリからキー '{key}' を削除しました。",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="⚠️ Key Not Found / キーが見つかりません",
-                                      description=f"Key '{key}' does not exist in your memory.\nキー '{key}' はあなたのメモリに存在しません。",
-                                      color=discord.Color.gold())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to delete memory for user {interaction.user.id} via command: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Deletion Error / 削除エラー",
-                                  description="Failed to delete from your memory.\nメモリからの削除に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     async def model_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
         app_commands.Choice[str]]:
@@ -2176,15 +1812,15 @@ class LLMCog(commands.Cog, name="LLM"):
                 current.lower() in model.lower()][:25]
 
     @app_commands.command(name="switch-models",
-                          description="Switches the AI model used for this channel.\nこのチャンネルで使用するAIモデルを切り替えます。")
-    @app_commands.describe(model="Select the model you want to use.\n使用したいモデルを選択してください。")
+                          description="Switches the AI model used for this channel.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｧ菴ｿ逕ｨ縺吶ｋAI繝｢繝・Ν繧貞・繧頑崛縺医∪縺吶・)
+    @app_commands.describe(model="Select the model you want to use.\n菴ｿ逕ｨ縺励◆縺・Δ繝・Ν繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・)
     @app_commands.autocomplete(model=model_autocomplete)
     async def switch_model_slash(self, interaction: discord.Interaction, model: str):
         await interaction.response.defer(ephemeral=False)
         available_models = self.llm_config.get('available_models', [])
         if model not in available_models:
-            embed = discord.Embed(title="⚠️ Invalid Model / 無効なモデル",
-                                  description=f"The specified model '{model}' is not available.\n指定されたモデル '{model}' は利用できません。",
+            embed = discord.Embed(title="笞・・Invalid Model / 辟｡蜉ｹ縺ｪ繝｢繝・Ν",
+                                  description=f"The specified model '{model}' is not available.\n謖・ｮ壹＆繧後◆繝｢繝・Ν '{model}' 縺ｯ蛻ｩ逕ｨ縺ｧ縺阪∪縺帙ｓ縲・,
                                   color=discord.Color.gold())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
@@ -2202,30 +1838,30 @@ class LLMCog(commands.Cog, name="LLM"):
             if model != default_model:
                 task = asyncio.create_task(self._schedule_model_reset(channel_id))
                 self.model_reset_tasks[channel_id] = task
-                embed = discord.Embed(title="✅ Model Switched / モデルを切り替えました",
-                                      description=f"The AI model for this channel has been switched to `{model}`.\nIt will automatically revert to the default model (`{default_model}`) **after 3 hours**.\nこのチャンネルのAIモデルが `{model}` に切り替えられました。\n**3時間後**にデフォルトモデル (`{default_model}`) に自動的に戻ります。",
+                embed = discord.Embed(title="笨・Model Switched / 繝｢繝・Ν繧貞・繧頑崛縺医∪縺励◆",
+                                      description=f"The AI model for this channel has been switched to `{model}`.\nIt will automatically revert to the default model (`{default_model}`) **after 3 hours**.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮAI繝｢繝・Ν縺・`{model}` 縺ｫ蛻・ｊ譖ｿ縺医ｉ繧後∪縺励◆縲・n**3譎る俣蠕・*縺ｫ繝・ヵ繧ｩ繝ｫ繝医Δ繝・Ν (`{default_model}`) 縺ｫ閾ｪ蜍慕噪縺ｫ謌ｻ繧翫∪縺吶・,
                                       color=discord.Color.green())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
                 logger.info(
                     f"Model for channel {channel_id} switched to '{model}' by {interaction.user.name}. Reset scheduled in 3 hours.")
             else:
-                embed = discord.Embed(title="✅ Model Reset to Default / モデルをデフォルトに戻しました",
-                                      description=f"The AI model for this channel has been reset to the default `{model}`.\nこのチャンネルのAIモデルがデフォルトの `{model}` に戻されました。",
+                embed = discord.Embed(title="笨・Model Reset to Default / 繝｢繝・Ν繧偵ョ繝輔か繝ｫ繝医↓謌ｻ縺励∪縺励◆",
+                                      description=f"The AI model for this channel has been reset to the default `{model}`.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮAI繝｢繝・Ν縺後ョ繝輔か繝ｫ繝医・ `{model}` 縺ｫ謌ｻ縺輔ｌ縺ｾ縺励◆縲・,
                                       color=discord.Color.green())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
                 logger.info(f"Model for channel {channel_id} switched to default '{model}' by {interaction.user.name}.")
         except Exception as e:
             logger.error(f"Failed to save channel model settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save settings.\n設定の保存に失敗しました。",
+            embed = discord.Embed(title="笶・Save Error / 菫晏ｭ倥お繝ｩ繝ｼ",
+                                  description="Failed to save settings.\n險ｭ螳壹・菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆縲・,
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
 
     @app_commands.command(name="switch-models-default-server",
-                          description="Resets the AI model for this channel to the server default.\nこのチャンネルのAIモデルをサーバーのデフォルト設定に戻します。")
+                          description="Resets the AI model for this channel to the server default.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮAI繝｢繝・Ν繧偵し繝ｼ繝舌・縺ｮ繝・ヵ繧ｩ繝ｫ繝郁ｨｭ螳壹↓謌ｻ縺励∪縺吶・)
     async def reset_model_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         channel_id, channel_id_str = interaction.channel_id, str(interaction.channel_id)
@@ -2237,23 +1873,23 @@ class LLMCog(commands.Cog, name="LLM"):
             del self.channel_models[channel_id_str]
             try:
                 await self._save_channel_models()
-                default_model = self.llm_config.get('model', 'Not set / 未設定')
-                embed = discord.Embed(title="✅ Model Reset to Default / モデルをデフォルトに戻しました",
-                                      description=f"The AI model for this channel has been reset to the default (`{default_model}`).\nこのチャンネルのAIモデルをデフォルト (`{default_model}`) に戻しました。",
+                default_model = self.llm_config.get('model', 'Not set / 譛ｪ險ｭ螳・)
+                embed = discord.Embed(title="笨・Model Reset to Default / 繝｢繝・Ν繧偵ョ繝輔か繝ｫ繝医↓謌ｻ縺励∪縺励◆",
+                                      description=f"The AI model for this channel has been reset to the default (`{default_model}`).\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮAI繝｢繝・Ν繧偵ョ繝輔か繝ｫ繝・(`{default_model}`) 縺ｫ謌ｻ縺励∪縺励◆縲・,
                                       color=discord.Color.green())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
                 logger.info(f"Model for channel {interaction.channel_id} reset to default by {interaction.user.name}")
             except Exception as e:
                 logger.error(f"Failed to save channel model settings after reset: {e}", exc_info=True)
-                embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                      description="Failed to save settings.\n設定の保存に失敗しました。",
+                embed = discord.Embed(title="笶・Save Error / 菫晏ｭ倥お繝ｩ繝ｼ",
+                                      description="Failed to save settings.\n險ｭ螳壹・菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆縲・,
                                       color=discord.Color.red())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view())
         else:
-            embed = discord.Embed(title="ℹ️ No Custom Model Set / 専用モデルはありません",
-                                  description="No custom model is set for this channel.\nこのチャンネルには専用のモデルが設定されていません。",
+            embed = discord.Embed(title="邃ｹ・・No Custom Model Set / 蟆ら畑繝｢繝・Ν縺ｯ縺ゅｊ縺ｾ縺帙ｓ",
+                                  description="No custom model is set for this channel.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｫ縺ｯ蟆ら畑縺ｮ繝｢繝・Ν縺瑚ｨｭ螳壹＆繧後※縺・∪縺帙ｓ縲・,
                                   color=discord.Color.blue())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
@@ -2261,8 +1897,8 @@ class LLMCog(commands.Cog, name="LLM"):
     @switch_model_slash.error
     async def switch_model_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         logger.error(f"Error in /switch-model command: {error}", exc_info=True)
-        error_message = f"An unexpected error occurred: {error}\n予期せぬエラーが発生しました: {error}"
-        embed = discord.Embed(title="❌ Unexpected Error / 予期せぬエラー", description=error_message,
+        error_message = f"An unexpected error occurred: {error}\n莠域悄縺帙〓繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {error}"
+        embed = discord.Embed(title="笶・Unexpected Error / 莠域悄縺帙〓繧ｨ繝ｩ繝ｼ", description=error_message,
                               color=discord.Color.red())
         self._add_support_footer(embed)
         view = self._create_support_view()
@@ -2288,25 +1924,25 @@ class LLMCog(commands.Cog, name="LLM"):
         return [app_commands.Choice(name=model, value=model) for model in filtered][:25]
 
     @app_commands.command(name="switch-image-model",
-                          description="Switch the image generation model for this channel. / このチャンネルの画像生成モデルを切り替えます。")
+                          description="Switch the image generation model for this channel. / 縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν繧貞・繧頑崛縺医∪縺吶・)
     @app_commands.describe(
-        model="Select the image generation model you want to use. / 使用したい画像生成モデルを選択してください。")
+        model="Select the image generation model you want to use. / 菴ｿ逕ｨ縺励◆縺・判蜒冗函謌舌Δ繝・Ν繧帝∈謚槭＠縺ｦ縺上□縺輔＞縲・)
     @app_commands.autocomplete(model=image_model_autocomplete)
     async def switch_image_model_slash(self, interaction: discord.Interaction, model: str):
         await interaction.response.defer(ephemeral=False)
         if not self.image_generator:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
+            embed = discord.Embed(title="笶・Plugin Error / 繝励Λ繧ｰ繧､繝ｳ繧ｨ繝ｩ繝ｼ",
+                                  description="ImageGenerator is not available.\nImageGenerator縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・,
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
             return
-        # プロバイダー付き形式（provider/model_name）の場合は実際のモデル名を抽出
+        # 繝励Ο繝舌う繝繝ｼ莉倥″蠖｢蠑擾ｼ・rovider/model_name・峨・蝣ｴ蜷医・螳滄圀縺ｮ繝｢繝・Ν蜷阪ｒ謚ｽ蜃ｺ
         actual_model = model.split('/', 1)[1] if '/' in model else model
         available_models = self.image_generator.get_available_models()
         if actual_model not in available_models:
-            embed = discord.Embed(title="⚠️ Invalid Model / 無効なモデル",
-                                  description=f"The specified model `{model}` is not available.\n指定されたモデル `{model}` は利用できません。",
+            embed = discord.Embed(title="笞・・Invalid Model / 辟｡蜉ｹ縺ｪ繝｢繝・Ν",
+                                  description=f"The specified model `{model}` is not available.\n謖・ｮ壹＆繧後◆繝｢繝・Ν `{model}` 縺ｯ蛻ｩ逕ｨ縺ｧ縺阪∪縺帙ｓ縲・,
                                   color=discord.Color.gold())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
@@ -2320,39 +1956,39 @@ class LLMCog(commands.Cog, name="LLM"):
                 provider, model_name = "local", model
 
             if model != default_model:
-                embed = discord.Embed(title="✅ Image Model Switched / 画像生成モデルを切り替えました",
-                                      description="The image generation model for this channel has been switched.\nこのチャンネルの画像生成モデルを切り替えました。",
+                embed = discord.Embed(title="笨・Image Model Switched / 逕ｻ蜒冗函謌舌Δ繝・Ν繧貞・繧頑崛縺医∪縺励◆",
+                                      description="The image generation model for this channel has been switched.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν繧貞・繧頑崛縺医∪縺励◆縲・,
                                       color=discord.Color.green())
-                embed.add_field(name="New Model / 新しいモデル", value=f"```\n{model}\n```", inline=False)
-                embed.add_field(name="Provider / プロバイダー", value=f"`{provider}`", inline=True)
-                embed.add_field(name="Model Name / モデル名", value=f"`{model_name}`", inline=True)
-                embed.add_field(name="💡 Tip / ヒント",
-                                value=f"To reset to default (`{default_model}`), use `/reset-image-model`\nデフォルト (`{default_model}`) に戻すには `/reset-image-model`",
+                embed.add_field(name="New Model / 譁ｰ縺励＞繝｢繝・Ν", value=f"```\n{model}\n```", inline=False)
+                embed.add_field(name="Provider / 繝励Ο繝舌う繝繝ｼ", value=f"`{provider}`", inline=True)
+                embed.add_field(name="Model Name / 繝｢繝・Ν蜷・, value=f"`{model_name}`", inline=True)
+                embed.add_field(name="庁 Tip / 繝偵Φ繝・,
+                                value=f"To reset to default (`{default_model}`), use `/reset-image-model`\n繝・ヵ繧ｩ繝ｫ繝・(`{default_model}`) 縺ｫ謌ｻ縺吶↓縺ｯ `/reset-image-model`",
                                 inline=False)
             else:
-                embed = discord.Embed(title="✅ Image Model Set to Default / 画像生成モデルをデフォルトに設定しました",
-                                      description="The image generation model for this channel is now the default.\nこのチャンネルの画像生成モデルがデフォルトになりました。",
+                embed = discord.Embed(title="笨・Image Model Set to Default / 逕ｻ蜒冗函謌舌Δ繝・Ν繧偵ョ繝輔か繝ｫ繝医↓險ｭ螳壹＠縺ｾ縺励◆",
+                                      description="The image generation model for this channel is now the default.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν縺後ョ繝輔か繝ｫ繝医↓縺ｪ繧翫∪縺励◆縲・,
                                       color=discord.Color.green())
-                embed.add_field(name="Model / モデル", value=f"```\n{model}\n```", inline=False)
+                embed.add_field(name="Model / 繝｢繝・Ν", value=f"```\n{model}\n```", inline=False)
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             logger.info(
                 f"Image model for channel {interaction.channel_id} switched to '{model}' by {interaction.user.name}")
         except Exception as e:
             logger.error(f"Failed to save channel image model settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save settings.\n設定の保存に失敗しました。",
+            embed = discord.Embed(title="笶・Save Error / 菫晏ｭ倥お繝ｩ繝ｼ",
+                                  description="Failed to save settings.\n險ｭ螳壹・菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆縲・,
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
 
     @app_commands.command(name="show-image-model",
-                          description="Show the current image generation model for this channel. / このチャンネルの現在の画像生成モデルを表示します。")
+                          description="Show the current image generation model for this channel. / 縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ迴ｾ蝨ｨ縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν繧定｡ｨ遉ｺ縺励∪縺吶・)
     async def show_image_model_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         if not self.image_generator:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
+            embed = discord.Embed(title="笶・Plugin Error / 繝励Λ繧ｰ繧､繝ｳ繧ｨ繝ｩ繝ｼ",
+                                  description="ImageGenerator is not available.\nImageGenerator縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・,
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
@@ -2365,31 +2001,31 @@ class LLMCog(commands.Cog, name="LLM"):
         except ValueError:
             provider, model_name = "local", current_model
 
-        embed = discord.Embed(title="🎨 Current Image Generation Model / 現在の画像生成モデル",
+        embed = discord.Embed(title="耳 Current Image Generation Model / 迴ｾ蝨ｨ縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν",
                               color=discord.Color.blue() if is_default else discord.Color.purple())
-        embed.add_field(name="Current Model / 現在のモデル", value=f"```\n{current_model}\n```", inline=False)
-        embed.add_field(name="Provider / プロバイダー", value=f"`{provider}`", inline=True)
-        embed.add_field(name="Status / 状態", value='`Default / デフォルト`' if is_default else '`Custom / カスタム`',
+        embed.add_field(name="Current Model / 迴ｾ蝨ｨ縺ｮ繝｢繝・Ν", value=f"```\n{current_model}\n```", inline=False)
+        embed.add_field(name="Provider / 繝励Ο繝舌う繝繝ｼ", value=f"`{provider}`", inline=True)
+        embed.add_field(name="Status / 迥ｶ諷・, value='`Default / 繝・ヵ繧ｩ繝ｫ繝・' if is_default else '`Custom / 繧ｫ繧ｹ繧ｿ繝`',
                         inline=True)
         models_by_provider = self.image_generator.get_models_by_provider()
         for provider_name, models in sorted(models_by_provider.items()):
-            model_list = "\n".join([f"• `{m.split('/', 1)[1]}`" for m in models[:5]])
-            if len(models) > 5: model_list += f"\n• ... and {len(models) - 5} more"
-            embed.add_field(name=f"📦 {provider_name.title()} Models", value=model_list or "None", inline=True)
-        embed.add_field(name="💡 Commands / コマンド",
-                        value="• `/switch-image-model` - Change model / モデル変更\n• `/reset-image-model` - Reset to default / デフォルトに戻す",
+            model_list = "\n".join([f"窶｢ `{m.split('/', 1)[1]}`" for m in models[:5]])
+            if len(models) > 5: model_list += f"\n窶｢ ... and {len(models) - 5} more"
+            embed.add_field(name=f"逃 {provider_name.title()} Models", value=model_list or "None", inline=True)
+        embed.add_field(name="庁 Commands / 繧ｳ繝槭Φ繝・,
+                        value="窶｢ `/switch-image-model` - Change model / 繝｢繝・Ν螟画峩\n窶｢ `/reset-image-model` - Reset to default / 繝・ヵ繧ｩ繝ｫ繝医↓謌ｻ縺・,
                         inline=False)
         self._add_support_footer(embed)
         await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     @app_commands.command(name="list-image-models",
-                          description="List all available image generation models. / 利用可能な画像生成モデルの一覧を表示します。")
-    @app_commands.describe(provider="Filter by provider (optional). / プロバイダーで絞り込み（オプション）")
+                          description="List all available image generation models. / 蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ逕ｻ蜒冗函謌舌Δ繝・Ν縺ｮ荳隕ｧ繧定｡ｨ遉ｺ縺励∪縺吶・)
+    @app_commands.describe(provider="Filter by provider (optional). / 繝励Ο繝舌う繝繝ｼ縺ｧ邨槭ｊ霎ｼ縺ｿ・医が繝励す繝ｧ繝ｳ・・)
     async def list_image_models_slash(self, interaction: discord.Interaction, provider: str = None):
         await interaction.response.defer(ephemeral=False)
         if not self.image_generator:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
+            embed = discord.Embed(title="笶・Plugin Error / 繝励Λ繧ｰ繧､繝ｳ繧ｨ繝ｩ繝ｼ",
+                                  description="ImageGenerator is not available.\nImageGenerator縺悟茜逕ｨ縺ｧ縺阪∪縺帙ｓ縲・,
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
@@ -2399,28 +2035,28 @@ class LLMCog(commands.Cog, name="LLM"):
             provider_lower = provider.lower()
             models_by_provider = {k: v for k, v in models_by_provider.items() if provider_lower in k.lower()}
             if not models_by_provider:
-                embed = discord.Embed(title="⚠️ No Models Found / モデルが見つかりません",
-                                      description=f"No models found for provider: `{provider}`\nプロバイダー `{provider}` のモデルが見つかりません。",
+                embed = discord.Embed(title="笞・・No Models Found / 繝｢繝・Ν縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ",
+                                      description=f"No models found for provider: `{provider}`\n繝励Ο繝舌う繝繝ｼ `{provider}` 縺ｮ繝｢繝・Ν縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縲・,
                                       color=discord.Color.gold())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view())
                 return
         total_models = sum(len(models) for models in models_by_provider.values())
-        embed = discord.Embed(title="🎨 Available Image Generation Models / 利用可能な画像生成モデル",
-                              description=f"Total: {total_models} models across {len(models_by_provider)} provider(s)\n合計: {len(models_by_provider)}プロバイダー、{total_models}モデル",
+        embed = discord.Embed(title="耳 Available Image Generation Models / 蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ逕ｻ蜒冗函謌舌Δ繝・Ν",
+                              description=f"Total: {total_models} models across {len(models_by_provider)} provider(s)\n蜷郁ｨ・ {len(models_by_provider)}繝励Ο繝舌う繝繝ｼ縲＋total_models}繝｢繝・Ν",
                               color=discord.Color.blue())
         for provider_name, models in sorted(models_by_provider.items()):
-            # モデル名からプロバイダー部分を除去（表示用）
+            # 繝｢繝・Ν蜷阪°繧峨・繝ｭ繝舌う繝繝ｼ驛ｨ蛻・ｒ髯､蜴ｻ・郁｡ｨ遉ｺ逕ｨ・・
             model_names = [m.split('/', 1)[1] if '/' in m else m for m in models]
             if len(model_names) > 10:
                 model_text = "\n".join([f"{i + 1}. `{m}`" for i, m in enumerate(model_names[:10])])
                 model_text += f"\n... and {len(model_names) - 10} more"
             else:
                 model_text = "\n".join([f"{i + 1}. `{m}`" for i, m in enumerate(model_names)])
-            embed.add_field(name=f"📦 {provider_name.title()} ({len(models)} models)", value=model_text or "None",
+            embed.add_field(name=f"逃 {provider_name.title()} ({len(models)} models)", value=model_text or "None",
                             inline=False)
-        embed.add_field(name="💡 How to Use / 使い方",
-                        value="Use `/switch-image-model` to change the model for this channel.\n`/switch-image-model` でこのチャンネルのモデルを変更できます。",
+        embed.add_field(name="庁 How to Use / 菴ｿ縺・婿",
+                        value="Use `/switch-image-model` to change the model for this channel.\n`/switch-image-model` 縺ｧ縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ繝｢繝・Ν繧貞､画峩縺ｧ縺阪∪縺吶・,
                         inline=False)
         self._add_support_footer(embed)
         await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
@@ -2428,8 +2064,8 @@ class LLMCog(commands.Cog, name="LLM"):
     @switch_image_model_slash.error
     async def switch_image_model_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         logger.error(f"Error in /switch-image-model command: {error}", exc_info=True)
-        error_message = f"An unexpected error occurred: {error}\n予期せぬエラーが発生しました: {error}"
-        embed = discord.Embed(title="❌ Unexpected Error / 予期せぬエラー", description=error_message,
+        error_message = f"An unexpected error occurred: {error}\n莠域悄縺帙〓繧ｨ繝ｩ繝ｼ縺檎匱逕溘＠縺ｾ縺励◆: {error}"
+        embed = discord.Embed(title="笶・Unexpected Error / 莠域悄縺帙〓繧ｨ繝ｩ繝ｼ", description=error_message,
                               color=discord.Color.red())
         self._add_support_footer(embed)
         view = self._create_support_view()
@@ -2439,83 +2075,66 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=view, ephemeral=False)
 
     @app_commands.command(name="llm_help",
-                          description="Displays help and usage guidelines for LLM (AI Chat) features.\nLLM (AI対話) 機能のヘルプと利用ガイドラインを表示します。")
+                          description="Displays help and usage guidelines for LLM (AI Chat) features.\nLLM (AI蟇ｾ隧ｱ) 讖溯・縺ｮ繝倥Ν繝励→蛻ｩ逕ｨ繧ｬ繧､繝峨Λ繧､繝ｳ繧定｡ｨ遉ｺ縺励∪縺吶・)
     async def llm_help_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         bot_user = self.bot.user or interaction.client.user
-        bot_name = bot_user.name if bot_user else "This Bot / 当Bot"
-        embed = discord.Embed(title=f"💡 {bot_name} AI Chat Help & Guidelines / AI対話機能ヘルプ＆ガイドライン",
-                              description=f"Explanation and terms of use for the AI chat features.\n{bot_name}のAI対話機能についての説明と利用規約です。",
+        bot_name = bot_user.name if bot_user else "This Bot / 蠖釘ot"
+        embed = discord.Embed(title=f"庁 {bot_name} AI Chat Help & Guidelines / AI蟇ｾ隧ｱ讖溯・繝倥Ν繝暦ｼ・ぎ繧､繝峨Λ繧､繝ｳ",
+                              description=f"Explanation and terms of use for the AI chat features.\n{bot_name}縺ｮAI蟇ｾ隧ｱ讖溯・縺ｫ縺､縺・※縺ｮ隱ｬ譏弱→蛻ｩ逕ｨ隕冗ｴ・〒縺吶・,
                               color=discord.Color.purple())
         if bot_user and bot_user.avatar: embed.set_thumbnail(url=bot_user.avatar.url)
-        embed.add_field(name="Basic Usage / 基本的な使い方",
-                        value=f"• Mention the bot (`@{bot_name}`) to get a response from the AI.\n  Botにメンション (`@{bot_name}`) して話しかけると、AIが応答します。\n• **You can also continue the conversation by replying to the bot's messages (no mention needed).**\n  **Botのメッセージに返信することでも会話を続けられます（メンション不要）。**\n• If you ask the AI to remember something, it will try to store that information.\n  「私の名前は〇〇です。覚えておいて」のように話しかけると、AIがあなたの情報を記憶しようとします。\n• Attach images or paste image URLs with your message, and the AI will try to understand them.\n  画像と一緒に話しかけると、AIが画像の内容も理解しようとします。",
+        embed.add_field(name="Basic Usage / 蝓ｺ譛ｬ逧・↑菴ｿ縺・婿",
+                        value=f"窶｢ Mention the bot (`@{bot_name}`) to get a response from the AI.\n  Bot縺ｫ繝｡繝ｳ繧ｷ繝ｧ繝ｳ (`@{bot_name}`) 縺励※隧ｱ縺励°縺代ｋ縺ｨ縲、I縺悟ｿ懃ｭ斐＠縺ｾ縺吶・n窶｢ **You can also continue the conversation by replying to the bot's messages (no mention needed).**\n  **Bot縺ｮ繝｡繝・そ繝ｼ繧ｸ縺ｫ霑比ｿ｡縺吶ｋ縺薙→縺ｧ繧ゆｼ夊ｩｱ繧堤ｶ壹￠繧峨ｌ縺ｾ縺呻ｼ医Γ繝ｳ繧ｷ繝ｧ繝ｳ荳崎ｦ・ｼ峨・*\n窶｢ If you ask the AI to remember something, it will try to store that information.\n  縲檎ｧ√・蜷榊燕縺ｯ縲・・〒縺吶りｦ壹∴縺ｦ縺翫＞縺ｦ縲阪・繧医≧縺ｫ隧ｱ縺励°縺代ｋ縺ｨ縲、I縺後≠縺ｪ縺溘・諠・ｱ繧定ｨ俶・縺励ｈ縺・→縺励∪縺吶・n窶｢ Attach images or paste image URLs with your message, and the AI will try to understand them.\n  逕ｻ蜒上→荳邱偵↓隧ｱ縺励°縺代ｋ縺ｨ縲、I縺檎判蜒上・蜀・ｮｹ繧ら炊隗｣縺励ｈ縺・→縺励∪縺吶・,
                         inline=False)
 
         # Split "Useful Commands" into multiple fields to avoid character limits
-        embed.add_field(name="Commands - AI/Channel Settings / コマンド - AI/チャンネル設定",
-                        value="• `/switch-models`: Change the AI model used in this channel. / このチャンネルで使うAIモデルを変更します。\n"
-                              "• `/set-ai-bio`: Set a custom personality/role for the AI in this channel. / このチャンネル専用のAIの性格や役割を設定します。\n"
-                              "• `/show-ai-bio`: Check the current AI bio setting. / 現在のAIのbio設定を確認します。\n"
-                              "• `/reset-ai-bio`: Reset the AI bio to the default. / AIのbio設定をデフォルトに戻します。",
+        embed.add_field(name="Commands - AI/Channel Settings / 繧ｳ繝槭Φ繝・- AI/繝√Ε繝ｳ繝阪Ν險ｭ螳・,
+                        value="窶｢ `/switch-models`: Change the AI model used in this channel. / 縺薙・繝√Ε繝ｳ繝阪Ν縺ｧ菴ｿ縺・I繝｢繝・Ν繧貞､画峩縺励∪縺吶・n"
+                              "窶｢ `/set-ai-bio`: Set a custom personality/role for the AI in this channel. / 縺薙・繝√Ε繝ｳ繝阪Ν蟆ら畑縺ｮAI縺ｮ諤ｧ譬ｼ繧・ｽｹ蜑ｲ繧定ｨｭ螳壹＠縺ｾ縺吶・n"
+                              "窶｢ `/show-ai-bio`: Check the current AI bio setting. / 迴ｾ蝨ｨ縺ｮAI縺ｮbio險ｭ螳壹ｒ遒ｺ隱阪＠縺ｾ縺吶・n"
+                              "窶｢ `/reset-ai-bio`: Reset the AI bio to the default. / AI縺ｮbio險ｭ螳壹ｒ繝・ヵ繧ｩ繝ｫ繝医↓謌ｻ縺励∪縺吶・,
                         inline=False)
 
-        embed.add_field(name="Commands - Image Generation / コマンド - 画像生成",
-                        value="• `/switch-image-model`: Switch the image generation model for this channel. / このチャンネルの画像生成モデルを切り替えます。\n"
-                              "• `/reset-image-model`: Reset the image generation model to default. / 画像生成モデルをデフォルトに戻します。\n"
-                              "• `/show-image-model`: Show the current image generation model. / 現在の画像生成モデルを表示します。\n"
-                              "• `/list-image-models`: List all available image generation models. / 利用可能な全画像生成モデルを一覧表示します。",
+        embed.add_field(name="Commands - Image Generation / 繧ｳ繝槭Φ繝・- 逕ｻ蜒冗函謌・,
+                        value="窶｢ `/switch-image-model`: Switch the image generation model for this channel. / 縺薙・繝√Ε繝ｳ繝阪Ν縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν繧貞・繧頑崛縺医∪縺吶・n"
+                              "窶｢ `/reset-image-model`: Reset the image generation model to default. / 逕ｻ蜒冗函謌舌Δ繝・Ν繧偵ョ繝輔か繝ｫ繝医↓謌ｻ縺励∪縺吶・n"
+                              "窶｢ `/show-image-model`: Show the current image generation model. / 迴ｾ蝨ｨ縺ｮ逕ｻ蜒冗函謌舌Δ繝・Ν繧定｡ｨ遉ｺ縺励∪縺吶・n"
+                              "窶｢ `/list-image-models`: List all available image generation models. / 蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ蜈ｨ逕ｻ蜒冗函謌舌Δ繝・Ν繧剃ｸ隕ｧ陦ｨ遉ｺ縺励∪縺吶・,
                         inline=False)
 
-        embed.add_field(name="Commands - User Info / コマンド - ユーザー情報",
-                        value="• `/set-user-bio`: Set information about you for the AI to remember. / AIに覚えてほしいあなたの情報を設定します。\n"
-                              "• `/show-user-bio`: Check the information the AI has stored about you. / AIが記憶しているあなたの情報を確認します。\n"
-                              "• `/reset-user-bio`: Delete your information from the AI's memory. / あなたの情報をAIの記憶から削除します。",
-                        inline=False)
 
-        embed.add_field(name="Commands - Global Memory / コマンド - グローバルメモリ",
-                        value="• `/memory-save`: Save information to the global shared memory. / 全サーバー共通のメモリに情報を保存します。\n"
-                              "• `/memory-list`: List all information in the global memory. / グローバルメモリの情報を一覧表示します。\n"
-                              "• `/memory-delete`: Delete information from the global memory. / グローバルメモリから情報を削除します。",
-                        inline=False)
-
-        embed.add_field(name="Commands - Other / コマンド - その他",
-                        value="• `/chat`: Chat with the AI without needing to mention. / AIとメンションなしで対話します。\n"
-                              "• `/clear_history`: Reset the conversation history. / 会話履歴をリセットします。",
+        embed.add_field(name="Commands - Other / 繧ｳ繝槭Φ繝・- 縺昴・莉・,
+                        value="窶｢ `/chat`: Chat with the AI without needing to mention. / AI縺ｨ繝｡繝ｳ繧ｷ繝ｧ繝ｳ縺ｪ縺励〒蟇ｾ隧ｱ縺励∪縺吶・n"
+                              "窶｢ `/clear_history`: Reset the conversation history. / 莨夊ｩｱ螻･豁ｴ繧偵Μ繧ｻ繝・ヨ縺励∪縺吶・,
                         inline=False)
                         
         channel_model_str = self.channel_models.get(str(interaction.channel_id))
-        model_display = f"`{channel_model_str}` (Channel-specific / このチャンネル専用)" if channel_model_str else f"`{self.llm_config.get('model', 'Not set / 未設定')}` (Default / デフォルト)"
-        ai_bio_display, user_bio_display = "N/A", "N/A"
-        if self.bio_manager:
-            ai_bio_display = "✅ (Custom / 専用設定あり)" if self.bio_manager.get_channel_bio(
-                interaction.channel_id) else "Default / デフォルト"
-            user_bio_display = "✅ (Stored / 記憶あり)" if self.bio_manager.get_user_bio(
-                interaction.user.id) else "None / なし"
+        model_display = f"`{channel_model_str}` (Channel-specific / 縺薙・繝√Ε繝ｳ繝阪Ν蟆ら畑)" if channel_model_str else f"`{self.llm_config.get('model', 'Not set / 譛ｪ險ｭ螳・)}` (Default / 繝・ヵ繧ｩ繝ｫ繝・"
         active_tools = self.llm_config.get('active_tools', [])
-        tools_info = "• None / なし" if not active_tools else "• " + ", ".join(active_tools)
-        embed.add_field(name="Current AI Settings / 現在のAI設定",
-                        value=f"• **Model in Use / 使用モデル:** {model_display}\n• **AI Role (Channel) / AIの役割(チャンネル):** {ai_bio_display} (see `/show-ai-bio`)\n• **Your Info / あなたの情報:** {user_bio_display} (see `/show-user-bio`)\n• **Max Conversation History / 会話履歴の最大保持数:** {self.llm_config.get('max_messages', 'Not set / 未設定')} pairs\n• **Max Images at Once / 一度に処理できる最大画像枚数:** {self.llm_config.get('max_images', 'Not set / 未設定')} image(s)\n• **Available Tools / 利用可能なツール:** {tools_info}",
+        tools_info = "窶｢ None / 縺ｪ縺・ if not active_tools else "窶｢ " + ", ".join(active_tools)
+        embed.add_field(name="Current AI Settings / 迴ｾ蝨ｨ縺ｮAI險ｭ螳・,
+                        value=f"窶｢ **Model in Use / 菴ｿ逕ｨ繝｢繝・Ν:** {model_display}\n窶｢ **AI Role (Channel) / AI縺ｮ蠖ｹ蜑ｲ(繝√Ε繝ｳ繝阪Ν):** {ai_bio_display} (see `/show-ai-bio`)\n窶｢ **Your Info / 縺ゅ↑縺溘・諠・ｱ:** {user_bio_display} (see `/show-user-bio`)\n窶｢ **Max Conversation History / 莨夊ｩｱ螻･豁ｴ縺ｮ譛螟ｧ菫晄戟謨ｰ:** {self.llm_config.get('max_messages', 'Not set / 譛ｪ險ｭ螳・)} pairs\n窶｢ **Max Images at Once / 荳蠎ｦ縺ｫ蜃ｦ逅・〒縺阪ｋ譛螟ｧ逕ｻ蜒乗椢謨ｰ:** {self.llm_config.get('max_images', 'Not set / 譛ｪ險ｭ螳・)} image(s)\n窶｢ **Available Tools / 蛻ｩ逕ｨ蜿ｯ閭ｽ縺ｪ繝・・繝ｫ:** {tools_info}",
                         inline=False)
-        embed.add_field(name="--- 📜 AI Usage Guidelines / AI利用ガイドライン ---",
-                        value="Please review the following to ensure safe use of the AI features.\nAI機能を安全にご利用いただくため、以下の内容を必ずご確認ください。",
+        embed.add_field(name="--- 糖 AI Usage Guidelines / AI蛻ｩ逕ｨ繧ｬ繧､繝峨Λ繧､繝ｳ ---",
+                        value="Please review the following to ensure safe use of the AI features.\nAI讖溯・繧貞ｮ牙・縺ｫ縺泌茜逕ｨ縺・◆縺縺上◆繧√∽ｻ･荳九・蜀・ｮｹ繧貞ｿ・★縺皮｢ｺ隱阪￥縺縺輔＞縲・,
                         inline=False)
-        embed.add_field(name="⚠️ 1. Data Input Precautions / データ入力時の注意",
-                        value="**NEVER include personal or confidential information** such as your name, contact details, or passwords.\nAIに記憶させる情報には、氏名、連絡先、パスワードなどの**個人情報や秘密情報を絶対に含めないでください。**",
+        embed.add_field(name="笞・・1. Data Input Precautions / 繝・・繧ｿ蜈･蜉帶凾縺ｮ豕ｨ諢・,
+                        value="**NEVER include personal or confidential information** such as your name, contact details, or passwords.\nAI縺ｫ險俶・縺輔○繧区ュ蝣ｱ縺ｫ縺ｯ縲∵ｰ丞錐縲・｣邨｡蜈医√ヱ繧ｹ繝ｯ繝ｼ繝峨↑縺ｩ縺ｮ**蛟倶ｺｺ諠・ｱ繧・ｧ伜ｯ・ュ蝣ｱ繧堤ｵｶ蟇ｾ縺ｫ蜷ｫ繧√↑縺・〒縺上□縺輔＞縲・*",
                         inline=False)
-        embed.add_field(name="✅ 2. Precautions for Using Generated Output / 生成物利用時の注意",
-                        value="The AI's responses may contain inaccuracies or biases. **Always fact-check and use them at your own risk.**\nAIの応答には虚偽や偏見が含まれる可能性があります。**必ずファクトチェックを行い、自己の責任で利用してください。**",
+        embed.add_field(name="笨・2. Precautions for Using Generated Output / 逕滓・迚ｩ蛻ｩ逕ｨ譎ゅ・豕ｨ諢・,
+                        value="The AI's responses may contain inaccuracies or biases. **Always fact-check and use them at your own risk.**\nAI縺ｮ蠢懃ｭ斐↓縺ｯ陌壼⊃繧・￥隕九′蜷ｫ縺ｾ繧後ｋ蜿ｯ閭ｽ諤ｧ縺後≠繧翫∪縺吶・*蠢・★繝輔ぃ繧ｯ繝医メ繧ｧ繝・け繧定｡後＞縲∬・蟾ｱ縺ｮ雋ｬ莉ｻ縺ｧ蛻ｩ逕ｨ縺励※縺上□縺輔＞縲・*",
                         inline=False)
         embed.set_footer(
-            text="These guidelines are subject to change without notice.\nガイドラインは予告なく変更される場合があります。")
+            text="These guidelines are subject to change without notice.\n繧ｬ繧､繝峨Λ繧､繝ｳ縺ｯ莠亥相縺ｪ縺丞､画峩縺輔ｌ繧句ｴ蜷医′縺ゅｊ縺ｾ縺吶・)
         self._add_support_footer(embed)
         await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     @app_commands.command(name="clear_history",
-                          description="Clears the history of the current conversation thread.\n現在の会話スレッドの履歴をクリアします。")
+                          description="Clears the history of the current conversation thread.\n迴ｾ蝨ｨ縺ｮ莨夊ｩｱ繧ｹ繝ｬ繝・ラ縺ｮ螻･豁ｴ繧偵け繝ｪ繧｢縺励∪縺吶・)
     async def clear_history_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
-        guild_id = interaction.guild.id if interaction.guild else 0  # DMの場合は0
+        guild_id = interaction.guild.id if interaction.guild else 0  # DM縺ｮ蝣ｴ蜷医・0
         cleared_count, threads_to_clear = 0, set()
         
         try:
@@ -2523,8 +2142,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 if guild_id in self.message_to_thread and msg.id in self.message_to_thread[guild_id]: 
                     threads_to_clear.add(self.message_to_thread[guild_id][msg.id])
         except (discord.Forbidden, discord.HTTPException):
-            embed = discord.Embed(title="⚠️ Permission Error / 権限エラー",
-                                  description="Could not read the channel's message history.\nチャンネルのメッセージ履歴を読み取れませんでした。",
+            embed = discord.Embed(title="笞・・Permission Error / 讓ｩ髯舌お繝ｩ繝ｼ",
+                                  description="Could not read the channel's message history.\n繝√Ε繝ｳ繝阪Ν縺ｮ繝｡繝・そ繝ｼ繧ｸ螻･豁ｴ繧定ｪｭ縺ｿ蜿悶ｌ縺ｾ縺帙ｓ縺ｧ縺励◆縲・,
                                   color=discord.Color.gold())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
@@ -2541,14 +2160,14 @@ class LLMCog(commands.Cog, name="LLM"):
                 cleared_count += 1
         
         if cleared_count > 0:
-            embed = discord.Embed(title="✅ History Cleared / 履歴をクリアしました",
-                                  description=f"Cleared the history of {cleared_count} conversation thread(s) related to this channel.\nこのチャンネルに関連する {cleared_count} 個の会話スレッドの履歴をクリアしました。",
+            embed = discord.Embed(title="笨・History Cleared / 螻･豁ｴ繧偵け繝ｪ繧｢縺励∪縺励◆",
+                                  description=f"Cleared the history of {cleared_count} conversation thread(s) related to this channel.\n縺薙・繝√Ε繝ｳ繝阪Ν縺ｫ髢｢騾｣縺吶ｋ {cleared_count} 蛟九・莨夊ｩｱ繧ｹ繝ｬ繝・ラ縺ｮ螻･豁ｴ繧偵け繝ｪ繧｢縺励∪縺励◆縲・,
                                   color=discord.Color.green())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
         else:
-            embed = discord.Embed(title="ℹ️ No History Found / 履歴がありません",
-                                  description="No conversation history to clear was found.\nクリア対象の会話履歴が見つかりませんでした。",
+            embed = discord.Embed(title="邃ｹ・・No History Found / 螻･豁ｴ縺後≠繧翫∪縺帙ｓ",
+                                  description="No conversation history to clear was found.\n繧ｯ繝ｪ繧｢蟇ｾ雎｡縺ｮ莨夊ｩｱ螻･豁ｴ縺瑚ｦ九▽縺九ｊ縺ｾ縺帙ｓ縺ｧ縺励◆縲・,
                                   color=discord.Color.blue())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
