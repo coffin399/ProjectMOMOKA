@@ -290,7 +290,7 @@ class LLMCog(commands.Cog, name="LLM"):
         # configに基づくプラグイン初期化
         active_tools = self.llm_config.get('active_tools', [])
         if 'search' in active_tools and SearchAgent:
-            plugins["SearchAgent"] = SearchAgent(self.bot)
+            plugins["SearchAgent"] = SearchAgent(self.bot, self.llm_config)
         
         if self.llm_config.get('commands_manager', True) and CommandInfoManager:
             plugins["CommandInfoManager"] = CommandInfoManager(self.bot)
