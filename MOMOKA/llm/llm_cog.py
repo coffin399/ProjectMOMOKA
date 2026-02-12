@@ -697,11 +697,6 @@ class LLMCog(commands.Cog, name="LLM"):
         if text_content: logger.info(
             f"[on_message] {message.guild.name if message.guild else 'DM'}({message.guild.id if message.guild else 0}),{message.author.name}({message.author.id})💬 [USER_INPUT] {((text_content[:200] + '...') if len(text_content) > 203 else text_content).replace(chr(10), ' ')}")
         thread_id = await self._get_conversation_thread_id(message)
-        if not self.bio_manager or not self.memory_manager:
-            await message.reply(
-                content="❌ **Error / エラー** ❌\n\nCannot respond because required plugins are not initialized.\n必要なプラグインが初期化されていないため、応答できません。",
-                view=self._create_support_view(), silent=True)
-            return
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
@@ -1214,12 +1209,6 @@ class LLMCog(commands.Cog, name="LLM"):
                         tool_response_content = str(search_result)
                     logger.debug(
                         f"🔧 [TOOL] Result (length: {len(str(tool_response_content))} chars):\n{str(tool_response_content)[:1000]}")
-                elif self.bio_manager and function_name == self.bio_manager.name:
-                    tool_response_content = await self.bio_manager.run_tool(arguments=function_args, user_id=user_id)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
-                elif self.memory_manager and function_name == self.memory_manager.name:
-                    tool_response_content = await self.memory_manager.run_tool(arguments=function_args)
-                    logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
                 elif self.image_generator and function_name == self.image_generator.name:
                     tool_response_content = await self.image_generator.run(arguments=function_args,
                                                                            channel_id=channel_id)
@@ -1380,11 +1369,6 @@ class LLMCog(commands.Cog, name="LLM"):
                 f"📨 Received /chat request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(message)} chars | images={len(image_contents)}")
             logger.info(
                 f"[/chat] {interaction.guild.name if interaction.guild else 'DM'}({interaction.guild.id if interaction.guild else 0}),{interaction.user.name}({interaction.user.id})💬 [USER_INPUT] {((message[:200] + '...') if len(message) > 203 else message).replace(chr(10), ' ')}")
-            if not self.bio_manager or not self.memory_manager:
-                await interaction.followup.send(
-                    content="❌ **Plugin Error / プラグインエラー** ❌\n\nCannot respond because required plugins are not initialized.\n必要なプラグインが初期化されていないため、応答できません。",
-                    view=self._create_support_view())
-                return
             system_prompt = await self._prepare_system_prompt(interaction.channel_id, interaction.user.id,
                                                               interaction.user.display_name)
             messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
@@ -1436,307 +1420,6 @@ class LLMCog(commands.Cog, name="LLM"):
             except discord.HTTPException:
                 pass
 
-    # --- (以降のコマンドは変更なし) ---
-    @app_commands.command(name="set-ai-bio",
-                          description="Set the AI's personality/role (bio) for this channel.\nこのチャンネルのAIの性格や役割(bio)を設定します。")
-    async def set_ai_bio_slash(self, interaction: discord.Interaction, bio: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        if len(bio) > 1024:
-            embed = discord.Embed(title="⚠️ Input Too Long / 入力が長すぎます",
-                                  description="The AI bio is too long. Please set it within 1024 characters.\nAIのbioが長すぎます。1024文字以内で設定してください。",
-                                  color=discord.Color.gold())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.bio_manager.set_channel_bio(interaction.channel_id, bio)
-            logger.info(f"AI bio for channel {interaction.channel_id} set by {interaction.user.name}")
-            embed = discord.Embed(title="✅ AI Bio Set / AIのbioを設定しました",
-                                  description=f"The AI's role in this channel has been set as follows.\nこのチャンネルでのAIの役割が以下のように設定されました。\n\n**New AI Bio / 新しいAIのbio:**\n```\n{bio}\n```",
-                                  color=discord.Color.green())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save channel AI bio settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save AI bio settings.\nAIのbio設定の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="show-ai-bio",
-                          description="Show the AI's current bio for this channel.\nこのチャンネルのAIに現在設定されているbioを表示します。")
-    async def show_ai_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        current_bio = self.bio_manager.get_channel_bio(interaction.channel_id)
-        if current_bio:
-            title, description, color = "Current AI Bio / 現在のAIのbio", f"In this channel, the AI has the following role set.\nこのチャンネルでは、AIに以下の役割が設定されています。\n\n**AI Bio / AIのbio:**\n```\n{current_bio}\n```", discord.Color.blue()
-        else:
-            default_prompt = self.llm_config.get('system_prompt', "Not set. / 設定されていません。")
-            try:
-                formatted_prompt = default_prompt.format(current_date=datetime.now(self.jst).strftime('%Y年%m月%d日'),
-                                                         current_time=datetime.now(self.jst).strftime('%H:%M'))
-            except (KeyError, ValueError):
-                formatted_prompt = default_prompt
-            title, description, color = "Current AI Bio / 現在のAIのbio", f"No specific AI bio is set for this channel. The server's default setting is used.\nこのチャンネルには専用のAI bioが設定されていません。サーバーのデフォルト設定が使用されます。\n\n**Default Setting / デフォルト設定:**\n```\n{formatted_prompt}\n```", discord.Color.greyple()
-        embed = discord.Embed(title=title, description=description, color=color)
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="reset-ai-bio",
-                          description="Reset the AI's bio to default for this channel.\nこのチャンネルのAIのbioをデフォルト設定に戻します。")
-    async def reset_ai_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.bio_manager.reset_channel_bio(interaction.channel_id):
-                logger.info(f"AI bio for channel {interaction.channel_id} reset by {interaction.user.name}")
-                default_prompt = self.llm_config.get('system_prompt', 'Not set / 未設定')
-                try:
-                    formatted_prompt = default_prompt.format(
-                        current_date=datetime.now(self.jst).strftime('%Y年%m月%d日'),
-                        current_time=datetime.now(self.jst).strftime('%H:%M'))
-                except (KeyError, ValueError):
-                    formatted_prompt = default_prompt
-                display_prompt = (formatted_prompt[:100] + '...') if len(formatted_prompt) > 103 else formatted_prompt
-                embed = discord.Embed(title="✅ AI Bio Reset / AIのbioをリセットしました",
-                                      description=f"The AI bio for this channel has been reset to the default.\nこのチャンネルのAIのbioをデフォルト設定に戻しました。\n> Current Default / 現在のデフォルト: `{display_prompt}`",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="ℹ️ No Custom AI Bio / 専用のAI bioはありません",
-                                      description="No custom AI bio is set for this channel.\nこのチャンネルには専用のAI bioが設定されていません。",
-                                      color=discord.Color.blue())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save channel AI bio settings after reset: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save AI bio settings.\nAIのbio設定の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="set-user-bio",
-                          description="Save your information for the AI to remember.\nAIにあなたの情報を記憶させます。")
-    @app_commands.describe(
-        bio="Information about you for the AI to remember (e.g., My name is Tanaka. My hobby is reading.).\nAIに覚えてほしいあなたの情報を記述してください。(例: 私の名前は田中です。趣味は読書です。)",
-        mode="Select save mode. 'Overwrite' or 'Append' is available.\n保存モードを選択してください。'上書き'または'追記'が可能です。")
-    @app_commands.choices(mode=[app_commands.Choice(name="Overwrite / 上書き", value="overwrite"),
-                                app_commands.Choice(name="Append / 追記", value="append"), ])
-    async def set_user_bio_slash(self, interaction: discord.Interaction, bio: str, mode: app_commands.Choice[str]):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        if len(bio) > 1024:
-            embed = discord.Embed(title="⚠️ Input Too Long / 入力が長すぎます",
-                                  description="User bio is too long. Please set it within 1024 characters.\nユーザー情報(bio)が長すぎます。1024文字以内で設定してください。",
-                                  color=discord.Color.gold())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.bio_manager.set_user_bio(interaction.user.id, bio, mode=mode.value)
-            logger.info(
-                f"User bio for {interaction.user.name} ({interaction.user.id}) was set with mode '{mode.value}'.")
-            updated_bio = self.bio_manager.get_user_bio(interaction.user.id)
-            embed = discord.Embed(
-                title=f"✅ Your information has been saved ({mode.name}).\n✅ あなたの情報を記憶しました ({mode.name})",
-                description=f"The AI has stored your information as follows.\nAIはあなたの情報を以下のように記憶しました。\n\n**Your Bio / あなたのbio:**\n```\n{updated_bio}\n```",
-                color=discord.Color.green())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save user bio settings: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save your information.\nあなたの情報の保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="show-user-bio",
-                          description="Show the information the AI has stored about you.\nAIが記憶しているあなたの情報を表示します。")
-    async def show_user_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        current_bio = self.bio_manager.get_user_bio(interaction.user.id)
-        if current_bio:
-            embed = discord.Embed(
-                title=f"💡 {interaction.user.display_name}'s Information / {interaction.user.display_name}さんの情報",
-                description=f"**Bio:**\n```\n{current_bio}\n```", color=discord.Color.blue())
-        else:
-            embed = discord.Embed(
-                title=f"💡 {interaction.user.display_name}'s Information / {interaction.user.display_name}さんの情報",
-                description="Currently, no information is stored about you.\nYou can set it using the `/set-user-bio` command or by asking the AI to remember it in conversation.\n現在、あなたに関する情報は何も記憶されていません。\n`/set-user-bio` コマンドか、会話の中でAIに記憶を頼むことで設定できます。",
-                color=discord.Color.greyple())
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="reset-user-bio",
-                          description="Delete all information the AI has stored about you.\nAIが記憶しているあなたの情報をすべて削除します。")
-    async def reset_user_bio_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.bio_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="BioManager is not available.\nBioManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.bio_manager.reset_user_bio(interaction.user.id):
-                logger.info(f"User bio for {interaction.user.name} ({interaction.user.id}) was reset.")
-                embed = discord.Embed(title="✅ Information Deleted / 情報を削除しました",
-                                      description=f"All information about {interaction.user.display_name} has been deleted.\n{interaction.user.display_name}さんに関する情報をすべて削除しました。",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="ℹ️ No Information Stored / 情報はありません",
-                                      description="No information is stored about you.\nあなたに関する情報は何も記憶されていません。",
-                                      color=discord.Color.blue())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save user bio settings after reset: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Deletion Error / 削除エラー",
-                                  description="Failed to delete your information.\nあなたの情報の削除に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="memory-save",
-                          description="Save information to the global shared memory.\nグローバル共有メモリに情報を保存します。")
-    @app_commands.describe(
-        key="The key for the information (e.g., 'Developer Announcement').\n情報のキー（項目名） 例: '開発者からのお知らせ'",
-        value="The content of the information (e.g., 'Next maintenance is...').\n情報の内容 例: '次回のメンテナンスは...'")
-    async def memory_save_slash(self, interaction: discord.Interaction, key: str, value: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            await self.memory_manager.save_memory(key, value)
-            embed = discord.Embed(title="✅ Saved to Global Shared Memory / グローバル共有メモリに保存しました",
-                                  color=discord.Color.green())
-            embed.add_field(name="Key / キー", value=f"```{key}```", inline=False)
-            embed.add_field(name="Value / 値", value=f"```{value}```", inline=False)
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to save global memory via command: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save to global shared memory.\nグローバル共有メモリへの保存に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    @app_commands.command(name="memory-list",
-                          description="List all global shared memories.\nグローバル共有メモリの情報を一覧表示します。")
-    async def memory_list_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        memories = self.memory_manager.list_memories()
-        if not memories:
-            embed = discord.Embed(title="ℹ️ No Memories / メモリに情報はありません",
-                                  description="Nothing is saved in the global shared memory.\nグローバル共有メモリには何も保存されていません。",
-                                  color=discord.Color.blue())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        embed = discord.Embed(title="🌐 Global Shared Memory / グローバル共有メモリ", color=discord.Color.blue())
-        description = ""
-        for key, value in memories.items():
-            field_text = f"**{key}**: {value}\n"
-            if len(description) + len(field_text) > 4000:
-                description += "\n... (partially omitted due to display limit / 表示制限のため一部省略)"
-                break
-            description += field_text
-        embed.description = description
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-
-    async def memory_key_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
-        app_commands.Choice[str]]:
-        if not self.memory_manager: return []
-        keys = self.memory_manager.list_memories().keys()
-        return [app_commands.Choice(name=key, value=key) for key in keys if current.lower() in key.lower()][:25]
-
-    @app_commands.command(name="memory-delete",
-                          description="Delete a global shared memory.\nグローバル共有メモリから情報を削除します。")
-    @app_commands.describe(key="The key of the memory to delete.\n削除したい情報のキー")
-    @app_commands.autocomplete(key=memory_key_autocomplete)
-    async def memory_delete_slash(self, interaction: discord.Interaction, key: str):
-        await interaction.response.defer(ephemeral=False)
-        if not self.memory_manager:
-            embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
-                                  description="MemoryManager is not available.\nMemoryManagerが利用できません。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            return
-        try:
-            if await self.memory_manager.delete_memory(key):
-                embed = discord.Embed(title="✅ Memory Deleted / メモリを削除しました",
-                                      description=f"Deleted key '{key}' from global shared memory.\nグローバル共有メモリからキー '{key}' を削除しました。",
-                                      color=discord.Color.green())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-            else:
-                embed = discord.Embed(title="⚠️ Key Not Found / キーが見つかりません",
-                                      description=f"Key '{key}' does not exist in global shared memory.\nキー '{key}' はグローバル共有メモリに存在しません。",
-                                      color=discord.Color.gold())
-                self._add_support_footer(embed)
-                await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-        except Exception as e:
-            logger.error(f"Failed to delete global memory via command: {e}", exc_info=True)
-            embed = discord.Embed(title="❌ Deletion Error / 削除エラー",
-                                  description="Failed to delete from global shared memory.\nグローバル共有メモリからの削除に失敗しました。",
-                                  color=discord.Color.red())
-            self._add_support_footer(embed)
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     async def model_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
         app_commands.Choice[str]]:
@@ -2023,10 +1706,7 @@ class LLMCog(commands.Cog, name="LLM"):
 
         # Split "Useful Commands" into multiple fields to avoid character limits
         embed.add_field(name="Commands - AI/Channel Settings / コマンド - AI/チャンネル設定",
-                        value="• `/switch-models`: Change the AI model used in this channel. / このチャンネルで使うAIモデルを変更します。\n"
-                              "• `/set-ai-bio`: Set a custom personality/role for the AI in this channel. / このチャンネル専用のAIの性格や役割を設定します。\n"
-                              "• `/show-ai-bio`: Check the current AI bio setting. / 現在のAIのbio設定を確認します。\n"
-                              "• `/reset-ai-bio`: Reset the AI bio to the default. / AIのbio設定をデフォルトに戻します。",
+                        value="• `/switch-models`: Change the AI model used in this channel. / このチャンネルで使うAIモデルを変更します。",
                         inline=False)
 
         embed.add_field(name="Commands - Image Generation / コマンド - 画像生成",
@@ -2036,18 +1716,6 @@ class LLMCog(commands.Cog, name="LLM"):
                               "• `/list-image-models`: List all available image generation models. / 利用可能な全画像生成モデルを一覧表示します。",
                         inline=False)
 
-        embed.add_field(name="Commands - User Info / コマンド - ユーザー情報",
-                        value="• `/set-user-bio`: Set information about you for the AI to remember. / AIに覚えてほしいあなたの情報を設定します。\n"
-                              "• `/show-user-bio`: Check the information the AI has stored about you. / AIが記憶しているあなたの情報を確認します。\n"
-                              "• `/reset-user-bio`: Delete your information from the AI's memory. / あなたの情報をAIの記憶から削除します。",
-                        inline=False)
-
-        embed.add_field(name="Commands - Global Memory / コマンド - グローバルメモリ",
-                        value="• `/memory-save`: Save information to the global shared memory. / 全サーバー共通のメモリに情報を保存します。\n"
-                              "• `/memory-list`: List all information in the global memory. / グローバルメモリの情報を一覧表示します。\n"
-                              "• `/memory-delete`: Delete information from the global memory. / グローバルメモリから情報を削除します。",
-                        inline=False)
-
         embed.add_field(name="Commands - Other / コマンド - その他",
                         value="• `/chat`: Chat with the AI without needing to mention. / AIとメンションなしで対話します。\n"
                               "• `/clear_history`: Reset the conversation history. / 会話履歴をリセットします。",
@@ -2055,16 +1723,10 @@ class LLMCog(commands.Cog, name="LLM"):
                         
         channel_model_str = self.channel_models.get(str(interaction.channel_id))
         model_display = f"`{channel_model_str}` (Channel-specific / このチャンネル専用)" if channel_model_str else f"`{self.llm_config.get('model', 'Not set / 未設定')}` (Default / デフォルト)"
-        ai_bio_display, user_bio_display = "N/A", "N/A"
-        if self.bio_manager:
-            ai_bio_display = "✅ (Custom / 専用設定あり)" if self.bio_manager.get_channel_bio(
-                interaction.channel_id) else "Default / デフォルト"
-            user_bio_display = "✅ (Stored / 記憶あり)" if self.bio_manager.get_user_bio(
-                interaction.user.id) else "None / なし"
         active_tools = self.llm_config.get('active_tools', [])
         tools_info = "• None / なし" if not active_tools else "• " + ", ".join(active_tools)
         embed.add_field(name="Current AI Settings / 現在のAI設定",
-                        value=f"• **Model in Use / 使用モデル:** {model_display}\n• **AI Role (Channel) / AIの役割(チャンネル):** {ai_bio_display} (see `/show-ai-bio`)\n• **Your Info / あなたの情報:** {user_bio_display} (see `/show-user-bio`)\n• **Max Conversation History / 会話履歴の最大保持数:** {self.llm_config.get('max_messages', 'Not set / 未設定')} pairs\n• **Max Images at Once / 一度に処理できる最大画像枚数:** {self.llm_config.get('max_images', 'Not set / 未設定')} image(s)\n• **Available Tools / 利用可能なツール:** {tools_info}",
+                        value=f"• **Model in Use / 使用モデル:** {model_display}\n• **Max Conversation History / 会話履歴の最大保持数:** {self.llm_config.get('max_messages', 'Not set / 未設定')} pairs\n• **Max Images at Once / 一度に処理できる最大画像枚数:** {self.llm_config.get('max_images', 'Not set / 未設定')} image(s)\n• **Available Tools / 利用可能なツール:** {tools_info}",
                         inline=False)
         embed.add_field(name="--- 📜 AI Usage Guidelines / AI利用ガイドライン ---",
                         value="Please review the following to ensure safe use of the AI features.\nAI機能を安全にご利用いただくため、以下の内容を必ずご確認ください。",
