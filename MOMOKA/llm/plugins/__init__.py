@@ -1,82 +1,27 @@
-"""
-Dynamically imports and initializes LLM plugins.
+from .search_agent import SearchAgent
+try:
+    from .commands_manager import CommandInfoManager
+except ImportError:
+    CommandInfoManager = None
+try:
+    from .image_generator import ImageGenerator
+except ImportError:
+    ImageGenerator = None
 
-This module scans the 'plugins' directory for Python files (excluding __init__.py),
-dynamically imports them, and provides a function to initialize all found plugin
-classes.
+__all__ = [
+    'SearchAgent',
+    'CommandInfoManager',
+    'ImageGenerator'
+]
 
-Attributes:
-    __all__: A list of discovered plugin class names for 'from . import *'.
-"""
-
-import importlib
-import os
-from typing import List, Type, Any
-
-# --- Globals ---
-# A list to hold the discovered plugin classes.
-_plugin_classes: List[Type[Any]] = []
-__all__: List[str] = []
-
-
-def _discover_plugins():
+def initialize_plugins(bot):
     """
-    Discovers plugins in the current directory, imports them, and populates
-    _plugin_classes and __all__.
+    Initializes all registered plugin classes.
+    Note: llm_cog.py uses its own _initialize_plugins method, 
+    so this function might be unused or for legacy support.
     """
-    if _plugin_classes:  # Avoid re-discovering if already done
-        return
-
-    current_dir = os.path.dirname(__file__)
-    
-    for filename in os.listdir(current_dir):
-        if filename.endswith('.py') and not filename.startswith('__'):
-            module_name = filename[:-3]
-            try:
-                # Import the module relative to the 'plugins' package
-                module = importlib.import_module(f'.{module_name}', package=__name__)
-
-                # Find classes within the module that are likely plugins.
-                # This example assumes plugin classes are named like 'MyPlugin'
-                # and are not imported from other modules.
-                for attr_name in dir(module):
-                    attr = getattr(module, attr_name)
-                    if isinstance(attr, type) and attr.__module__ == module.__name__:
-                        _plugin_classes.append(attr)
-                        __all__.append(attr_name)
-                        globals()[attr_name] = attr
-
-                        # print(f"Discovered plugin: {attr_name}") # for debugging
-
-            except Exception as e:
-                # Handle potential import errors gracefully
-                # Log the error but don't fail the entire discovery process
-                # The actual import will fail later if dependencies are truly missing
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Error importing plugin {module_name}: {e}")
-                # Don't print traceback in production, only log the error
-                # import traceback
-                # traceback.print_exc()
-
-# --- Initialization ---
-# Discover plugins when this package is imported.
-_discover_plugins()
-
-def initialize_plugins(bot: Any) -> List[Any]:
-    """
-    Initializes all discovered plugin classes.
-
-    Args:
-        bot: The main bot instance, passed to each plugin's constructor.
-
-    Returns:
-        A list of initialized plugin instances.
-    """
-    initialized_plugins = []
-    for plugin_class in _plugin_classes:
-        try:
-            initialized_plugins.append(plugin_class(bot))
-        except Exception as e:
-            print(f"Error initializing plugin {plugin_class.__name__}: {e}")
-    return initialized_plugins
+    plugins = []
+    if SearchAgent: plugins.append(SearchAgent(bot))
+    if CommandInfoManager: plugins.append(CommandInfoManager(bot))
+    if ImageGenerator: plugins.append(ImageGenerator(bot))
+    return plugins

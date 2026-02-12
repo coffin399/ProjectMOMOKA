@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
 
 import discord
-import torch
 from discord.abc import Messageable
 from PIL import Image
 
@@ -42,7 +41,6 @@ class GenerationTask:
     arguments: Dict[str, Any]
     position: int = 0
     queue_message: Optional[discord.Message] = None
-    thinking_message: Optional[discord.Message] = None  # 「考え中...」メッセージ
 
 
 class ImageGenerator:
@@ -56,25 +54,8 @@ class ImageGenerator:
         self._update_interval = 1.0  # Minimum seconds between progress updates
 
         self.model_registry = ImageModelRegistry.from_default_root()
-        max_cache_size = self.image_gen_config.get("max_cache_size", 1)
-        
-        # メモリ最適化設定（8GB VRAM対応）
-        memory_optimization = self.image_gen_config.get("memory_optimization", {})
-        enable_cpu_offload = memory_optimization.get("enable_cpu_offload", True)
-        enable_vae_slicing = memory_optimization.get("enable_vae_slicing", True)
-        enable_vae_tiling = memory_optimization.get("enable_vae_tiling", False)
-        attention_slicing = memory_optimization.get("attention_slicing", "max")
-        
-        self.pipeline = LocalTxt2ImgPipeline(
-            device=self.image_gen_config.get("device"),
-            max_cache_size=max_cache_size,
-            enable_cpu_offload=enable_cpu_offload,
-            enable_vae_slicing=enable_vae_slicing,
-            enable_vae_tiling=enable_vae_tiling,
-            attention_slicing=attention_slicing,
-        )
+        self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
 
-        # ディレクトリスキャンで見つかったすべてのモデルを使用
         discovered_models = sorted(self.model_registry.names())
         if not discovered_models:
             logger.warning("No local image models found under models/image-models. Image generation will be disabled.")
@@ -82,25 +63,19 @@ class ImageGenerator:
             self.default_model = None
             self._enabled = False
         else:
-            # configのavailable_modelsは無視し、ディレクトリスキャンの結果を直接使用
-            self.available_models = discovered_models
-            
-            # デフォルトモデル: configで指定されていて存在する場合はそれを使用、なければ最初に見つかったモデル
-            configured_default = self.image_gen_config.get("model")
-            if configured_default and configured_default in self.available_models:
-                self.default_model = configured_default
+            configured_models = self.image_gen_config.get("available_models")
+            if configured_models:
+                available = [model for model in configured_models if model in discovered_models]
+                if not available:
+                    logger.warning("Configured available_models not found locally. Using discovered models instead.")
+                    available = discovered_models
             else:
-                self.default_model = self.available_models[0]
-                if configured_default and configured_default not in self.available_models:
-                    logger.warning(
-                        "Configured default model '%s' not found in discovered models. Using '%s' instead.",
-                        configured_default,
-                        self.default_model
-                    )
-            self._enabled = True
+                available = discovered_models
 
-        # VRAM使用量しきい値（GB単位、0で無効）
-        self.vram_usage_threshold_gb = float(self.image_gen_config.get("vram_usage_threshold_gb", 6.0))
+            self.available_models = available
+            configured_default = self.image_gen_config.get("model")
+            self.default_model = configured_default if configured_default in self.available_models else self.available_models[0]
+            self._enabled = True
 
         self.default_size = self.image_gen_config.get("default_size", "1024x1024")
         self.save_images = self.image_gen_config.get("save_images", True)
@@ -177,40 +152,7 @@ class ImageGenerator:
 
     def get_available_models(self) -> List[str]:
         return self.available_models.copy()
-
-    def _check_vram_available(self) -> tuple[bool, float]:
-        """GPU全体のVRAM使用量をチェックし、しきい値以下か判定する。
-
-        Returns:
-            (利用可能かどうか, 現在の使用量GB)
-        """
-        # しきい値が0以下の場合はチェック無効（常に利用可能）
-        if self.vram_usage_threshold_gb <= 0:
-            return True, 0.0
-
-        # CUDA が利用不可の場合はチェックをスキップ
-        if not torch.cuda.is_available():
-            return True, 0.0
-
-        try:
-            # torch.cuda.mem_get_info() はドライバレベルの空き/総メモリを返す
-            # 他プロセスの使用分も含めたGPU全体の情報を取得できる
-            free_bytes, total_bytes = torch.cuda.mem_get_info()
-            used_gb = (total_bytes - free_bytes) / (1024 ** 3)
-            logger.info(
-                "🔍 [VRAM_CHECK] Used: %.2f GB / Total: %.2f GB / Free: %.2f GB / Threshold: %.2f GB",
-                used_gb,
-                total_bytes / (1024 ** 3),
-                free_bytes / (1024 ** 3),
-                self.vram_usage_threshold_gb,
-            )
-            # 使用量がしきい値以上なら利用不可
-            return used_gb < self.vram_usage_threshold_gb, used_gb
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to check VRAM usage: %s", exc)
-            # チェック失敗時は安全のため続行を許可
-            return True, 0.0
-
+    
     @staticmethod
     def _is_black_image(image_bytes: bytes, threshold: float = 0.01) -> bool:
         """Check if the image is mostly black (NSFW filter detected).
@@ -384,14 +326,8 @@ class ImageGenerator:
             "User interaction is required to proceed."
         )
 
-    async def _enqueue_task(
-        self,
-        arguments: Dict[str, Any],
-        channel_id: int,
-        user_id: int,
-        user_name: str,
-        thinking_message: Optional[discord.Message] = None,
-    ) -> str:
+    async def _enqueue_task(self, arguments: Dict[str, Any], channel_id: int, user_id: int,
+                             user_name: str) -> str:
         prompt = arguments.get("prompt", "").strip()
         if not prompt:
             return "❌ Error: Empty prompt provided. / エラー: プロンプトが空です。"
@@ -407,7 +343,6 @@ class ImageGenerator:
             prompt=prompt,
             channel_id=channel_id,
             arguments=arguments,
-            thinking_message=thinking_message,
         )
 
         queue_message: Optional[discord.Message] = None
@@ -468,54 +403,6 @@ class ImageGenerator:
             sampler_name=sampler_name,
         )
 
-        # --- VRAM使用量チェック（他プログラムとの競合防止） ---
-        vram_ok, vram_used_gb = self._check_vram_available()
-        if not vram_ok:
-            logger.warning(
-                "⚠️ [IMAGE_GEN] VRAM usage %.2f GB exceeds threshold %.2f GB. Skipping generation.",
-                vram_used_gb,
-                self.vram_usage_threshold_gb,
-            )
-
-            # Discord上にVRAM不足メッセージを送信（日英両方）
-            channel = self.bot.get_channel(task.channel_id)
-            if channel:
-                embed = discord.Embed(
-                    title="⚠️ VRAM Unavailable / VRAM不足",
-                    description=(
-                        "Another program is currently using the GPU's VRAM.\n"
-                        "Please wait a while and try generating the image again.\n\n"
-                        "他のプログラムでVRAMが使用されています。\n"
-                        "しばらく待ってから再度画像生成を依頼してください。"
-                    ),
-                    color=discord.Color.orange(),
-                )
-                embed.add_field(
-                    name="VRAM Usage / VRAM使用量",
-                    value=f"{vram_used_gb:.2f} GB / Threshold: {self.vram_usage_threshold_gb:.1f} GB",
-                    inline=False,
-                )
-                embed.set_footer(text="Close GPU-intensive applications to free VRAM / GPU使用中のアプリを閉じてVRAMを解放してください")
-                await channel.send(embed=embed)
-
-            # thinkingメッセージを削除
-            if task.thinking_message:
-                try:
-                    await task.thinking_message.delete()
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("Failed to delete thinking message on VRAM check: %s", exc)
-
-            # キューメッセージを削除
-            if task.queue_message:
-                try:
-                    await task.queue_message.delete()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Failed to delete queue message on VRAM check: %s", exc)
-
-            # 次のタスクへ（またはキュー終了）
-            await self._schedule_next_task()
-            return None
-
         logger.info(
             "🎨 [IMAGE_GEN] Generating for user=%s | model=%s | size=%s | steps=%d | cfg=%.2f | seed=%d",
             task.user_name,
@@ -556,8 +443,7 @@ class ImageGenerator:
         def progress_callback(step: int, _timestep: int, _latents):
             nonlocal progress_state, loop
             current_time = time.time()
-            current_step = step + 1
-            progress_state["last_step"] = current_step
+            progress_state["last_step"] = step + 1
             
             # Only update if enough time has passed since the last update (at most once per second)
             if current_time - progress_state.get("last_update", 0) >= 1.0:
@@ -566,10 +452,6 @@ class ImageGenerator:
                 # Only update the message if it's been at least 1 second since the last edit
                 if current_time - progress_state.get("last_message_edit", 0) >= 1.0:
                     progress_state["last_message_edit"] = current_time
-                    
-                    # Calculate actual speed (it/s) and elapsed time
-                    elapsed_time = current_time - progress_state["start_time"]
-                    it_per_s = current_step / elapsed_time if elapsed_time > 0 else 0.0
                     
                     # Create a coroutine for the progress update
                     async def update_progress():
@@ -580,10 +462,10 @@ class ImageGenerator:
                                 model_name,
                                 adjusted_size,
                                 steps,
-                                current_step,
+                                step + 1,
                                 sampler_name or "default",
-                                elapsed_time,
-                                it_per_s,
+                                current_time - progress_state["start_time"],
+                                0.0,
                                 "Generating... / 生成中..."
                             )
                         except Exception as e:
@@ -603,29 +485,18 @@ class ImageGenerator:
             )
         except Exception as exc:  # noqa: BLE001
             if progress_message:
-                error_elapsed = time.time() - start_time
-                error_step = progress_state.get("last_step", 0)
-                error_speed = error_step / error_elapsed if error_elapsed > 0 and error_step > 0 else 0.0
                 await self._update_progress_message(
                     progress_message,
                     prompt,
                     model_name,
                     adjusted_size,
                     steps,
-                    error_step,
+                    progress_state.get("last_step", 0),
                     sampler_name or "default",
-                    error_elapsed,
-                    error_speed,
+                    time.time() - start_time,
+                    0.0,
                     status=f"❌ Error: {exc}"
                 )
-            
-            # エラー時もthinkingメッセージを削除
-            if task.thinking_message:
-                try:
-                    await task.thinking_message.delete()
-                except Exception as exc_delete:  # noqa: BLE001
-                    logger.debug("Failed to delete thinking message on error: %s", exc_delete)
-            
             raise
 
         elapsed_time = time.time() - start_time
@@ -661,13 +532,6 @@ class ImageGenerator:
             
             await channel.send(embed=embed)
             
-            # thinkingメッセージを削除（「考え中...」を削除）
-            if task.thinking_message:
-                try:
-                    await task.thinking_message.delete()
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("Failed to delete thinking message: %s", exc)
-            
             if task.queue_message:
                 try:
                     await task.queue_message.delete()
@@ -677,20 +541,25 @@ class ImageGenerator:
             await self._schedule_next_task()
             return None  # Don't return success message for NSFW-filtered images
         
-        # Delete progress message before sending the final result
+        # Normal image generation - show completed message and send image
         if progress_message:
-            try:
-                await progress_message.delete()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Failed to delete progress message: %s", exc)
+            await self._update_progress_message(
+                progress_message,
+                prompt,
+                model_name,
+                adjusted_size,
+                steps,
+                steps,
+                sampler_name or "default",
+                elapsed_time,
+                steps / elapsed_time if elapsed_time > 0 else 0.0,
+                status="✅ Completed",
+            )
 
         if self.save_images:
             saved_path = await self._save_image(image_bytes, prompt, model_name, adjusted_size)
         else:
             saved_path = None
-
-        # Calculate final speed for display
-        final_speed = steps / elapsed_time if elapsed_time > 0 else 0.0
 
         embed = discord.Embed(
             title="🎨 Generated Image / 生成された画像",
@@ -711,7 +580,6 @@ class ImageGenerator:
         if seed != -1:
             embed.add_field(name="Seed", value=str(seed), inline=True)
         embed.add_field(name="Generation Time", value=f"{elapsed_time:.1f}s", inline=True)
-        embed.add_field(name="Speed", value=f"{final_speed:.2f} it/s", inline=True)
         if size_input != adjusted_size:
             embed.add_field(
                 name="ℹ️ Size Adjusted",
@@ -722,13 +590,6 @@ class ImageGenerator:
 
         file = discord.File(io.BytesIO(image_bytes), filename="generated_image.png")
         await channel.send(embed=embed, file=file)
-
-        # thinkingメッセージを削除（「考え中...」を削除）
-        if task.thinking_message:
-            try:
-                await task.thinking_message.delete()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Failed to delete thinking message: %s", exc)
 
         if task.queue_message:
             try:
@@ -742,13 +603,8 @@ class ImageGenerator:
     async def _schedule_next_task(self) -> None:
         async with self.queue_lock:
             if not self.generation_queue:
-                # キューが空になった場合、生成状態をリセット
                 self.is_generating = False
                 self.current_task = None
-
-                # 全タスク完了 — モデルをVRAMから強制解放
-                logger.info("🧹 [IMAGE_GEN] Queue empty — unloading models to free VRAM")
-                self.pipeline.clear_cache()
                 return
 
             next_task = self.generation_queue.popleft()
@@ -766,15 +622,9 @@ class ImageGenerator:
         payload = dict(updated_arguments)
         payload["__modal_confirmed__"] = True
 
-        thinking_message: Optional[discord.Message] = None
         try:
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=False, thinking=True)
-                # thinkingメッセージを取得
-                try:
-                    thinking_message = await interaction.original_response()
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("Failed to get thinking message: %s", exc)
         except discord.HTTPException as exc:  # noqa: BLE001
             logger.warning("Failed to defer modal interaction: %s", exc)
 
@@ -783,14 +633,12 @@ class ImageGenerator:
             channel_id=interaction.channel_id,
             user_id=interaction.user.id,
             user_name=requester_name,
-            thinking_message=thinking_message,  # thinkingメッセージをタスクに渡す
         )
 
-        if result:
-            try:
-                await interaction.followup.send(result, ephemeral=False)
-            except discord.HTTPException as exc:  # noqa: BLE001
-                logger.error("Failed to send modal follow-up message: %s", exc)
+        try:
+            await interaction.followup.send(result, ephemeral=False)
+        except discord.HTTPException as exc:  # noqa: BLE001
+            logger.error("Failed to send modal follow-up message: %s", exc)
 
     async def _update_queue_message(self, message: discord.Message, status: str, position: int, prompt: str) -> None:
         try:
@@ -852,7 +700,7 @@ class ImageGenerator:
             embed.add_field(name="Sampler", value=sampler, inline=True)
             embed.add_field(
                 name="Progress",
-                value=self._format_progress(current_step, total_steps, it_per_s),
+                value=self._format_progress(current_step, total_steps),
                 inline=False,
             )
             embed.add_field(name="Speed", value=f"{it_per_s:.2f} it/s", inline=True)
@@ -862,29 +710,15 @@ class ImageGenerator:
             logger.debug("Failed to update progress message: %s", exc)
 
     @staticmethod
-    def _format_progress(current: int, total: int, it_per_s: float = 0.0, bar_length: int = 24) -> str:
+    def _format_progress(current: int, total: int, bar_length: int = 24) -> str:
         clamped = max(0, min(current, total))
         filled = int((clamped / total) * bar_length) if total else 0
         bar = "█" * filled + "░" * (bar_length - filled)
         percentage = (clamped / total * 100) if total > 0 else 0
-        
-        # Calculate ETA based on actual speed
-        remaining_steps = total - clamped
-        if it_per_s > 0 and remaining_steps > 0:
-            eta_seconds = remaining_steps / it_per_s
-            if eta_seconds < 60:
-                eta_str = f"{eta_seconds:.1f}s"
-            elif eta_seconds < 3600:
-                eta_str = f"{eta_seconds / 60:.1f}m"
-            else:
-                eta_str = f"{eta_seconds / 3600:.1f}h"
-        else:
-            eta_str = "--"
-        
         return (
             f"`{bar}`\n"
             f"`{percentage:5.1f}%` ({clamped:3d}/{total:3d} steps) - "
-            f"`ETA: {eta_str}`"
+            f"`ETA: {((total - clamped) / 2.5):.1f}s`"
         )
 
     # ------------------------------------------------------------------
@@ -932,10 +766,7 @@ class ImageGenerator:
             return None
 
     async def close(self) -> None:
-        """ImageGeneratorをクリーンアップし、すべてのモデルをVRAMから解放する"""
-        logger.info("Cleaning up ImageGenerator and releasing all models from VRAM")
-        self.pipeline.clear_cache()
-        logger.info("ImageGenerator cleanup completed")
+        logger.info("ImageGenerator local pipeline does not require explicit cleanup.")
 
 
 class ImageModelSelect(discord.ui.Select):
