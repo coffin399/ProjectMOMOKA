@@ -25,21 +25,21 @@ class CommandAgent:
         "type": "function",
         "function": {
             "name": name,
-            "description": "ユーザーの要求に基づいて適切なDiscordコマンドを判別し、実行します。音楽再生、画像検索などのコマンドを実行できます。",
+            "description": "Identify and execute the appropriate Discord command based on the user's request. Can execute commands such as music playback, image search, etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "user_request": {
                         "type": "string",
-                        "description": "ユーザーの要求内容（例: '音楽を再生して'、'猫の画像を検索して'）"
+                        "description": "The user's request (e.g., 'play music', 'search for cat images')"
                     },
                     "command_name": {
                         "type": "string",
-                        "description": "実行するコマンド名（例: 'play', 'yandere-safe', 'danbooru-safe'）"
+                        "description": "The command name to execute (e.g., 'play', 'yandere-safe', 'danbooru-safe')"
                     },
                     "parameters": {
                         "type": "object",
-                        "description": "コマンドのパラメータ（キー: パラメータ名, 値: パラメータ値）"
+                        "description": "Command parameters (key: parameter name, value: parameter value)"
                     }
                 },
                 "required": ["user_request", "command_name"]

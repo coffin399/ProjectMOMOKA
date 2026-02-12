@@ -41,17 +41,17 @@ class MemoryManager:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "グローバル共有メモリに情報をキーと値のペアで保存・更新します。Bot全体で共有すべき普遍的な情報（例: 開発者からのお知らせ）を記憶するために使用します。",
+                "description": "Save or update information in global shared memory as key-value pairs. Use this to remember universal information that should be shared across the entire bot (e.g., developer announcements).",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "key": {
                             "type": "string",
-                            "description": "記憶する情報のキー（項目名）。例: '開発者からのお知らせ'"
+                            "description": "The key (item name) for the information to remember. e.g., 'Developer Announcement'"
                         },
                         "value": {
                             "type": "string",
-                            "description": "記憶する情報の内容。例: '次回のメンテナンスは来週月曜日です。'"
+                            "description": "The content of the information to remember. e.g., 'Next maintenance is scheduled for next Monday.'"
                         }
                     },
                     "required": ["key", "value"]
@@ -97,7 +97,7 @@ class MemoryManager:
         if not self.memories:
             return None
 
-        header = "# グローバル共有メモリ（全サーバー共通）"
+        header = "# Global Shared Memory"
         items = [f"- {key}: {value}" for key, value in self.memories.items()]
 
         logger.info(f"[get_formatted_memories] Loaded {len(items)} global memories.")

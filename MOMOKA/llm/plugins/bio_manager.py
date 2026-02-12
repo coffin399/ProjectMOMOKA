@@ -49,13 +49,13 @@ class BioManager:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "ユーザーに関する情報を記憶・更新します。ユーザーが自己紹介したり、何かを覚えてほしいと頼んだりしたときに積極的に呼び出してください。既存の情報は新しい情報で上書きされます。",
+                "description": "Remember or update information about a user. Proactively call this when a user introduces themselves or asks you to remember something. Existing information is overwritten with new information.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "bio_text": {
                             "type": "string",
-                            "description": "ユーザーについて記憶すべき情報の全文。 (例: '私の名前は田中です。好きな食べ物はラーメン。')"
+                            "description": "The full text of information to remember about the user. (e.g., 'My name is Tanaka. My favorite food is ramen.')"
                         }
                     },
                     "required": ["bio_text"]
@@ -125,16 +125,16 @@ class BioManager:
         if channel_bio := self.get_channel_bio(channel_id):
             logger.info(
                 f"[get_system_prompt] Loaded channel bio for channel {channel_id}. Content: '{channel_bio[:150]}'")
-            system_parts.append(f"\n# このチャンネルでのあなたの追加の役割:\n{channel_bio}")
+            system_parts.append(f"\n# Additional Role for This Channel:\n{channel_bio}")
 
         if user_bio := self.get_user_bio(user_id):
             logger.info(
                 f"[get_system_prompt] Loaded user bio for user {user_id} ({user_display_name}). Content: '{user_bio[:150]}'")
-            system_parts.append(f"\n# 会話相手 ({user_display_name}) に関する情報:\n{user_bio}")
+            system_parts.append(f"\n# Information About the User ({user_display_name}):\n{user_bio}")
 
         if 'user_bio' in self.llm_config.get('active_tools', []):
             system_parts.append(
-                "\n# ユーザー情報の記憶:\nユーザーが自己紹介したり、何かを覚えてほしいと頼んだりした場合は、`user_bio`ツールを積極的に使用してその情報を記憶してください。")
+                "\n# Remembering User Information:\nWhen a user introduces themselves or asks you to remember something, proactively use the `user_bio` tool to store that information.")
 
         return "\n".join(system_parts)
 

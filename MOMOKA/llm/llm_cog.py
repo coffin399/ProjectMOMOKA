@@ -173,11 +173,11 @@ class ThreadCreationView(discord.ui.View):
                 
                 messages_for_api = [{"role": "system", "content": system_prompt}]
                 
-                # 言語プロンプト追加
+                messages_for_api.extend(messages)
+                
+                # 言語プロンプト追加（会話履歴の後、応答直前に配置して優先度を上げる）
                 if self.llm_cog.language_prompt:
                     messages_for_api.append({"role": "system", "content": self.llm_cog.language_prompt})
-                
-                messages_for_api.extend(messages)
                 
                 # スレッド内でLLM応答を生成
                 model_name = llm_client.model_name_for_api_calls
@@ -675,7 +675,7 @@ class LLMCog(commands.Cog, name="LLM"):
             "Please respond in Japanese", "")
         try:
             now, current_date_str, current_time_str = datetime.now(self.jst), datetime.now(self.jst).strftime(
-                '%Y年%m月%d日'), datetime.now(self.jst).strftime('%H:%M')
+                '%Y-%m-%d'), datetime.now(self.jst).strftime('%H:%M')
             system_prompt = system_prompt_template.format(current_date=current_date_str,
                                                           current_time=current_time_str)
         except (KeyError, ValueError) as e:
@@ -1030,11 +1030,12 @@ class LLMCog(commands.Cog, name="LLM"):
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        conversation_history = await self._collect_conversation_history(message)
+        messages_for_api.extend(conversation_history)
+        # 言語プロンプトを会話履歴の後、ユーザーメッセージの直前に配置して優先度を上げる
         if self.language_prompt:
             messages_for_api.append({"role": "system", "content": self.language_prompt})
             logger.info("🌐 [LANG] Using language prompt from config")
-        conversation_history = await self._collect_conversation_history(message)
-        messages_for_api.extend(conversation_history)
         user_content_parts = []
         if text_content: user_content_parts.append(
             {"type": "text", "text": f"{message.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"})
