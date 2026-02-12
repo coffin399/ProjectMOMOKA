@@ -744,7 +744,7 @@ class LLMCog(commands.Cog, name="LLM"):
             logger.warning(f"Could not format system_prompt: {e}")
             system_prompt = system_prompt_template.replace('{current_date}', current_date_str).replace('{current_time}',
                                                                                                        current_time_str)
-        if formatted_memories := self.memory_manager.get_formatted_memories(): system_prompt += f"\n\n{formatted_memories}"
+        if formatted_memories := self.memory_manager.get_formatted_memories(user_id): system_prompt += f"\n\n{formatted_memories}"
         logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         return system_prompt
 
@@ -1636,7 +1636,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     tool_response_content = await self.bio_manager.run_tool(arguments=function_args, user_id=user_id)
                     logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
                 elif self.memory_manager and function_name == self.memory_manager.name:
-                    tool_response_content = await self.memory_manager.run_tool(arguments=function_args)
+                    tool_response_content = await self.memory_manager.run_tool(arguments=function_args, user_id=user_id)
                     logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
                 elif self.image_generator and function_name == self.image_generator.name:
                     tool_response_content = await self.image_generator.run(arguments=function_args,
@@ -2069,7 +2069,7 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     @app_commands.command(name="memory-save",
-                          description="Save information to the global shared memory.\nグローバル共有メモリに情報を保存します。")
+                          description="Save information to your personal memory.\nあなたのメモリに情報を保存します。")
     @app_commands.describe(
         key="The key for the information (e.g., 'Developer Announcement').\n情報のキー（項目名） 例: '開発者からのお知らせ'",
         value="The content of the information (e.g., 'Next maintenance is...').\n情報の内容 例: '次回のメンテナンスは...'")
@@ -2083,23 +2083,23 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             return
         try:
-            await self.memory_manager.save_memory(key, value)
-            embed = discord.Embed(title="✅ Saved to Global Shared Memory / グローバル共有メモリに保存しました",
+            await self.memory_manager.save_memory(interaction.user.id, key, value)
+            embed = discord.Embed(title="✅ Saved to Your Memory / あなたのメモリに保存しました",
                                   color=discord.Color.green())
             embed.add_field(name="Key / キー", value=f"```{key}```", inline=False)
             embed.add_field(name="Value / 値", value=f"```{value}```", inline=False)
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
         except Exception as e:
-            logger.error(f"Failed to save global memory via command: {e}", exc_info=True)
+            logger.error(f"Failed to save memory for user {interaction.user.id} via command: {e}", exc_info=True)
             embed = discord.Embed(title="❌ Save Error / 保存エラー",
-                                  description="Failed to save to global shared memory.\nグローバル共有メモリへの保存に失敗しました。",
+                                  description="Failed to save to your memory.\nメモリへの保存に失敗しました。",
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     @app_commands.command(name="memory-list",
-                          description="List all global shared memories.\nグローバル共有メモリの情報を一覧表示します。")
+                          description="List your personal memories.\nあなたのメモリの情報を一覧表示します。")
     async def memory_list_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         if not self.memory_manager:
@@ -2109,15 +2109,15 @@ class LLMCog(commands.Cog, name="LLM"):
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             return
-        memories = self.memory_manager.list_memories()
+        memories = self.memory_manager.list_memories(interaction.user.id)
         if not memories:
             embed = discord.Embed(title="ℹ️ No Memories / メモリに情報はありません",
-                                  description="Nothing is saved in the global shared memory.\nグローバル共有メモリには何も保存されていません。",
+                                  description="Nothing is saved in your memory.\nあなたのメモリには何も保存されていません。",
                                   color=discord.Color.blue())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             return
-        embed = discord.Embed(title="🌐 Global Shared Memory / グローバル共有メモリ", color=discord.Color.blue())
+        embed = discord.Embed(title="📝 Your Memory / あなたのメモリ", color=discord.Color.blue())
         description = ""
         for key, value in memories.items():
             field_text = f"**{key}**: {value}\n"
@@ -2132,11 +2132,11 @@ class LLMCog(commands.Cog, name="LLM"):
     async def memory_key_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
         app_commands.Choice[str]]:
         if not self.memory_manager: return []
-        keys = self.memory_manager.list_memories().keys()
+        keys = self.memory_manager.list_memories(interaction.user.id).keys()
         return [app_commands.Choice(name=key, value=key) for key in keys if current.lower() in key.lower()][:25]
 
     @app_commands.command(name="memory-delete",
-                          description="Delete a global shared memory.\nグローバル共有メモリから情報を削除します。")
+                          description="Delete a memory from your personal memories.\nあなたのメモリから情報を削除します。")
     @app_commands.describe(key="The key of the memory to delete.\n削除したい情報のキー")
     @app_commands.autocomplete(key=memory_key_autocomplete)
     async def memory_delete_slash(self, interaction: discord.Interaction, key: str):
@@ -2149,22 +2149,22 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             return
         try:
-            if await self.memory_manager.delete_memory(key):
+            if await self.memory_manager.delete_memory(interaction.user.id, key):
                 embed = discord.Embed(title="✅ Memory Deleted / メモリを削除しました",
-                                      description=f"Deleted key '{key}' from global shared memory.\nグローバル共有メモリからキー '{key}' を削除しました。",
+                                      description=f"Deleted key '{key}' from your memory.\nあなたのメモリからキー '{key}' を削除しました。",
                                       color=discord.Color.green())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
             else:
                 embed = discord.Embed(title="⚠️ Key Not Found / キーが見つかりません",
-                                      description=f"Key '{key}' does not exist in global shared memory.\nキー '{key}' はグローバル共有メモリに存在しません。",
+                                      description=f"Key '{key}' does not exist in your memory.\nキー '{key}' はあなたのメモリに存在しません。",
                                       color=discord.Color.gold())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
         except Exception as e:
-            logger.error(f"Failed to delete global memory via command: {e}", exc_info=True)
+            logger.error(f"Failed to delete memory for user {interaction.user.id} via command: {e}", exc_info=True)
             embed = discord.Embed(title="❌ Deletion Error / 削除エラー",
-                                  description="Failed to delete from global shared memory.\nグローバル共有メモリからの削除に失敗しました。",
+                                  description="Failed to delete from your memory.\nメモリからの削除に失敗しました。",
                                   color=discord.Color.red())
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
