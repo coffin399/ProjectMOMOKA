@@ -34,7 +34,6 @@ llm:
     - "nvidia_nim/moonshotai/kimi-k2-instruct"
     - "nvidia_nim/meta/llama-3.3-70b-instruct"
     - "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"
-    - "nvidia_nim/deepseek-ai/deepseek-r1"
 
     # --- Google OpenAI-Compatible Proxy ---
     - "google/gemini-2.5-flash"
@@ -255,7 +254,6 @@ llm:
     </language_instructions>
 
   # --- ツール設定 ---
-  commands_manager: true # trueにすると全コマンドを収集し、LLMにリストとして渡します。falseにするとコマンド収集を無効化します。
   active_tools:
     - "search"
     - "user_bio"

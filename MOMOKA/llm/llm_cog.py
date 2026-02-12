@@ -29,7 +29,6 @@ from MOMOKA.llm.plugins import (
     SearchAgent,
     BioManager,
     MemoryManager,
-    CommandInfoManager,
     ImageGenerator,
     CommandAgent,
     DeepResearchAgent,
@@ -437,7 +436,7 @@ class LLMCog(commands.Cog, name="LLM"):
         self.search_agent: Optional[SearchAgent] = None
         self.bio_manager: Optional[BioManager] = None
         self.memory_manager: Optional[MemoryManager] = None
-        self.command_manager: Optional[CommandInfoManager] = None
+
         self.image_generator: Optional[ImageGenerator] = None
         self.command_agent: Optional[CommandAgent] = None
         self.tips_manager: Optional[TipsManager] = None
@@ -450,7 +449,6 @@ class LLMCog(commands.Cog, name="LLM"):
             self.search_agent,
             self.bio_manager,
             self.memory_manager,
-            self.command_manager,
             self.image_generator,
             self.command_agent,
             self.tips_manager,
@@ -468,13 +466,12 @@ class LLMCog(commands.Cog, name="LLM"):
         else:
             logger.error("Default LLM model is not configured in config.yaml.")
 
-    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager], Optional[DeepResearchAgent], Optional[ScheduledReporter]]:
+    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[BioManager], Optional[MemoryManager], Optional[ImageGenerator], Optional[CommandAgent], Optional[TipsManager], Optional[DeepResearchAgent], Optional[ScheduledReporter]]:
         """Initializes and returns all registered plugins."""
         plugins = {
             "SearchAgent": None,
             "BioManager": None,
             "MemoryManager": None,
-            "CommandInfoManager": None,
             "ImageGenerator": None,
             "CommandAgent": None,
             "TipsManager": None,
@@ -548,7 +545,6 @@ class LLMCog(commands.Cog, name="LLM"):
             plugins["SearchAgent"],
             plugins["BioManager"],
             plugins["MemoryManager"],
-            plugins["CommandInfoManager"],
             plugins["ImageGenerator"],
             plugins["CommandAgent"],
             plugins["TipsManager"],
@@ -677,33 +673,15 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                     user_display_name=user_display_name).replace(
             "必ず日本語で応答してください", "").replace("日本語で答えてください", "").replace(
             "Please respond in Japanese", "")
-        available_commands = ""
-        if self.command_manager:
-            await self.bot.wait_until_ready()
-            available_commands = self.command_manager.get_all_commands_info()
-        else:
-            # commands_managerがfalseの場合、またはCommandInfoManagerが利用できない場合
-            if not self.llm_config.get('commands_manager', True):
-                logger.debug("commands_manager is disabled in config. No commands will be collected.")
-            else:
-                logger.warning("CommandInfoManager is not available.")
         try:
             now, current_date_str, current_time_str = datetime.now(self.jst), datetime.now(self.jst).strftime(
                 '%Y年%m月%d日'), datetime.now(self.jst).strftime('%H:%M')
-            if '{available_commands}' in system_prompt_template:
-                system_prompt = system_prompt_template.format(current_date=current_date_str,
-                                                              current_time=current_time_str,
-                                                              available_commands=available_commands)
-            else:
-                #logger.warning("⚠️ {available_commands} not in template")
-                system_prompt = system_prompt_template.format(current_date=current_date_str,
-                                                              current_time=current_time_str)
+            system_prompt = system_prompt_template.format(current_date=current_date_str,
+                                                          current_time=current_time_str)
         except (KeyError, ValueError) as e:
             logger.warning(f"Could not format system_prompt: {e}")
             system_prompt = system_prompt_template.replace('{current_date}', current_date_str).replace('{current_time}',
-                                                                                                       current_time_str).replace(
-                '{available_commands}', available_commands)
-        if available_commands and "# 🤖 利用可能なBotコマンド一覧" not in system_prompt: system_prompt += f"\n\n{available_commands}"
+                                                                                                       current_time_str)
         if formatted_memories := self.memory_manager.get_formatted_memories(): system_prompt += f"\n\n{formatted_memories}"
         logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         return system_prompt
