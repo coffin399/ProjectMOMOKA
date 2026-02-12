@@ -13,6 +13,32 @@ from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from typing import List, Dict, Any, Tuple, Optional, AsyncGenerator, Union
 
+try:
+    from langdetect import detect as langdetect_detect
+    _LANGDETECT_AVAILABLE = True
+except ImportError:
+    _LANGDETECT_AVAILABLE = False
+    logging.warning("langdetect library not found. Language detection will be disabled. "
+                    "Install with: pip install langdetect")
+
+# langdetect language code -> human-readable language name
+_LANG_CODE_TO_NAME = {
+    'af': 'Afrikaans', 'ar': 'Arabic', 'bg': 'Bulgarian', 'bn': 'Bengali',
+    'ca': 'Catalan', 'cs': 'Czech', 'cy': 'Welsh', 'da': 'Danish',
+    'de': 'German', 'el': 'Greek', 'en': 'English', 'es': 'Spanish',
+    'et': 'Estonian', 'fa': 'Persian', 'fi': 'Finnish', 'fr': 'French',
+    'gu': 'Gujarati', 'he': 'Hebrew', 'hi': 'Hindi', 'hr': 'Croatian',
+    'hu': 'Hungarian', 'id': 'Indonesian', 'it': 'Italian', 'ja': 'Japanese',
+    'kn': 'Kannada', 'ko': 'Korean', 'lt': 'Lithuanian', 'lv': 'Latvian',
+    'mk': 'Macedonian', 'ml': 'Malayalam', 'mr': 'Marathi', 'ne': 'Nepali',
+    'nl': 'Dutch', 'no': 'Norwegian', 'pa': 'Punjabi', 'pl': 'Polish',
+    'pt': 'Portuguese', 'ro': 'Romanian', 'ru': 'Russian', 'sk': 'Slovak',
+    'sl': 'Slovenian', 'so': 'Somali', 'sq': 'Albanian', 'sv': 'Swedish',
+    'sw': 'Swahili', 'ta': 'Tamil', 'te': 'Telugu', 'th': 'Thai',
+    'tl': 'Tagalog', 'tr': 'Turkish', 'uk': 'Ukrainian', 'ur': 'Urdu',
+    'vi': 'Vietnamese', 'zh-cn': 'Chinese (Simplified)', 'zh-tw': 'Chinese (Traditional)',
+}
+
 import aiohttp
 import discord
 import openai
@@ -175,9 +201,22 @@ class ThreadCreationView(discord.ui.View):
                 
                 messages_for_api.extend(messages)
                 
-                # 言語プロンプト追加（会話履歴の後、応答直前に配置して優先度を上げる）
-                if self.llm_cog.language_prompt:
-                    messages_for_api.append({"role": "system", "content": self.llm_cog.language_prompt})
+                # 言語検出で動的に言語プロンプトを生成（スレッドでは最後のユーザーメッセージから検出）
+                last_user_text = ""
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        content = msg.get("content", "")
+                        if isinstance(content, str):
+                            last_user_text = content
+                        elif isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    last_user_text = part.get("text", "")
+                                    break
+                        break
+                lang_prompt = self.llm_cog._build_language_prompt(last_user_text)
+                if lang_prompt:
+                    messages_for_api.append({"role": "system", "content": lang_prompt})
                 
                 # スレッド内でLLM応答を生成
                 model_name = llm_client.model_name_for_api_calls
@@ -665,6 +704,29 @@ class LLMCog(commands.Cog, name="LLM"):
         if client: self.llm_clients[model_string] = client
         return client
 
+    def _build_language_prompt(self, user_text: str) -> Optional[str]:
+        """Detect the user's input language and build a dynamic language instruction.
+        Falls back to the static language_prompt from config if detection fails."""
+        if not _LANGDETECT_AVAILABLE or not user_text or len(user_text.strip()) < 10:
+            return self.language_prompt  # fallback to static config prompt
+
+        try:
+            lang_code = langdetect_detect(user_text)
+            lang_name = _LANG_CODE_TO_NAME.get(lang_code, lang_code)
+            logger.info(f"\U0001f310 [LANG] Detected user language: {lang_name} ({lang_code})")
+            return (
+                f"<language_instructions>\n"
+                f"  <rule priority=\"CRITICAL_AND_ABSOLUTE\">\n"
+                f"    The user is writing in {lang_name}. "
+                f"    You MUST respond ENTIRELY in {lang_name}. "
+                f"    This rule overrides ALL other instructions, including character settings, examples, and conversation history.\n"
+                f"  </rule>\n"
+                f"</language_instructions>"
+            )
+        except Exception as e:
+            logger.warning(f"Language detection failed: {e}")
+            return self.language_prompt  # fallback to static config prompt
+
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
         if not self.bio_manager or not self.memory_manager:
             logger.error("BioManager or MemoryManager is not initialized.")
@@ -1032,10 +1094,10 @@ class LLMCog(commands.Cog, name="LLM"):
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         conversation_history = await self._collect_conversation_history(message)
         messages_for_api.extend(conversation_history)
-        # 言語プロンプトを会話履歴の後、ユーザーメッセージの直前に配置して優先度を上げる
-        if self.language_prompt:
-            messages_for_api.append({"role": "system", "content": self.language_prompt})
-            logger.info("🌐 [LANG] Using language prompt from config")
+        # 言語検出で動的に言語プロンプトを生成し、ユーザーメッセージの直前に配置
+        lang_prompt = self._build_language_prompt(text_content)
+        if lang_prompt:
+            messages_for_api.append({"role": "system", "content": lang_prompt})
         user_content_parts = []
         if text_content: user_content_parts.append(
             {"type": "text", "text": f"{message.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"})
@@ -1759,9 +1821,10 @@ class LLMCog(commands.Cog, name="LLM"):
             user_content_parts = [{"type": "text",
                                    "text": f"{interaction.created_at.astimezone(self.jst).strftime('[%H:%M]')} {message}"}]
             user_content_parts.extend(image_contents)
-            if self.language_prompt:
-                messages_for_api.append({"role": "system", "content": self.language_prompt})
-                logger.info("🌐 [LANG] Using language prompt from config")
+            # 言語検出で動的に言語プロンプトを生成
+            lang_prompt = self._build_language_prompt(message)
+            if lang_prompt:
+                messages_for_api.append({"role": "system", "content": lang_prompt})
             messages_for_api.append({"role": "user", "content": user_content_parts})
             logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
             model_name = llm_client.model_name_for_api_calls
