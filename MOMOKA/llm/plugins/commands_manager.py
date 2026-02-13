@@ -64,9 +64,10 @@ class CommandInfoManager:
             if english_lines:
                 return ' '.join(english_lines)
 
-        # --- パターン3&4: " / " 区切り ---
-        if ' / ' in text:
-            parts = text.split(' / ')
+        # --- パターン3&4: スラッシュ区切り（" / ", " /", "/ ", "/" すべて対応） ---
+        if '/' in text:
+            # スラッシュ前後の空白を柔軟に許容して分割
+            parts = re.split(r'\s*/\s*', text)
             # 日本語を含まないパートだけ収集
             english_parts = [
                 part.strip() for part in parts
