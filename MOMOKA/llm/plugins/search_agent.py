@@ -43,14 +43,16 @@ class SearchAgent:
         gcfg = None
         if config:
             logger.info(f"SearchAgent init with config. Keys: {list(config.keys())}")
-            gcfg = config.get("search_agent")
+            # configはllmセクション全体 → "agent"キーで検索設定を取得
+            gcfg = config.get("agent")
             if gcfg:
                 logger.info("SearchAgent config found in provided config.")
             else:
                 logger.error("SearchAgent config NOT found in provided config.")
         elif hasattr(self.bot, 'cfg') and self.bot.cfg:
             logger.info("SearchAgent init with bot.cfg.")
-            gcfg = self.bot.cfg.get("search_agent")
+            # bot.cfgからはllm.agentのパスで取得
+            gcfg = self.bot.cfg.get("llm", {}).get("agent")
         
         if not gcfg:
             logger.error("SearchAgent config is missing (gcfg is None). Search will be disabled.")
