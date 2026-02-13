@@ -163,14 +163,25 @@ class TipsManager:
         embed.set_footer(text="we are experiencing technical difficulties with our main server. \n full documentation : https://coffin299.net")
         return embed
 
+    # 応答時間がこの秒数以上ならモデル切替の提案を表示する閾値
+    SLOW_MODEL_THRESHOLD = 30
+
     def get_waiting_embed(self, model_name: str) -> discord.Embed:
-        """待機中のembedを取得する（予想時間 + tips付き）"""
+        """待機中のembedを取得する（予想時間 + 切替提案 + tips付き）"""
         tip_embed = self.get_random_tip()
         # タイトル: モデル名の応答待ち表示
         tip_embed.title = f"⏳ Waiting for '{model_name}' response..."
         # 予想応答時間をdescriptionの先頭に挿入
         time_estimate = self.response_tracker.format_estimate(model_name)
+        # 予想時間が閾値を超える場合、モデル切替の提案を追加
+        estimate = self.response_tracker.get_estimate(model_name)
+        switch_hint = ""
+        if estimate is not None and estimate >= self.SLOW_MODEL_THRESHOLD:
+            switch_hint = (
+                "\n💡 応答が遅い場合は `/switch-models` で他のモデルへの切り替えもご検討ください。"
+                "\n💡 If response is slow, consider switching to another model with `/switch-models`."
+            )
         original_desc = tip_embed.description or ""
-        # 「予想時間 → 空行 → tips本文」の構成
-        tip_embed.description = f"{time_estimate}\n\n{original_desc}"
+        # 「予想時間 → 切替提案 → 空行 → tips本文」の構成
+        tip_embed.description = f"{time_estimate}{switch_hint}\n\n{original_desc}"
         return tip_embed
