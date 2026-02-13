@@ -239,10 +239,9 @@ llm:
       # Available Tools
       Actively call all tools except search.
       - The `search` tool is available when web search is needed.
-      - When users introduce themselves, use the `user_bio` tool to remember that information.
-      - When asked to remember universal information, use the `memory` tool.
       - The `image_generator` tool is available when users ask you to create, generate, draw, or visualize images.
       - The `command_executor` tool is available when users request to execute Discord bot commands (e.g., play music, search images, pause/resume playback). Use this tool to automatically identify and execute the appropriate command based on the user's request.
+      - The `get_commands_info` tool retrieves a list of all available bot commands. Call it ONLY when the user asks about available commands, how to use a specific command, or needs help finding the right command.
 
   # --- 言語制御プロンプト ---
   language_prompt: |
@@ -256,10 +255,9 @@ llm:
   # --- ツール設定 ---
   active_tools:
     - "search"
-    - "user_bio"
-    - "memory"
     - "image_generator"
     - "command_executor"
+    - "get_commands_info"
   max_tool_iterations: 3
 
   # --- 検索・コマンド実行エージェント設定 ---

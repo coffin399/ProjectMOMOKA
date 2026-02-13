@@ -430,36 +430,26 @@ class LLMCog(commands.Cog, name="LLM"):
         """config.yamlのsystem_promptのみを使用してシステムプロンプトを組み立てる"""
         # config.yamlからシステムプロンプトテンプレートを取得
         system_prompt_template = self.llm_config.get('system_prompt', '')
-        # コマンド情報を取得（有効な場合）
-        available_commands = ""
-        if self.command_manager:
-            await self.bot.wait_until_ready()
-            available_commands = self.command_manager.get_all_commands_info()
-        else:
-            if not self.llm_config.get('commands_manager', True):
-                logger.debug("commands_manager is disabled in config. No commands will be collected.")
-            else:
-                logger.warning("CommandInfoManager is not available.")
+
         # 現在日時をJSTで取得
         current_date_str = datetime.now(self.jst).strftime('%Y年%m月%d日')
         current_time_str = datetime.now(self.jst).strftime('%H:%M')
         try:
-            # テンプレート変数を置換
-            if '{available_commands}' in system_prompt_template:
-                system_prompt = system_prompt_template.format(current_date=current_date_str,
-                                                              current_time=current_time_str,
-                                                              available_commands=available_commands)
-            else:
-                system_prompt = system_prompt_template.format(current_date=current_date_str,
-                                                              current_time=current_time_str)
+            # テンプレート変数を置換（{available_commands} が残っていれば空文字で埋める）
+            system_prompt = system_prompt_template.format(
+                current_date=current_date_str,
+                current_time=current_time_str,
+                available_commands=""
+            )
         except (KeyError, ValueError) as e:
             logger.warning(f"Could not format system_prompt: {e}")
             # フォールバック: 文字列置換で対応
-            system_prompt = system_prompt_template.replace('{current_date}', current_date_str).replace('{current_time}',
-                                                                                                       current_time_str).replace(
-                '{available_commands}', available_commands)
-        # コマンド情報がシステムプロンプトに含まれていない場合は追加
-        if available_commands and "✨ 利用可能なBotコマンド一覧" not in system_prompt: system_prompt += f"\n\n{available_commands}"
+            system_prompt = (
+                system_prompt_template
+                .replace('{current_date}', current_date_str)
+                .replace('{current_time}', current_time_str)
+                .replace('{available_commands}', '')
+            )
         logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         return system_prompt
 
@@ -469,7 +459,8 @@ class LLMCog(commands.Cog, name="LLM"):
 
         logger.info(f"🔍 [TOOLS] Active tools from config: {active_tools}")
         logger.debug(f"🔍 [TOOLS] Plugin status: search_agent={self.search_agent is not None}, "
-                     f"image_generator={self.image_generator is not None}")
+                     f"image_generator={self.image_generator is not None}, "
+                     f"command_manager={self.command_manager is not None}")
 
         if 'search' in active_tools:
             if self.search_agent:
@@ -480,9 +471,15 @@ class LLMCog(commands.Cog, name="LLM"):
         if 'image_generator' in active_tools:
             if self.image_generator:
                 definitions.append(self.image_generator.tool_spec)
-                #logger.info(f"✅ [TOOLS] Added 'image_generator' tool (name: {self.image_generator.tool_spec['function']['name']})")
             else:
                 logger.warning(f"⚠️ [TOOLS] 'image_generator' is in active_tools but image_generator is None")
+
+        # コマンド情報ツール（ユーザーがコマンドについて質問した時のみ呼ばれる）
+        if 'get_commands_info' in active_tools:
+            if self.command_manager:
+                definitions.append(self.command_manager.tool_spec)
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'get_commands_info' is in active_tools but command_manager is None")
 
         logger.info(f"🔧 [TOOLS] Total tools to return: {len(definitions)}")
 
@@ -1215,6 +1212,11 @@ class LLMCog(commands.Cog, name="LLM"):
                     tool_response_content = await self.image_generator.run(arguments=function_args,
                                                                            channel_id=channel_id)
                     logger.debug(f"🔧 [TOOL] Result:\n{tool_response_content}")
+                elif self.command_manager and function_name == self.command_manager.name:
+                    # コマンド情報ツール: ユーザーがコマンドについて質問した時に呼ばれる
+                    tool_response_content = await self.command_manager.run(arguments=function_args)
+                    logger.debug(
+                        f"🔧 [TOOL] CommandInfo result (length: {len(tool_response_content)} chars)")
                 else:
                     logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")
                     error_content = f"Error: Tool '{function_name}' is not available."

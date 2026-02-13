@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import TYPE_CHECKING, List, Dict, Any
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 
 import discord
 from discord.ext import commands
@@ -22,15 +22,51 @@ _JAPANESE_CHAR_RE = re.compile(
 
 
 class CommandInfoManager:
-    """Collects and formats all bot command information for LLM context."""
+    """
+    Botの全コマンド情報を収集し、LLMツールとして提供するマネージャー。
+
+    LLMがユーザーにコマンドの説明を求められた場合にのみ呼び出される。
+    システムプロンプトには注入しないため、言語バイアスを回避できる。
+    """
+
+    # ツール名（LLMから呼び出される関数名）
+    name = "get_commands_info"
+
+    # OpenAI function-calling 形式のツール定義
+    tool_spec = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": (
+                "Retrieve a list of all available bot commands with descriptions, "
+                "parameters, and usage examples. Call this tool ONLY when the user "
+                "asks about available commands, how to use a command, or needs help "
+                "finding the right command for their goal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Optional keyword to filter commands "
+                            "(e.g. 'music', 'image', 'dice'). "
+                            "Leave empty to get all commands."
+                        ),
+                    }
+                },
+                "required": [],
+            },
+        },
+    }
 
     def __init__(self, bot: Bot):
         self.bot = bot
         logger.info("CommandInfoManager initialized.")
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # 英語テキスト抽出ヘルパー
-    # ------------------------------------------------------------------
+    # ==================================================================
     @staticmethod
     def _extract_english_text(text: str) -> str:
         """
@@ -39,7 +75,7 @@ class CommandInfoManager:
         対応パターン:
           1. "English\\nJapanese"  → English 部分を返す
           2. "Japanese\\nEnglish"  → English 部分を返す
-          3. "Japanese / English"  → English 部分を返す
+          3. "Japanese / English"  → English 部分を返す（スラッシュ前後の空白は柔軟に許容）
           4. "English / Japanese"  → English 部分を返す
           5. 英語のみ             → そのまま返す
           6. 日本語のみ           → そのまま返す（フォールバック）
@@ -64,9 +100,8 @@ class CommandInfoManager:
             if english_lines:
                 return ' '.join(english_lines)
 
-        # --- パターン3&4: スラッシュ区切り（" / ", " /", "/ ", "/" すべて対応） ---
+        # --- パターン3&4: スラッシュ区切り（前後の空白を柔軟に許容） ---
         if '/' in text:
-            # スラッシュ前後の空白を柔軟に許容して分割
             parts = re.split(r'\s*/\s*', text)
             # 日本語を含まないパートだけ収集
             english_parts = [
@@ -79,13 +114,40 @@ class CommandInfoManager:
         # --- パターン5&6: 分離できない場合はそのまま返す ---
         return text.strip()
 
-    # ------------------------------------------------------------------
-    # メイン: 全コマンド情報を収集
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # ツール実行エントリーポイント（LLMから呼び出される）
+    # ==================================================================
+    async def run(self, arguments: Dict[str, Any], **kwargs) -> str:
+        """
+        LLMツールとして呼び出された際のエントリーポイント。
+
+        Args:
+            arguments: ツール引数（"query" キーにフィルタ用キーワード）
+
+        Returns:
+            str: 整形されたコマンド情報テキスト（英語）
+        """
+        # Bot準備完了まで待機
+        await self.bot.wait_until_ready()
+
+        query = arguments.get("query", "").strip()
+
+        if query:
+            # キーワード指定時はフィルタリング検索
+            logger.info(f"🔍 [CommandInfoManager] Tool called with query='{query}'")
+            return self._get_filtered_commands_info(query)
+        else:
+            # キーワードなし → 全コマンド一覧
+            logger.info("🔍 [CommandInfoManager] Tool called (all commands)")
+            return self.get_all_commands_info()
+
+    # ==================================================================
+    # メイン: 全コマンド情報を収集（英語のみ）
+    # ==================================================================
     def get_all_commands_info(self) -> str:
         """
         _cog.pyで終わるCogから全コマンドを収集し、
-        LLMに渡すための整形されたテキスト（英語のみ）を返す
+        LLMに渡すための整形されたテキスト（英語のみ）を返す。
 
         Returns:
             str: コマンド情報を整形したテキスト（英語）
@@ -93,12 +155,8 @@ class CommandInfoManager:
         # ヘッダーと指示文を英語で構成
         commands_text = "# Available Bot Commands\n\n"
         commands_text += (
-            "When the user asks about a specific feature or how to use a command, "
-            "suggest the **most relevant command(s)** from the list below.\n\n"
-            "**Guidelines for suggestions:**\n"
-            "- Clearly show the command name, description, and usage examples\n"
-            "- Suggest 1-3 commands that best match the user's request\n"
-            "- Include parameter explanations when necessary\n\n"
+            "Below is the full list of commands. "
+            "Present the most relevant ones to the user.\n\n"
         )
 
         # スラッシュコマンドを収集
@@ -108,7 +166,6 @@ class CommandInfoManager:
             # カテゴリ（Cog名）ごとにグループ化
             categorized: Dict[str, List[Dict[str, Any]]] = {}
             for cmd_info in slash_commands:
-                # カテゴリ名のフォールバックを英語に変更
                 category = cmd_info.get('cog', 'Other')
                 if category not in categorized:
                     categorized[category] = []
@@ -124,9 +181,41 @@ class CommandInfoManager:
 
         return commands_text
 
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # フィルタリング検索
+    # ==================================================================
+    def _get_filtered_commands_info(self, query: str) -> str:
+        """
+        キーワードでコマンドをフィルタし、マッチしたものだけ整形して返す。
+
+        Args:
+            query: 検索キーワード
+
+        Returns:
+            str: マッチしたコマンド情報（英語）
+        """
+        keywords = query.lower().split()
+        all_commands = self._collect_slash_commands_from_cog_files()
+        matches = []
+
+        for cmd in all_commands:
+            # コマンド名・説明を検索対象にする
+            cmd_text = f"{cmd['name']} {cmd['description']}".lower()
+            if any(kw in cmd_text for kw in keywords):
+                matches.append(cmd)
+
+        if not matches:
+            return f"No commands found matching '{query}'."
+
+        text = f"# Commands matching '{query}'\n\n"
+        for cmd_info in matches:
+            text += self._format_command_info_detailed(cmd_info)
+
+        return text
+
+    # ==================================================================
     # スラッシュコマンド収集
-    # ------------------------------------------------------------------
+    # ==================================================================
     def _collect_slash_commands_from_cog_files(self) -> List[Dict[str, Any]]:
         """_cog.pyで終わるファイルからスラッシュコマンドを収集"""
         commands_list = []
@@ -134,7 +223,6 @@ class CommandInfoManager:
 
         # ロード済みのCogのうち、_cog.pyで終わるものを特定
         for ext_name in self.bot.extensions.keys():
-            # 例: PLANA.music.music_cog -> music_cog
             module_parts = ext_name.split('.')
             if module_parts[-1].endswith('_cog'):
                 loaded_cog_names.add(module_parts[-1])
@@ -153,12 +241,11 @@ class CommandInfoManager:
 
             logger.debug(f"Processing command: {command.name} (type: {command.__class__.__name__})")
 
-            # _cog.pyからのコマンドかチェック（チェックを緩める）
+            # _cog.pyからのコマンドかチェック
             if hasattr(command, 'binding') and command.binding:
                 cog_name = command.binding.__class__.__name__
                 logger.debug(f"  -> Cog: {cog_name}")
 
-                # よりシンプルな判定: 'Cog'で終わるか、loaded_cog_namesに含まれれば収集
                 if 'cog' in cog_name.lower() or any(name in cog_name.lower() for name in loaded_cog_names):
                     cmd_info = self._extract_slash_command_info(command)
                     if cmd_info:
@@ -171,7 +258,6 @@ class CommandInfoManager:
         # ギルド固有のコマンド
         for guild in self.bot.guilds:
             for command in self.bot.tree.get_commands(guild=guild):
-                # Groupオブジェクトの場合はスキップ
                 if command.__class__.__name__ == 'Group':
                     logger.debug(f"Skipping Group object: {command.name}")
                     continue
@@ -189,25 +275,19 @@ class CommandInfoManager:
 
     def _is_command_from_target_cog(self, command, target_cog_names: set) -> bool:
         """コマンドが_cog.pyのCogから来ているかチェック"""
-        # Groupオブジェクトの場合はbinding属性がないのでスキップ
         if not hasattr(command, 'binding'):
             return False
-
         if not command.binding:
             return False
-
         cog_class_name = command.binding.__class__.__name__
-
-        # Cog名が_cogで終わるか、target_cog_namesに含まれるかチェック
         if cog_class_name.endswith('Cog') or cog_class_name.lower() in target_cog_names:
             return True
-
         return False
 
-    # ------------------------------------------------------------------
-    # コマンド情報抽出（英語のみ抽出）
-    # ------------------------------------------------------------------
-    def _extract_slash_command_info(self, command) -> Dict[str, Any]:
+    # ==================================================================
+    # コマンド情報抽出（英語のみ）
+    # ==================================================================
+    def _extract_slash_command_info(self, command) -> Optional[Dict[str, Any]]:
         """スラッシュコマンドから詳細情報を抽出し、英語テキストのみを保持する"""
         try:
             # descriptionから英語部分のみ抽出
@@ -222,10 +302,9 @@ class CommandInfoManager:
                 'usage_examples': []
             }
 
-            # パラメータ情報を抽出
+            # パラメータ情報を抽出（descriptionも英語のみ）
             if hasattr(command, 'parameters'):
                 for param in command.parameters:
-                    # パラメータのdescriptionも英語のみ抽出
                     raw_param_desc = param.description or ''
                     english_param_desc = self._extract_english_text(raw_param_desc)
 
@@ -261,14 +340,13 @@ class CommandInfoManager:
             return param_type.__name__
         else:
             type_str = str(param_type)
-            # <class 'str'> -> str のような変換
             if "'" in type_str:
                 return type_str.split("'")[1].split(".")[-1]
             return type_str
 
-    # ------------------------------------------------------------------
-    # 使用例生成（英語化）
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 使用例生成（英語）
+    # ==================================================================
     def _generate_usage_examples(self, cmd_info: Dict[str, Any]) -> List[str]:
         """コマンドの使用例を自動生成"""
         examples = []
@@ -298,15 +376,13 @@ class CommandInfoManager:
         return examples
 
     def _get_example_value(self, param: Dict[str, Any]) -> str:
-        """パラメータの例示値を生成（英語のみ）"""
-        # 選択肢がある場合はその最初の値を使用
+        """パラメータの例示値を生成（英語）"""
         if 'choices' in param and param['choices']:
             return param['choices'][0]['name']
 
         param_type = param['type'].lower()
         param_name = param['name'].lower()
 
-        # 型に応じた例示値（英語）
         if 'url' in param_name or param_type == 'string' and 'link' in param['description'].lower():
             return "https://example.com"
         elif 'number' in param_type or 'int' in param_type:
@@ -314,7 +390,6 @@ class CommandInfoManager:
         elif 'bool' in param_type:
             return "True"
         elif param_type == 'string':
-            # パラメータ名から推測（英語の例示値を返す）
             if 'query' in param_name or 'search' in param_name:
                 return "search keyword"
             elif 'message' in param_name or 'text' in param_name:
@@ -326,18 +401,17 @@ class CommandInfoManager:
         else:
             return "..."
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # コマンド情報整形（英語ラベル）
-    # ------------------------------------------------------------------
+    # ==================================================================
     def _format_command_info_detailed(self, cmd_info: Dict[str, Any]) -> str:
-        """コマンド情報を詳細に整形（英語ラベルを使用）"""
+        """コマンド情報を詳細に整形（英語ラベル）"""
         text = f"### /{cmd_info['name']}\n"
         text += f"**Description**: {cmd_info['description']}\n"
 
         if cmd_info['parameters']:
             text += "**Parameters**:\n"
             for param in cmd_info['parameters']:
-                # 必須/オプションマークを英語で表記
                 required_mark = "Required" if param['required'] else "Optional"
                 text += f"  - `{param['name']}` ({param['type']}) [{required_mark}]\n"
                 if param['description']:
@@ -355,15 +429,15 @@ class CommandInfoManager:
         text += "\n"
         return text
 
-    # ------------------------------------------------------------------
-    # 検索・カテゴリ取得
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # 検索・カテゴリ取得（CommandAgent等の内部利用向け）
+    # ==================================================================
     def search_commands_by_keywords(self, keywords: List[str]) -> List[Dict[str, Any]]:
         """
-        キーワードでコマンドを検索（LLMが内部で使用可能）
+        キーワードでコマンドを検索
 
         Args:
-            keywords: 検索キーワードのリスト（例: ["music", "play"]）
+            keywords: 検索キーワードのリスト
 
         Returns:
             マッチしたコマンド情報のリスト
@@ -373,8 +447,6 @@ class CommandInfoManager:
 
         for cmd in all_commands:
             cmd_text = f"{cmd['name']} {cmd['description']}".lower()
-
-            # いずれかのキーワードがマッチすればOK
             if any(keyword.lower() in cmd_text for keyword in keywords):
                 matches.append(cmd)
 
