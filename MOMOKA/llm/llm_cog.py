@@ -778,6 +778,7 @@ class LLMCog(commands.Cog, name="LLM"):
         try:
             model_name = client.model_name_for_api_calls
             if self.tips_manager:
+                # 予想応答時間付きの待機embedを生成
                 waiting_embed = self.tips_manager.get_waiting_embed(model_name)
                 try:
                     sent_message = await message.reply(embed=waiting_embed, silent=True)
@@ -789,10 +790,23 @@ class LLMCog(commands.Cog, name="LLM"):
                     sent_message = await message.reply(waiting_message, silent=True)
                 except discord.HTTPException:
                     sent_message = await message.channel.send(waiting_message, silent=True)
-            return await self._process_streaming_and_send_response(sent_message=sent_message, channel=message.channel,
-                                                                   user=message.author,
-                                                                   messages_for_api=initial_messages, llm_client=client,
-                                                                   is_first_response=is_first_response)
+            # ストリーミング開始前に計測タイマーをスタート
+            stream_start_time = time.time()
+            result = await self._process_streaming_and_send_response(
+                sent_message=sent_message, channel=message.channel,
+                user=message.author,
+                messages_for_api=initial_messages, llm_client=client,
+                is_first_response=is_first_response
+            )
+            # ストリーミング完了後の経過時間を算出
+            elapsed = time.time() - stream_start_time
+            # 応答時間をトラッカーに記録（tips_manager が有効な場合のみ）
+            if self.tips_manager and result[0] is not None:
+                self.tips_manager.response_tracker.record(model_name, elapsed)
+                logger.info(
+                    f"⏱️ Response time recorded: {model_name} = {elapsed:.1f}s"
+                )
+            return result
         except Exception as e:
             logger.error(f"❌ Error during LLM streaming response: {e}", exc_info=True)
             error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
