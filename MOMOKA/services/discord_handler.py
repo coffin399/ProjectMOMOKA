@@ -12,6 +12,10 @@ import discord
 import discord.errors
 from discord import Client, TextChannel
 
+# channel.send() の最大待機時間（秒）
+# discord.py内部の5xxリトライが長時間ブロックするのを防止
+SEND_TIMEOUT_SECONDS = 20.0
+
 
 class DiscordLogFormatter(logging.Formatter):
     """
@@ -175,7 +179,14 @@ class DiscordLogHandler(logging.Handler):
         else:
             return text[:count] if text else ''
 
+    # 1件のログメッセージの最大文字数（Discordの2000文字制限を考慮し余裕を持たせる）
+    MAX_SINGLE_LOG_LENGTH = 1800
+
     def _sanitize_log_message(self, message: str) -> str:
+        # --- バッククォートのエスケープ（```ansi コードブロック破壊を防止） ---
+        # 連続する3つ以上のバッククォートをゼロ幅スペースで分断
+        message = re.sub(r'`{3,}', lambda m: '`\u200b' * (len(m.group()) - 1) + '`', message)
+
         # Windowsユーザーパス
         message = re.sub(
             r'[A-Za-z]:\\Users\\[^\\]+\\[^\\]+',
@@ -197,6 +208,10 @@ class DiscordLogHandler(logging.Handler):
             message,
             flags=re.IGNORECASE
         )
+
+        # --- 長大なログメッセージを切り詰め（APIエラーレスポンス全文等の対策） ---
+        if len(message) > self.MAX_SINGLE_LOG_LENGTH:
+            message = message[:self.MAX_SINGLE_LOG_LENGTH] + " ...[truncated]"
 
         return message
 
@@ -306,22 +321,69 @@ class DiscordLogHandler(logging.Handler):
                 if not chunk.strip():
                     continue
                 try:
-                    await channel.send(chunk, silent=True)
+                    # タイムアウト付きで送信（discord.py内部の5xxリトライによる長時間ブロックを防止）
+                    await asyncio.wait_for(
+                        channel.send(chunk, silent=True),
+                        timeout=SEND_TIMEOUT_SECONDS
+                    )
                     send_success = True
                     # チャンク間の送信にわずかな遅延を入れ、レートリミットを回避
                     await asyncio.sleep(0.2)
                 except discord.errors.Forbidden:
-                    # 権限エラー: チャンネルが削除されたか、アクセス権がない
+                    # 権限エラー: チャンネルが削除されたか、アクセス権がない（永続的エラー → 即削除）
                     print(f"DiscordLogHandler: ⚠️ No permission to send to channel {channel.id}. Marking for removal.")
                     channels_to_remove.append((channel.id, "Forbidden: No permission to send messages"))
                     break
                 except discord.errors.NotFound:
-                    # チャンネルが見つからない（削除された）
+                    # チャンネルが見つからない（削除された）（永続的エラー → 即削除）
                     print(f"DiscordLogHandler: ⚠️ Channel {channel.id} not found (deleted?). Marking for removal.")
                     channels_to_remove.append((channel.id, "NotFound: Channel has been deleted"))
                     break
+                except discord.errors.HTTPException as e:
+                    # Discord API エラーをステータスコードで分類
+                    if 500 <= e.status < 600:
+                        # 5xx系: Discordサーバー側の一時的エラー → チャンネル削除カウント増やさない
+                        print(
+                            f"DiscordLogHandler: ⚠️ Temporary Discord API error on channel {channel.id}: "
+                            f"{e.status} {e.text}. Skipping this cycle."
+                        )
+                    elif e.status == 400:
+                        # 400 Bad Request: 送信内容の問題（コードブロック破壊等）
+                        # チャンネル自体は正常なので削除カウントは増やさない
+                        print(
+                            f"DiscordLogHandler: ⚠️ Bad Request on channel {channel.id}: "
+                            f"message content may be malformed. Dropping this batch."
+                        )
+                    else:
+                        # その他の4xx系（Forbidden/NotFound以外）: 失敗カウント加算
+                        print(f"DiscordLogHandler: Discord API error on channel {channel.id}: {e.status} {e.text}")
+                        if not send_success:
+                            self.invalid_channel_attempts[channel.id] = (
+                                self.invalid_channel_attempts.get(channel.id, 0) + 1
+                            )
+                            if self.invalid_channel_attempts[channel.id] >= self.max_attempts:
+                                channels_to_remove.append(
+                                    (channel.id, f"HTTPException {e.status} after {self.max_attempts} attempts")
+                                )
+                    break
+                except asyncio.TimeoutError:
+                    # channel.send() がタイムアウト（discord.py内部リトライで長時間ブロック等）
+                    # 一時的な問題のためチャンネル削除カウントは増やさない
+                    print(
+                        f"DiscordLogHandler: ⚠️ Timed out sending to channel {channel.id} "
+                        f"(>{SEND_TIMEOUT_SECONDS}s). Skipping this cycle."
+                    )
+                    break
+                except (OSError, ConnectionError) as e:
+                    # ネットワーク接続エラー: 一時的な問題なのでチャンネル削除カウントは増やさない
+                    print(
+                        f"DiscordLogHandler: ⚠️ Network error sending to channel {channel.id}: "
+                        f"{type(e).__name__}: {e}. Skipping this cycle."
+                    )
+                    break
                 except Exception as e:
-                    print(f"Failed to send log to Discord channel {channel.id}: {e}")
+                    # 予期しないエラー: 失敗カウント加算
+                    print(f"Failed to send log to Discord channel {channel.id}: {type(e).__name__}: {e}")
                     if not send_success:
                         # 1つも送信できなかった場合のみ失敗カウントを増やす
                         self.invalid_channel_attempts[channel.id] = self.invalid_channel_attempts.get(channel.id, 0) + 1
