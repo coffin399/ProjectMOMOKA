@@ -53,6 +53,35 @@ class ImageGenerator:
         self._last_progress_update = 0
         self._update_interval = 1.0  # Minimum seconds between progress updates
 
+        # config.yaml の enabled フラグを確認（VRAM不足環境向けキルスイッチ）
+        if not self.image_gen_config.get("enabled", True):
+            # パイプライン・モデルレジストリを一切ロードせずに無効化
+            logger.info(
+                "ImageGenerator is disabled in config.yaml "
+                "(llm.image_generator.enabled=false). "
+                "Skipping pipeline/model initialization to conserve VRAM."
+            )
+            self.model_registry = None
+            self.pipeline = None
+            self.available_models = []
+            self.default_model = None
+            self._enabled = False
+            self.default_size = self.image_gen_config.get("default_size", "1024x1024")
+            self.save_images = False
+            self.save_directory = self.image_gen_config.get("save_directory", "data/image")
+            self.default_params = {}
+            self.max_width = 2048
+            self.max_height = 2048
+            self.min_width = 256
+            self.min_height = 256
+            self.channel_models_path = "data/channel_image_models.json"
+            self.channel_models = {}
+            self.generation_queue = deque()
+            self.queue_lock = asyncio.Lock()
+            self.is_generating = False
+            self.current_task = None
+            return
+
         self.model_registry = ImageModelRegistry.from_default_root()
         self.pipeline = LocalTxt2ImgPipeline(device=self.image_gen_config.get("device"))
 
@@ -259,6 +288,14 @@ class ImageGenerator:
     async def run(self, arguments: Dict[str, Any], channel_id: int, user_id: int = 0,
                    user_name: str = "Unknown") -> str:
         if not self._enabled:
+            # config で明示的に無効化されている場合と、モデル未発見の場合を区別
+            if not self.image_gen_config.get("enabled", True):
+                return (
+                    "❌ Error: Image generation is disabled in the configuration "
+                    "(llm.image_generator.enabled=false).\n\n"
+                    "エラー: 画像生成は設定ファイルで無効化されています "
+                    "(llm.image_generator.enabled=false)。"
+                )
             return (
                 "❌ Error: Image generation is disabled. "
                 "No local image models found under models/image-models.\n\n"

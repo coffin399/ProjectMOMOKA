@@ -655,8 +655,17 @@ class TTSCog(commands.Cog, name="tts_cog"):
 
 
 async def setup(bot: commands.Bot):
+    # TTSセクションが存在しない場合はロードをスキップ
     if 'tts' not in bot.config:
         logging.getLogger("MOMOKA.tts").warning("'tts' section not found in config.yaml. TTSCog will not be loaded.")
+        return
+    # enabled フラグが false の場合はCog全体をロードしない（VRAM節約）
+    tts_config = bot.config.get('tts', {})
+    if not tts_config.get('enabled', True):
+        logging.getLogger("MOMOKA.tts").info(
+            "TTSCog is disabled in config.yaml (tts.enabled=false). "
+            "Skipping TTS model loading to conserve VRAM."
+        )
         return
     if not bot.get_cog("music_cog"):
         logging.getLogger("MOMOKA.tts").warning("MusicCog is not loaded. TTSCog may not function correctly with music.")
