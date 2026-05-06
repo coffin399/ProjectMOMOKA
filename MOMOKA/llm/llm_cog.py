@@ -1199,7 +1199,6 @@ class LLMCog(commands.Cog, name="LLM"):
             raw_function_name = tool_call.function.name
             error_content = None
             tool_response_content = ""
-            search_result = None
             function_args = {}
 
             # ✅ Gemini の "default_api.search" → "search" に正規化
@@ -1211,15 +1210,10 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.debug(f"🔧 [TOOL] Arguments: {json.dumps(function_args, ensure_ascii=False, indent=2)}")
 
                 if self.search_agent and function_name == self.search_agent.name:
-                    search_result = await self.search_agent.run(arguments=function_args, bot=self.bot,
-                                                                channel_id=channel_id)
-                    # search_resultはresponseオブジェクトまたは文字列
-                    if hasattr(search_result, 'text'):
-                        # レスポンスオブジェクトからテキストを取得
-                        tool_response_content = search_result.text
-                    else:
-                        # 文字列の場合（フォールバック）
-                        tool_response_content = str(search_result)
+                    # SearchAgentはテキスト結果（str）を返す
+                    tool_response_content = await self.search_agent.run(
+                        arguments=function_args, bot=self.bot, channel_id=channel_id
+                    )
                     logger.debug(
                         f"🔧 [TOOL] Result (length: {len(str(tool_response_content))} chars):\n{str(tool_response_content)[:1000]}")
                 elif self.image_generator and function_name == self.image_generator.name:
@@ -1239,13 +1233,13 @@ class LLMCog(commands.Cog, name="LLM"):
                 error_content = f"Error: Invalid JSON arguments - {str(e)}"
             except SearchAPIRateLimitError as e:
                 logger.warning(f"⚠️ SearchAgent rate limit hit: {e}")
-                error_content = "[Google Search Error]\nThe Google Search API rate limit has been reached. Please tell the user to try again later."
+                error_content = "[Mistral Search Error]\nThe Mistral Search API rate limit has been reached. Please tell the user to try again later."
             except SearchAPIServerError as e:
                 logger.error(f"❌ SearchAgent server error: {e}")
-                error_content = "[Google Search Error]\nA temporary server error occurred with the search service. Please tell the user to try again later."
+                error_content = "[Mistral Search Error]\nA temporary server error occurred with the search service. Please tell the user to try again later."
             except SearchAgentError as e:
                 logger.error(f"❌ Error during SearchAgent execution for {function_name}: {e}", exc_info=True)
-                error_content = f"[Google Search Error]\nAn error occurred during the search execution: {str(e)}"
+                error_content = f"[Mistral Search Error]\nAn error occurred during the search execution: {str(e)}"
             except Exception as e:
                 logger.error(f"❌ Unexpected error during tool call for {function_name}: {e}", exc_info=True)
                 error_content = f"[Tool Error]\nAn unexpected error occurred: {str(e)}"
@@ -1254,73 +1248,6 @@ class LLMCog(commands.Cog, name="LLM"):
             logger.debug(f"🔧 [TOOL] Sending tool response back to LLM (length: {len(final_content)} chars)")
             messages.append(
                 {"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": final_content})
-            
-            # 検索が成功し、レスポンスオブジェクトが存在する場合、ソースをembedで表示
-            if search_result and hasattr(search_result, 'candidates'):
-                await self._send_search_sources_embed(search_result, channel_id, function_args.get('query', ''))
-
-    async def _send_search_sources_embed(self, response, channel_id: int, query: str) -> None:
-        """検索結果のソースをembedで表示"""
-        try:
-            # チャンネルを取得
-            channel = self.bot.get_channel(channel_id)
-            if not channel:
-                logger.warning(f"Channel {channel_id} not found")
-                return
-
-            # レスポンスから引用情報を抽出
-            sources = []
-            try:
-                # candidatesからgrounding metadataを取得
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'grounding_metadata'):
-                        grounding = candidate.grounding_metadata
-                        if hasattr(grounding, 'grounding_chunks') and grounding.grounding_chunks:
-                            for chunk in grounding.grounding_chunks:
-                                if hasattr(chunk, 'web'):
-                                    web_info = chunk.web
-                                    if hasattr(web_info, 'uri'):
-                                        sources.append({
-                                            'uri': web_info.uri,
-                                            'title': getattr(web_info, 'title', ''),
-                                        })
-            except Exception as e:
-                logger.error(f"Error extracting search sources: {e}", exc_info=True)
-                return
-
-            # ソースが見つからない場合は何もしない
-            if not sources:
-                logger.debug("No sources found in search response")
-                return
-
-            # Embedを作成して送信
-            embed = discord.Embed(
-                title="📚 Search Sources / 検索ソース",
-                description=f"**Query / クエリ:** {query}",
-                color=discord.Color.blue()
-            )
-
-            # ソースを最大10個表示
-            sources_text = ""
-            for i, source in enumerate(sources[:10], 1):
-                title = source.get('title', 'No Title') or 'No Title'
-                uri = source.get('uri', '')
-                if len(title) > 50:
-                    title = title[:47] + "..."
-                sources_text += f"{i}. [{title}]({uri})\n"
-
-            if sources_text:
-                embed.description += f"\n\n**Sources / ソース一覧:**\n{sources_text}"
-
-            # サポートフッターを追加
-            self._add_support_footer(embed)
-
-            # メッセージを送信
-            await channel.send(embed=embed, silent=True)
-            logger.info(f"✅ Search sources embed sent to channel {channel_id}")
-
-        except Exception as e:
-            logger.error(f"Error sending search sources embed: {e}", exc_info=True)
 
     async def _schedule_model_reset(self, channel_id: int):
         try:

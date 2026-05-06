@@ -8,6 +8,7 @@ aiohttp
 openai
 pyyaml
 google-genai
+mistralai
 PyNaCl
 yt-dlp
 google-api-python-client

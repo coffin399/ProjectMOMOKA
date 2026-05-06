@@ -14,11 +14,11 @@ class SearchAgentError(Exception):
         self.original_exception = original_exception
 
 class SearchAPIRateLimitError(SearchAgentError):
-    """Raised when the Google Search API rate limit is exceeded."""
+    """Raised when the Mistral Search API rate limit is exceeded."""
     pass
 
 class SearchAPIServerError(SearchAgentError):
-    """Raised for 5xx server errors from the Google Search API."""
+    """Raised for 5xx server errors from the Mistral Search API."""
     pass
 
 class SearchAPIError(SearchAgentError):

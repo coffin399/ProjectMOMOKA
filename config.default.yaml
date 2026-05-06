@@ -265,15 +265,15 @@ llm:
     - "get_commands_info"
   max_tool_iterations: 3
 
-  # --- 検索・コマンド実行エージェント設定 ---
+  # --- 検索・コマンド実行エージェント設定 (Mistral Web Search) ---
   agent:
-    api_key1: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
-    api_key2: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
-    api_key3: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
-    api_key4: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
-    api_key5: "YOUR_GOOGLE_GEMINI_API_KEY_HERE"
+    api_key1: "YOUR_MISTRAL_API_KEY_HERE"
+    api_key2: "YOUR_MISTRAL_API_KEY_HERE"
+    api_key3: "YOUR_MISTRAL_API_KEY_HERE"
+    api_key4: "YOUR_MISTRAL_API_KEY_HERE"
+    api_key5: "YOUR_MISTRAL_API_KEY_HERE"
     #you can add more api keys here
-    model: "gemini-2.5-flash"
+    model: "mistral-medium-latest"
     timeout: 60.0
     format_control: "検索結果に基づき、ユーザーの質問に直接回答する形で、構造化された詳細なレポートを作成してください。"
     format_control_deep_research: |
