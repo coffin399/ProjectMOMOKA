@@ -265,17 +265,11 @@ llm:
     - "get_commands_info"
   max_tool_iterations: 3
 
-  # --- 検索・コマンド実行エージェント設定 (Mistral Web Search) ---
+  # --- 検索エージェント設定 (DuckDuckGo Web Search) ---
+  # DuckDuckGoを使用するため、APIキーは不要です。
   agent:
-    api_key1: "YOUR_MISTRAL_API_KEY_HERE"
-    api_key2: "YOUR_MISTRAL_API_KEY_HERE"
-    api_key3: "YOUR_MISTRAL_API_KEY_HERE"
-    api_key4: "YOUR_MISTRAL_API_KEY_HERE"
-    api_key5: "YOUR_MISTRAL_API_KEY_HERE"
-    #you can add more api keys here
-    model: "mistral-medium-latest"
-    timeout: 60.0
-    format_control: "検索結果に基づき、ユーザーの質問に直接回答する形で、構造化された詳細なレポートを作成してください。"
+    max_results: 10
+    timeout: 30.0
     format_control_deep_research: |
       [DEEP RESEARCH REPORT FORMAT]
       1. **Executive Summary / 要約** — 研究対象の主要結論を3行以内で提示する。

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import TYPE_CHECKING, Optional, List, Any
+import re
+from html import unescape
+from typing import TYPE_CHECKING, List, Dict, Any
+from urllib.parse import unquote
 
 # aiohttp は既にプロジェクトの依存関係に含まれている
 import aiohttp
@@ -23,12 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Mistral API ベースURL
-MISTRAL_API_BASE = "https://api.mistral.ai/v1"
-# エージェント作成エンドポイント
-MISTRAL_AGENTS_URL = f"{MISTRAL_API_BASE}/agents"
-# エージェント完了エンドポイント
-MISTRAL_AGENTS_COMPLETIONS_URL = f"{MISTRAL_API_BASE}/agents/completions"
+# DuckDuckGo HTML検索エンドポイント（APIキー不要）
+DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 
 
 class SearchAgent:
@@ -38,7 +36,7 @@ class SearchAgent:
         "type": "function",
         "function": {
             "name": name,
-            "description": "Run a Mistral web search and return a report.",
+            "description": "Run a DuckDuckGo web search and return results.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -55,277 +53,167 @@ class SearchAgent:
             logger.info(f"SearchAgent init with config. Keys: {list(config.keys())}")
             # configはllmセクション全体 → "agent"キーで検索設定を取得
             gcfg = config.get("agent")
-            if gcfg:
-                logger.info("SearchAgent config found in provided config.")
-            else:
-                logger.error("SearchAgent config NOT found in provided config.")
         elif hasattr(self.bot, 'cfg') and self.bot.cfg:
             logger.info("SearchAgent init with bot.cfg.")
-            # bot.cfgからはllm.agentのパスで取得
             gcfg = self.bot.cfg.get("llm", {}).get("agent")
 
-        # 設定が見つからない場合は検索を無効化
-        if not gcfg:
-            logger.error("SearchAgent config is missing (gcfg is None). Search will be disabled.")
-            self.api_keys: List[str] = []
-            self.current_key_index = 0
-            return
+        # デフォルト設定（DuckDuckGoはAPIキー不要）
+        self.max_results = 10
+        self.timeout = 30.0
 
-        # 複数のAPIキーを収集（キーローテーション対応）
-        self.api_keys = []
-        for key in sorted(gcfg.keys()):
-            # api_key1, api_key2, ... の形式でAPIキーを取得
-            if key.startswith("api_key"):
-                api_key = gcfg[key]
-                # 有効なキーのみ追加（プレースホルダーを除外）
-                if api_key and api_key.strip() and api_key.strip() != "YOUR_MISTRAL_API_KEY_HERE":
-                    self.api_keys.append(api_key.strip())
-
-        # 有効なAPIキーがない場合は検索を無効化
-        if not self.api_keys:
-            logger.error("No valid API keys found in search_agent config. Search will be disabled.")
-            self.current_key_index = 0
-            return
-
-        # キーローテーション用のインデックス
-        self.current_key_index = 0
-        # 検索に使用するMistralモデル名
-        self.model_name = gcfg.get("model", "mistral-medium-latest")
-        # APIタイムアウト（秒）
-        self.timeout = gcfg.get("timeout", 60.0)
-        # レスポンスのフォーマット制御用プロンプト（エージェントのinstructionsに使用）
-        self.format_control = gcfg.get("format_control", "")
-
-        # 各APIキーに対応するエージェントID（遅延作成・キャッシュ用）
-        # キーインデックス → agent_id のマッピング
-        self._agent_ids: dict[int, str] = {}
+        # configがあれば設定を上書き
+        if gcfg:
+            self.max_results = gcfg.get("max_results", 10)
+            self.timeout = gcfg.get("timeout", 30.0)
 
         logger.info(
-            f"SearchAgent initialized with {len(self.api_keys)} Mistral API key(s) "
-            f"(model: {self.model_name})."
+            f"SearchAgent initialized (DuckDuckGo, max_results={self.max_results})."
         )
 
-    def _rotate_key(self) -> str:
-        """次のAPIキーにローテーションし、そのキーを返す"""
-        if not self.api_keys:
-            raise SearchExecutionError("No API keys available.")
-        # ラウンドロビンで次のキーに切り替え
-        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
-        logger.info(f"Rotating to Mistral API key {self.current_key_index + 1}/{len(self.api_keys)}")
-        return self.api_keys[self.current_key_index]
+    @staticmethod
+    def _strip_html_tags(text: str) -> str:
+        """HTMLタグを除去してプレーンテキストに変換する"""
+        # HTMLタグを正規表現で除去
+        cleaned = re.sub(r"<[^>]+>", "", text)
+        # HTMLエンティティをデコード
+        cleaned = unescape(cleaned)
+        # 連続する空白を正規化
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
 
-    def _extract_text_from_content(self, content: Any) -> str:
-        """Mistralレスポンスのcontentからテキストを抽出する。
+    @staticmethod
+    def _extract_real_url(ddg_redirect_url: str) -> str:
+        """DuckDuckGoのリダイレクトURLから実際のURLを抽出する。
 
-        contentは文字列の場合もあれば、ContentChunk(dict)のリストの場合もある。
+        DDGの検索結果リンクは //duckduckgo.com/l/?uddg=ENCODED_URL&... 形式のため、
+        実際のURLをデコードして返す。
         """
-        # contentが文字列の場合はそのまま返す
-        if isinstance(content, str):
-            return content
+        # uddgパラメータから実際のURLを抽出
+        match = re.search(r"uddg=([^&]+)", ddg_redirect_url)
+        if match:
+            return unquote(match.group(1))
+        # リダイレクトURLでない場合はそのまま返す
+        return ddg_redirect_url
 
-        # contentがリスト（ContentChunkのリスト）の場合
-        if isinstance(content, list):
-            text_parts = []
-            for chunk in content:
-                # dict形式のチャンクからtext typeを抽出
-                if isinstance(chunk, dict) and chunk.get("type") == "text":
-                    text_parts.append(chunk.get("text", ""))
-            return "".join(text_parts)
+    async def _search_duckduckgo(self, query: str) -> List[Dict[str, str]]:
+        """DuckDuckGo HTML検索を実行し、結果リストを返す。
 
-        # その他の場合は文字列変換
-        return str(content) if content else ""
-
-    async def _create_agent(self, session: aiohttp.ClientSession, api_key: str) -> str:
-        """Mistral Agents APIでweb_searchツール付きエージェントを作成し、agent_idを返す。
-
-        作成したエージェントは永続的なので、一度作成すればAPIキーごとに再利用可能。
+        DDGのHTML検索ページをPOSTでリクエストし、レスポンスHTMLから
+        タイトル・URL・スニペットを正規表現で抽出する。
+        APIキー不要・追加パッケージ不要。
         """
-        # エージェント作成リクエストボディ
-        payload = {
-            "model": self.model_name,
-            "name": "MOMOKA_SearchAgent",
-            "description": "Web search agent for MOMOKA Discord bot.",
-            "instructions": self.format_control or "検索結果に基づき、ユーザーの質問に直接回答する形で、構造化された詳細なレポートを作成してください。",
-            # web_search ビルトインコネクタを有効化
-            "tools": [{"type": "web_search"}],
-        }
-
+        # ブラウザを模したリクエストヘッダー
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
         }
-
-        async with session.post(MISTRAL_AGENTS_URL, json=payload, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                agent_id = data.get("id")
-                if agent_id:
-                    logger.info(f"SearchAgent: Created Mistral agent with ID: {agent_id}")
-                    return agent_id
-                else:
-                    raise SearchExecutionError("Mistral agent creation succeeded but no ID returned.")
-            else:
-                error_body = await resp.text()
-                raise SearchExecutionError(
-                    f"Failed to create Mistral agent (HTTP {resp.status}): {error_body[:300]}"
-                )
-
-    async def _get_or_create_agent_id(
-        self, session: aiohttp.ClientSession, key_index: int
-    ) -> str:
-        """指定キーインデックスのエージェントIDを取得（未作成なら作成）"""
-        # キャッシュにあればそのまま返す
-        if key_index in self._agent_ids:
-            return self._agent_ids[key_index]
-
-        # 新規作成してキャッシュ
-        api_key = self.api_keys[key_index]
-        agent_id = await self._create_agent(session, api_key)
-        self._agent_ids[key_index] = agent_id
-        return agent_id
-
-    async def _mistral_search(self, query: str) -> str:
-        """Mistral Agents APIを使用して検索を実行し、テキスト結果を返す。
-
-        1. エージェント作成（初回のみ、以降はキャッシュ済みIDを使用）
-        2. /v1/agents/completions でweb_search付きの応答を取得
-        """
-        if not self.api_keys:
-            raise SearchExecutionError("SearchAgent is not properly initialized.")
-
-        # リトライ設定
-        retries = 2
-        delay = 1.5
-        keys_tried = 0
-        max_keys_to_try = len(self.api_keys)
+        # 検索クエリをフォームデータとしてPOST
+        form_data = {"q": query}
 
         timeout = aiohttp.ClientTimeout(total=self.timeout)
-
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            while keys_tried < max_keys_to_try:
-                # 現在のキーとインデックスを取得
-                key_index = self.current_key_index
-                current_key = self.api_keys[key_index]
+            async with session.post(
+                DUCKDUCKGO_URL, data=form_data, headers=headers
+            ) as resp:
+                if resp.status != 200:
+                    raise SearchExecutionError(
+                        f"DuckDuckGo returned HTTP {resp.status}"
+                    )
+                html = await resp.text()
 
-                for attempt in range(retries + 1):
-                    try:
-                        # エージェントIDを取得（初回は自動作成）
-                        agent_id = await self._get_or_create_agent_id(session, key_index)
+        # 検索結果をHTMLから正規表現で抽出
+        results: List[Dict[str, str]] = []
 
-                        # Agents Completions APIリクエストボディ
-                        payload = {
-                            "agent_id": agent_id,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": f"**[DeepResearch Request]:** {query}",
-                                }
-                            ],
-                        }
+        # DuckDuckGo HTMLの結果構造:
+        # <a rel="nofollow" class="result__a" href="REDIRECT_URL">TITLE</a>
+        # <a class="result__snippet" href="...">SNIPPET</a>
+        result_pattern = re.compile(
+            r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.+?)</a>'
+            r'.*?'
+            r'class="result__snippet"[^>]*>(.+?)</a>',
+            re.DOTALL,
+        )
 
-                        headers = {
-                            "Content-Type": "application/json",
-                            "Authorization": f"Bearer {current_key}",
-                        }
+        for match in result_pattern.finditer(html):
+            raw_url, raw_title, raw_snippet = match.groups()
 
-                        # /v1/agents/completions に POST リクエスト
-                        async with session.post(
-                            MISTRAL_AGENTS_COMPLETIONS_URL,
-                            json=payload,
-                            headers=headers,
-                        ) as resp:
-                            status = resp.status
+            # HTMLタグを除去してプレーンテキスト化
+            title = self._strip_html_tags(raw_title)
+            snippet = self._strip_html_tags(raw_snippet)
+            # DDGリダイレクトURLから実際のURLを取得
+            url = self._extract_real_url(raw_url)
 
-                            # 成功レスポンス (200)
-                            if status == 200:
-                                data = await resp.json()
-                                choices = data.get("choices", [])
-                                if choices:
-                                    content = choices[0].get("message", {}).get("content", "")
-                                    return self._extract_text_from_content(content)
-                                else:
-                                    raise SearchExecutionError(
-                                        "Mistral returned an empty response (no choices)."
-                                    )
+            # 有効な結果のみ追加
+            if title and url:
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                })
 
-                            # Rate Limit (429)
-                            elif status == 429:
-                                raise SearchAPIRateLimitError(
-                                    "Mistral Search API rate limit was reached."
-                                )
+            # 最大件数に達したら終了
+            if len(results) >= self.max_results:
+                break
 
-                            # 503 Service Unavailable → 次のキーに切り替え
-                            elif status == 503:
-                                logger.warning(
-                                    f"503 error on Mistral API key "
-                                    f"{key_index + 1}/{len(self.api_keys)}. "
-                                    f"Rotating to next key."
-                                )
-                                keys_tried += 1
-                                if keys_tried < max_keys_to_try:
-                                    self._rotate_key()
-                                    break
-                                else:
-                                    raise SearchAPIServerError(
-                                        "All Mistral API keys returned 503 errors."
-                                    )
+        logger.info(f"DuckDuckGo search for '{query}' returned {len(results)} results.")
+        return results
 
-                            # その他の5xx サーバーエラー → リトライ
-                            elif 500 <= status < 600:
-                                error_body = await resp.text()
-                                logger.warning(
-                                    f"SearchAgent server error {status} "
-                                    f"(attempt {attempt + 1}/{retries + 1}): {error_body[:200]}"
-                                )
-                                if attempt < retries:
-                                    await asyncio.sleep(delay * (attempt + 1))
-                                    continue
-                                raise SearchAPIServerError(
-                                    f"Mistral API server error ({status}) after retries."
-                                )
+    @staticmethod
+    def _format_results_as_text(query: str, results: List[Dict[str, str]]) -> str:
+        """検索結果をLLMが理解しやすいテキスト形式にフォーマットする"""
+        if not results:
+            return f"Web search for '{query}' returned no results."
 
-                            # その他のHTTPエラー (4xx等)
-                            else:
-                                error_body = await resp.text()
-                                logger.error(
-                                    f"Search Agent unexpected HTTP {status}: {error_body[:300]}"
-                                )
-                                # エージェントIDが無効な場合はキャッシュを破棄して再作成
-                                if status in (400, 404):
-                                    self._agent_ids.pop(key_index, None)
-                                    logger.info("Cleared cached agent ID, will recreate on next attempt.")
-                                raise SearchAPIError(
-                                    f"Mistral API returned HTTP {status}: {error_body[:200]}"
-                                )
+        # ヘッダー
+        lines = [f"## Web Search Results for: {query}", ""]
 
-                    except SearchAgentError:
-                        # SearchAgentErrorのサブクラスはそのまま再raise
-                        raise
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            f"SearchAgent timeout (attempt {attempt + 1}/{retries + 1})"
-                        )
-                        if attempt < retries:
-                            await asyncio.sleep(delay * (attempt + 1))
-                            continue
-                        raise SearchExecutionError(
-                            f"Mistral Search API timed out after {self.timeout}s."
-                        )
-                    except Exception as e:
-                        logger.error(f"Search Agent unexpected error: {e}", exc_info=True)
-                        raise SearchExecutionError(
-                            f"An unexpected error occurred during search: {str(e)}",
-                            original_exception=e,
-                        )
+        # 各結果をフォーマット
+        for i, result in enumerate(results, 1):
+            title = result.get("title", "No Title")
+            url = result.get("url", "")
+            snippet = result.get("snippet", "")
 
-        # すべてのキーで失敗した場合
-        raise SearchExecutionError("Search failed on all available Mistral API keys.")
+            lines.append(f"### {i}. {title}")
+            lines.append(f"**URL:** {url}")
+            if snippet:
+                lines.append(f"**Summary:** {snippet}")
+            lines.append("")  # 空行で区切り
+
+        # LLMへの指示
+        lines.append("---")
+        lines.append(
+            "Use the above search results to provide a comprehensive, "
+            "accurate answer to the user's question. "
+            "Cite sources where appropriate."
+        )
+
+        return "\n".join(lines)
 
     async def run(self, *, arguments: dict, bot: "commands.Bot", channel_id: int) -> str:
-        """検索を実行するメインメソッド。テキスト結果を返す。"""
+        """検索を実行するメインメソッド。フォーマット済みテキスト結果を返す。"""
         query = arguments.get("query", "")
         if not query:
             raise SearchExecutionError("Query cannot be empty.")
 
-        # _mistral_searchは例外を発生させる可能性があるため、呼び出し側(llm_cog.py)で処理する
-        return await self._mistral_search(query)
+        try:
+            # DuckDuckGoで検索を実行
+            results = await self._search_duckduckgo(query)
+            # 結果をLLM向けテキストにフォーマットして返す
+            return self._format_results_as_text(query, results)
+
+        except SearchAgentError:
+            # SearchAgentError系はそのまま再raise
+            raise
+        except asyncio.TimeoutError:
+            raise SearchExecutionError(
+                f"DuckDuckGo search timed out after {self.timeout}s."
+            )
+        except Exception as e:
+            logger.error(f"Search Agent unexpected error: {e}", exc_info=True)
+            raise SearchExecutionError(
+                f"An unexpected error occurred during search: {str(e)}",
+                original_exception=e,
+            )
