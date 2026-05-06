@@ -23,8 +23,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Mistral Chat Completions APIエンドポイント
-MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+# Mistral API ベースURL
+MISTRAL_API_BASE = "https://api.mistral.ai/v1"
+# エージェント作成エンドポイント
+MISTRAL_AGENTS_URL = f"{MISTRAL_API_BASE}/agents"
+# エージェント完了エンドポイント
+MISTRAL_AGENTS_COMPLETIONS_URL = f"{MISTRAL_API_BASE}/agents/completions"
 
 
 class SearchAgent:
@@ -85,12 +89,17 @@ class SearchAgent:
 
         # キーローテーション用のインデックス
         self.current_key_index = 0
-        # 検索に使用するMistralモデル名（web_searchツール対応モデル）
+        # 検索に使用するMistralモデル名
         self.model_name = gcfg.get("model", "mistral-medium-latest")
         # APIタイムアウト（秒）
         self.timeout = gcfg.get("timeout", 60.0)
-        # レスポンスのフォーマット制御用プロンプト
+        # レスポンスのフォーマット制御用プロンプト（エージェントのinstructionsに使用）
         self.format_control = gcfg.get("format_control", "")
+
+        # 各APIキーに対応するエージェントID（遅延作成・キャッシュ用）
+        # キーインデックス → agent_id のマッピング
+        self._agent_ids: dict[int, str] = {}
+
         logger.info(
             f"SearchAgent initialized with {len(self.api_keys)} Mistral API key(s) "
             f"(model: {self.model_name})."
@@ -108,7 +117,7 @@ class SearchAgent:
     def _extract_text_from_content(self, content: Any) -> str:
         """Mistralレスポンスのcontentからテキストを抽出する。
 
-        contentは文字列の場合もあれば、ContentChunkオブジェクト(dict)のリストの場合もある。
+        contentは文字列の場合もあれば、ContentChunk(dict)のリストの場合もある。
         """
         # contentが文字列の場合はそのまま返す
         if isinstance(content, str):
@@ -126,11 +135,60 @@ class SearchAgent:
         # その他の場合は文字列変換
         return str(content) if content else ""
 
-    async def _mistral_search(self, query: str) -> str:
-        """Mistral Web Search APIを直接呼び出して検索を実行し、テキスト結果を返す。
+    async def _create_agent(self, session: aiohttp.ClientSession, api_key: str) -> str:
+        """Mistral Agents APIでweb_searchツール付きエージェントを作成し、agent_idを返す。
 
-        mistralai SDKを使わず、aiohttp で REST API を直接叩くため
-        SDK バージョン互換性の問題を回避できる。
+        作成したエージェントは永続的なので、一度作成すればAPIキーごとに再利用可能。
+        """
+        # エージェント作成リクエストボディ
+        payload = {
+            "model": self.model_name,
+            "name": "MOMOKA_SearchAgent",
+            "description": "Web search agent for MOMOKA Discord bot.",
+            "instructions": self.format_control or "検索結果に基づき、ユーザーの質問に直接回答する形で、構造化された詳細なレポートを作成してください。",
+            # web_search ビルトインコネクタを有効化
+            "tools": [{"type": "web_search"}],
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+
+        async with session.post(MISTRAL_AGENTS_URL, json=payload, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                agent_id = data.get("id")
+                if agent_id:
+                    logger.info(f"SearchAgent: Created Mistral agent with ID: {agent_id}")
+                    return agent_id
+                else:
+                    raise SearchExecutionError("Mistral agent creation succeeded but no ID returned.")
+            else:
+                error_body = await resp.text()
+                raise SearchExecutionError(
+                    f"Failed to create Mistral agent (HTTP {resp.status}): {error_body[:300]}"
+                )
+
+    async def _get_or_create_agent_id(
+        self, session: aiohttp.ClientSession, key_index: int
+    ) -> str:
+        """指定キーインデックスのエージェントIDを取得（未作成なら作成）"""
+        # キャッシュにあればそのまま返す
+        if key_index in self._agent_ids:
+            return self._agent_ids[key_index]
+
+        # 新規作成してキャッシュ
+        api_key = self.api_keys[key_index]
+        agent_id = await self._create_agent(session, api_key)
+        self._agent_ids[key_index] = agent_id
+        return agent_id
+
+    async def _mistral_search(self, query: str) -> str:
+        """Mistral Agents APIを使用して検索を実行し、テキスト結果を返す。
+
+        1. エージェント作成（初回のみ、以降はキャッシュ済みIDを使用）
+        2. /v1/agents/completions でweb_search付きの応答を取得
         """
         if not self.api_keys:
             raise SearchExecutionError("SearchAgent is not properly initialized.")
@@ -141,41 +199,46 @@ class SearchAgent:
         keys_tried = 0
         max_keys_to_try = len(self.api_keys)
 
-        while keys_tried < max_keys_to_try:
-            # 現在のキーを取得
-            current_key = self.api_keys[self.current_key_index]
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
 
-            for attempt in range(retries + 1):
-                try:
-                    # 検索用プロンプトの構築
-                    prompt = f"**[DeepResearch Request]:** {query}\n{self.format_control}"
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while keys_tried < max_keys_to_try:
+                # 現在のキーとインデックスを取得
+                key_index = self.current_key_index
+                current_key = self.api_keys[key_index]
 
-                    # Mistral Chat Completions APIリクエストボディ
-                    payload = {
-                        "model": self.model_name,
-                        "messages": [{"role": "user", "content": prompt}],
-                        # web_search ツールを有効化（Mistralビルトインコネクタ）
-                        "tools": [{"type": "web_search"}],
-                    }
+                for attempt in range(retries + 1):
+                    try:
+                        # エージェントIDを取得（初回は自動作成）
+                        agent_id = await self._get_or_create_agent_id(session, key_index)
 
-                    # リクエストヘッダー（Bearer認証）
-                    headers = {
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {current_key}",
-                    }
+                        # Agents Completions APIリクエストボディ
+                        payload = {
+                            "agent_id": agent_id,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": f"**[DeepResearch Request]:** {query}",
+                                }
+                            ],
+                        }
 
-                    # aiohttp で POST リクエストを送信
-                    timeout = aiohttp.ClientTimeout(total=self.timeout)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        headers = {
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {current_key}",
+                        }
+
+                        # /v1/agents/completions に POST リクエスト
                         async with session.post(
-                            MISTRAL_API_URL, json=payload, headers=headers
+                            MISTRAL_AGENTS_COMPLETIONS_URL,
+                            json=payload,
+                            headers=headers,
                         ) as resp:
                             status = resp.status
 
                             # 成功レスポンス (200)
                             if status == 200:
                                 data = await resp.json()
-                                # choices[0].message.content からテキストを抽出
                                 choices = data.get("choices", [])
                                 if choices:
                                     content = choices[0].get("message", {}).get("content", "")
@@ -195,13 +258,13 @@ class SearchAgent:
                             elif status == 503:
                                 logger.warning(
                                     f"503 error on Mistral API key "
-                                    f"{self.current_key_index + 1}/{len(self.api_keys)}. "
+                                    f"{key_index + 1}/{len(self.api_keys)}. "
                                     f"Rotating to next key."
                                 )
                                 keys_tried += 1
                                 if keys_tried < max_keys_to_try:
                                     self._rotate_key()
-                                    break  # 内側のループを抜けて次のキーで再試行
+                                    break
                                 else:
                                     raise SearchAPIServerError(
                                         "All Mistral API keys returned 503 errors."
@@ -218,7 +281,7 @@ class SearchAgent:
                                     await asyncio.sleep(delay * (attempt + 1))
                                     continue
                                 raise SearchAPIServerError(
-                                    f"Mistral Search API server error ({status}) after retries."
+                                    f"Mistral API server error ({status}) after retries."
                                 )
 
                             # その他のHTTPエラー (4xx等)
@@ -227,31 +290,33 @@ class SearchAgent:
                                 logger.error(
                                     f"Search Agent unexpected HTTP {status}: {error_body[:300]}"
                                 )
+                                # エージェントIDが無効な場合はキャッシュを破棄して再作成
+                                if status in (400, 404):
+                                    self._agent_ids.pop(key_index, None)
+                                    logger.info("Cleared cached agent ID, will recreate on next attempt.")
                                 raise SearchAPIError(
                                     f"Mistral API returned HTTP {status}: {error_body[:200]}"
                                 )
 
-                except SearchAgentError:
-                    # SearchAgentErrorのサブクラスはそのまま再raise
-                    raise
-                except asyncio.TimeoutError:
-                    # タイムアウト → リトライ
-                    logger.warning(
-                        f"SearchAgent timeout (attempt {attempt + 1}/{retries + 1})"
-                    )
-                    if attempt < retries:
-                        await asyncio.sleep(delay * (attempt + 1))
-                        continue
-                    raise SearchExecutionError(
-                        f"Mistral Search API timed out after {self.timeout}s."
-                    )
-                except Exception as e:
-                    # その他の予期しないエラー
-                    logger.error(f"Search Agent unexpected error: {e}", exc_info=True)
-                    raise SearchExecutionError(
-                        f"An unexpected error occurred during search: {str(e)}",
-                        original_exception=e
-                    )
+                    except SearchAgentError:
+                        # SearchAgentErrorのサブクラスはそのまま再raise
+                        raise
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"SearchAgent timeout (attempt {attempt + 1}/{retries + 1})"
+                        )
+                        if attempt < retries:
+                            await asyncio.sleep(delay * (attempt + 1))
+                            continue
+                        raise SearchExecutionError(
+                            f"Mistral Search API timed out after {self.timeout}s."
+                        )
+                    except Exception as e:
+                        logger.error(f"Search Agent unexpected error: {e}", exc_info=True)
+                        raise SearchExecutionError(
+                            f"An unexpected error occurred during search: {str(e)}",
+                            original_exception=e,
+                        )
 
         # すべてのキーで失敗した場合
         raise SearchExecutionError("Search failed on all available Mistral API keys.")
