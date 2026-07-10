@@ -1,6 +1,7 @@
-# PLANA/llm/error/errors.py
+# MOMOKA/llm/error/errors.py
 
 import logging
+import re
 import openai
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,16 @@ class SearchExecutionError(SearchAgentError):
 class LLMExceptionHandler:
     def __init__(self, config: dict):
         self.config = config.get('error_msg', {})
+
+    def _sanitize_error_message(self, error_text: str) -> str:
+        """エラーメッセージからローカルディレクトリパスを除去してセキュアにする"""
+        # Windowsパス（例: C:\Users\coffi\... や C:/Users/coffi/...）を除去
+        sanitized = re.sub(r'[A-Za-z]:[\\\/](?:[^\s\\\/]+[\\\/])*', '', error_text)
+        # Unixパス（例: /home/user/...）を除去
+        sanitized = re.sub(r'\/(?:home|usr|var|tmp|opt)\/\S+\/', '', sanitized)
+        # ファイルパスの "File \"...\"" 形式のトレースバック内パスを簡略化
+        sanitized = re.sub(r'File\s+"[^"]*[\\\/]([^"\\\/]+)"', r'File "\1"', sanitized)
+        return sanitized.strip()
 
     def handle_exception(self, exception: Exception) -> str:
         """
@@ -95,4 +106,6 @@ class LLMExceptionHandler:
 
         # その他の予期せぬエラー
         logger.error(f"An unexpected error occurred during LLM interaction: {exception}", exc_info=True)
-        return self.config.get('unexpected_error', "予期せぬエラーが発生しました。開発者に連絡してください。")
+        # エラーメッセージからローカルディレクトリパスを除去して安全な表示を行う
+        sanitized_error = self._sanitize_error_message(str(exception))
+        return f"予期せぬエラーが発生しました。\nAn unexpected error occurred.\n\n**詳細 / Details:**\n```\n{sanitized_error}\n```\n\n[GitHub で報告 / Report on GitHub](https://github.com/coffin399/ProjectMOMOKA/issues)"

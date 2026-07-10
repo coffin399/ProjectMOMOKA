@@ -248,31 +248,8 @@ class TTSCog(commands.Cog, name="tts_cog"):
                 guild_settings.get("volume", self.default_volume)
             )
 
-    @commands.Cog.listener()
-    async def on_llm_response_complete(self, response_messages: list, text_to_speak: str):
-        if not response_messages or not (guild := response_messages[0].guild):
-            return
 
-        guild_settings = self._get_guild_speech_settings(guild.id)
-        if response_messages[0].channel.id != guild_settings.get("speech_channel_id"):
-            return
 
-        voice_client = guild.voice_client
-        if not voice_client or not voice_client.is_connected() or not text_to_speak:
-            return
-
-        lock = self._get_tts_lock(guild.id)
-        if lock.locked():
-            return
-
-        async with lock:
-            channel_settings = self._get_channel_settings(voice_client.channel.id)
-            await self._handle_say_logic(
-                guild, text_to_speak,
-                channel_settings["model_id"], channel_settings["style"],
-                channel_settings["style_weight"], channel_settings["speed"],
-                guild_settings.get("volume", self.default_volume)
-            )
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):

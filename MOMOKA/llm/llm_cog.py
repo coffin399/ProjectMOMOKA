@@ -196,13 +196,6 @@ class ThreadCreationView(discord.ui.View):
                 
                 if sent_messages and full_response_text:
                     logger.info(f"✅ Thread conversation completed | model='{model_name}' | response_length={len(full_response_text)} chars")
-                    
-                    # TTS Cogにカスタムイベントを発火
-                    try:
-                        self.llm_cog.bot.dispatch("llm_response_complete", sent_messages, full_response_text)
-                        logger.info("📢 Dispatched 'llm_response_complete' event for TTS from thread.")
-                    except Exception as e:
-                        logger.error(f"Failed to dispatch 'llm_response_complete' event from thread: {e}", exc_info=True)
                 
                 # ボタンを無効化
                 button.disabled = True
@@ -227,16 +220,17 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
         current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
-        support_text = "\n問題がありますか？開発者にご連絡ください！ / Having issues? Contact the developer!"
+        support_text = "\n問題がありますか？GitHubで報告してください！ / Having issues? Report on GitHub!"
         if current_footer:
             embed.set_footer(text=current_footer + support_text)
         else:
             embed.set_footer(text=support_text.strip())
 
     def _create_support_view(self) -> discord.ui.View:
+        # GitHubリポジトリへの誘導ボタンを作成
         view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="サポートサーバー / Support Server", style=discord.ButtonStyle.link,
-                                        url="https://discord.gg/H79HKKqx3s", emoji="💬"))
+        view.add_item(discord.ui.Button(label="GitHub / 問題報告", style=discord.ButtonStyle.link,
+                                        url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
         return view
 
     def __init__(self, bot: commands.Bot):
@@ -747,12 +741,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     self.message_to_thread[guild_id_for_msg][msg.id] = thread_id
                 self._cleanup_old_threads()
 
-                # TTS Cogにカスタムイベントを発火させる
-                try:
-                    self.bot.dispatch("llm_response_complete", sent_messages, llm_response)
-                    logger.info("📢 Dispatched 'llm_response_complete' event for TTS.")
-                except Exception as e:
-                    logger.error(f"Failed to dispatch 'llm_response_complete' event: {e}", exc_info=True)
+
 
         except Exception as e:
             await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
@@ -1345,12 +1334,7 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.debug(
                     f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
 
-                # TTS Cogにカスタムイベントを発火させる
-                try:
-                    self.bot.dispatch("llm_response_complete", sent_messages, full_response_text)
-                    logger.info("📢 Dispatched 'llm_response_complete' event for TTS from /chat command.")
-                except Exception as e:
-                    logger.error(f"Failed to dispatch 'llm_response_complete' event from /chat: {e}", exc_info=True)
+
 
             elif not sent_messages:
                 logger.warning("LLM response for /chat was empty or an error occurred.")

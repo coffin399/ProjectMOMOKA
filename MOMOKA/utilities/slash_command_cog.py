@@ -87,17 +87,17 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
     def _add_support_footer(self, embed: discord.Embed) -> None:
         """embedにサポートサーバーへのフッターを追加"""
         current_footer = embed.footer.text if embed.footer else ""
-        support_text = "\n問題がありますか？開発者にご連絡ください！ / Having issues? Contact the developer!"
+        support_text = "\n問題がありますか？GitHubで報告してください！ / Having issues? Report on GitHub!"
         embed.set_footer(text=current_footer + support_text if current_footer else support_text.strip())
 
     def _create_support_view(self) -> discord.ui.View:
-        """サポートサーバーへのリンクボタンを含むViewを作成"""
+        """GitHubリポジトリへのリンクボタンを含むViewを作成"""
         view = discord.ui.View()
         view.add_item(discord.ui.Button(
-            label="サポートサーバー / Support Server",
+            label="GitHub / 問題報告",
             style=discord.ButtonStyle.link,
-            url="https://discord.gg/H79HKKqx3s",
-            emoji="💬"
+            url="https://github.com/coffin399/ProjectMOMOKA",
+            emoji="🐙"
         ))
         return view
 
@@ -306,22 +306,24 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
     @app_commands.command(name="support",
                           description="開発者へのお問い合わせ方法を表示します / Shows how to contact the developer")
     async def support_contact_slash(self, interaction: discord.Interaction) -> None:
-        support_server_invite = "https://discord.gg/H79HKKqx3s"
+        # GitHubリポジトリURLを問い合わせ先として使用
+        github_url = "https://github.com/coffin399/ProjectMOMOKA"
+        github_issues_url = "https://github.com/coffin399/ProjectMOMOKA/issues"
 
         embed = discord.Embed(
             title="💬 サポート / Support",
-            description="Botに関するご質問・ご要望・不具合報告などは、公式サポートサーバーまたは以下の方法でお気軽にお問い合わせください。\n\nFor questions, requests, or bug reports about the bot, please join our official support server or contact us using the methods below.",
+            description="Botに関するご質問・ご要望・不具合報告などは、GitHubリポジトリまたは以下の方法でお気軽にお問い合わせください。\n\nFor questions, requests, or bug reports about the bot, please visit our GitHub repository or contact us using the methods below.",
             color=discord.Color.blurple()
         )
 
-        support_server_id = 1176527382755864586
-        support_guild = self.bot.get_guild(support_server_id)
-        if support_guild and support_guild.icon:
-            embed.set_thumbnail(url=support_guild.icon.url)
+        # GitHubリポジトリのアイコン等は省略（サーバーアイコンの代わり）
+        bot_user = self.bot.user
+        if bot_user and bot_user.avatar:
+            embed.set_thumbnail(url=bot_user.avatar.url)
 
         embed.add_field(
-            name="🏠 公式サポートサーバー / Official Support Server",
-            value=f"最も迅速なサポートを受けられます！\nGet the fastest support here!\n\n**サーバー参加は下のボタンから！**\n**Join the server using the button below!**",
+            name="🐙 GitHub リポジトリ / GitHub Repository",
+            value=f"不具合報告・機能要望はIssueで受け付けています！\nBug reports & feature requests are welcome via Issues!\n\n**[GitHub Issues]({github_issues_url})**",
             inline=False
         )
 
@@ -347,10 +349,10 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
 
         view = discord.ui.View()
         view.add_item(discord.ui.Button(
-            label="サポートサーバーに参加 / Join Support Server",
+            label="GitHub で報告 / Report on GitHub",
             style=discord.ButtonStyle.link,
-            url=support_server_invite,
-            emoji="🏠"
+            url=github_issues_url,
+            emoji="🐙"
         ))
         view.add_item(discord.ui.Button(
             label="X (Twitter)で連絡 / Contact on X",
