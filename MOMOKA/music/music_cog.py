@@ -101,6 +101,7 @@ class GuildState:
         self.is_loading: bool = False
         self.mixer: Optional[AudioMixer] = None
         self._playing_next: bool = False  # 次の曲を再生中かどうかのフラグ
+        self.last_now_playing_message: Optional[discord.Message] = None
 
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -142,6 +143,26 @@ class GuildState:
             return
         self.cleanup_in_progress = True
         try:
+            if self.last_now_playing_message:
+                try:
+                    finished_embed = self.last_now_playing_message.embeds[0]
+                    finished_embed.title = "⏹️ Playback Ended"
+                    finished_embed.description = "The bot has disconnected from the voice channel."
+                    finished_embed.color = discord.Color.light_grey()
+                    
+                    disabled_view = discord.ui.View()
+                    for item in ["Pause", "Skip", "Stop"]:
+                        btn = discord.ui.Button(
+                            style=discord.ButtonStyle.secondary,
+                            label=item,
+                            disabled=True
+                        )
+                        disabled_view.add_item(btn)
+                    await self.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
+                except Exception:
+                    pass
+                self.last_now_playing_message = None
+
             if self.mixer:
                 self.mixer.stop()
                 self.mixer = None
@@ -158,6 +179,127 @@ class GuildState:
                     self.voice_client = None
         finally:
             self.cleanup_in_progress = False
+
+
+class MusicControllerView(discord.ui.View):
+    def __init__(self, cog: MusicCog, guild_id: int):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.guild_id = guild_id
+        
+        state = self.cog._get_guild_state(self.guild_id)
+        is_paused = state.is_paused if state else False
+        
+        self.pause_resume_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success if is_paused else discord.ButtonStyle.secondary,
+            label="▶️ Resume" if is_paused else "⏸️ Pause",
+            custom_id=f"music_pause_resume_{self.guild_id}"
+        )
+        self.pause_resume_btn.callback = self.pause_resume_callback
+        self.add_item(self.pause_resume_btn)
+        
+        self.skip_btn = discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="⏭️ Skip",
+            custom_id=f"music_skip_{self.guild_id}"
+        )
+        self.skip_btn.callback = self.skip_callback
+        self.add_item(self.skip_btn)
+        
+        self.stop_btn = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="⏹️ Stop",
+            custom_id=f"music_stop_{self.guild_id}"
+        )
+        self.stop_btn.callback = self.stop_callback
+        self.add_item(self.stop_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        state = self.cog._get_guild_state(self.guild_id)
+        if not state or not state.voice_client:
+            await interaction.response.send_message("The bot is not in a voice channel.", ephemeral=True)
+            return False
+            
+        user_voice = interaction.user.voice
+        if not user_voice or not user_voice.channel or user_voice.channel != state.voice_client.channel:
+            await interaction.response.send_message("You must be in the same voice channel as the bot to use the controls.", ephemeral=True)
+            return False
+        return True
+
+    async def pause_resume_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        state = self.cog._get_guild_state(self.guild_id)
+        if not state:
+            return
+            
+        if state.is_paused:
+            if state.voice_client:
+                state.voice_client.resume()
+            state.is_paused = False
+            if state.paused_at and state.playback_start_time:
+                pause_duration = time.time() - state.paused_at
+                state.playback_start_time += pause_duration
+            state.paused_at = None
+            logger.info(f"Guild {self.guild_id}: playback resumed via UI button")
+        else:
+            if state.voice_client:
+                state.voice_client.pause()
+            state.is_paused = True
+            state.paused_at = time.time()
+            logger.info(f"Guild {self.guild_id}: playback paused via UI button")
+            
+        embed = self.cog._create_now_playing_embed(state, state.current_track)
+        new_view = MusicControllerView(self.cog, self.guild_id)
+        await interaction.message.edit(embed=embed, view=new_view)
+
+    async def skip_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        state = self.cog._get_guild_state(self.guild_id)
+        if not state or not state.current_track:
+            return
+            
+        logger.info(f"Guild {self.guild_id}: skipping song via UI button")
+        if state.mixer:
+            await state.mixer.remove_source('music')
+        elif state.voice_client and state.voice_client.is_playing():
+            state.voice_client.stop()
+
+    async def stop_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        state = self.cog._get_guild_state(self.guild_id)
+        if not state:
+            return
+            
+        logger.info(f"Guild {self.guild_id}: stopping playback via UI button")
+        state.loop_mode = LoopMode.OFF
+        await state.clear_queue()
+        if state.mixer:
+            state.mixer.stop()
+            state.mixer = None
+        if state.voice_client and state.voice_client.is_playing():
+            state.voice_client.stop()
+        state.is_playing = False
+        state.is_paused = False
+        state.current_track = None
+        state.reset_playback_tracking()
+        
+        finished_embed = discord.Embed(
+            title="⏹️ Playback Stopped",
+            description="Playback was stopped by the user.",
+            color=discord.Color.light_grey()
+        )
+        disabled_view = discord.ui.View()
+        for item in ["Pause", "Skip", "Stop"]:
+            btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=item,
+                disabled=True
+            )
+            disabled_view.add_item(btn)
+        await interaction.message.edit(embed=finished_embed, view=disabled_view)
+        
+        if state.last_now_playing_message:
+            state.last_now_playing_message = None
 
 
 class MusicCog(commands.Cog, name="music_cog"):
@@ -532,8 +674,28 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.current_track = None
             state.is_playing = False
             state.reset_playback_tracking()
-            if state.last_text_channel_id:
-                await self._send_background_message(state.last_text_channel_id, "queue_ended")
+            if state.last_now_playing_message:
+                try:
+                    finished_embed = state.last_now_playing_message.embeds[0]
+                    finished_embed.title = "⏹️ Queue Finished"
+                    finished_embed.description = "All songs in the queue have been played."
+                    finished_embed.color = discord.Color.light_grey()
+                    
+                    disabled_view = discord.ui.View()
+                    for item in ["Pause", "Skip", "Stop"]:
+                        btn = discord.ui.Button(
+                            style=discord.ButtonStyle.secondary,
+                            label=item,
+                            disabled=True
+                        )
+                        disabled_view.add_item(btn)
+                    await state.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
+                except Exception:
+                    pass
+                state.last_now_playing_message = None
+            else:
+                if state.last_text_channel_id:
+                    await self._send_background_message(state.last_text_channel_id, "queue_ended")
             # キュー終了時：ミキサーにソースが残っていなければ停止してクリーンアップ
             # （TTS等が残っている場合はミキサーを維持する）
             await self._cleanup_idle_mixer(state)
@@ -627,17 +789,22 @@ class MusicCog(commands.Cog, name="music_cog"):
             if is_seek_operation:
                 state.is_seeking = False
 
-            if state.last_text_channel_id and track_to_play.requester_id and not is_seek_operation:
+            if state.last_now_playing_message:
                 try:
-                    requester = self.bot.get_user(track_to_play.requester_id) or await self.bot.fetch_user(
-                        track_to_play.requester_id)
-                except:
-                    requester = None
-                await self._send_background_message(
-                    state.last_text_channel_id, "now_playing", title=track_to_play.title,
-                    duration=format_duration(track_to_play.duration),
-                    requester_display_name=requester.display_name if requester else "不明"
-                )
+                    await state.last_now_playing_message.delete()
+                except Exception:
+                    pass
+                state.last_now_playing_message = None
+
+            if state.last_text_channel_id and not is_seek_operation:
+                embed = self._create_now_playing_embed(state, track_to_play)
+                view = MusicControllerView(self, guild_id)
+                channel = self.bot.get_channel(state.last_text_channel_id)
+                if channel:
+                    try:
+                        state.last_now_playing_message = await channel.send(embed=embed, view=view)
+                    except Exception as e:
+                        logger.error(f"Failed to send now playing message: {e}")
         except Exception as e:
             guild = self.bot.get_guild(guild_id)
             logger.error(f"Guild {guild_id} ({guild.name if guild else ''}): Playback error: {e}", exc_info=True)
@@ -855,6 +1022,7 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.is_paused = True
         state.paused_at = time.time()
         await self._send_response(ctx, "playback_paused")
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="resume", description="一時停止中の再生を再開します。")
     async def resume(self, ctx: commands.Context):
@@ -873,6 +1041,7 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.playback_start_time += pause_duration
         state.paused_at = None
         await self._send_response(ctx, "playback_resumed")
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="skip", description="再生中の曲をスキップします。")
     async def skip(self, ctx: commands.Context):
@@ -922,6 +1091,7 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.current_track = None
         state.reset_playback_tracking()
         await self._send_response(ctx, "stopped_playback")
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="leave", description="ボットをボイスチャンネルから切断します。")
     async def leave(self, ctx: commands.Context):
@@ -1145,6 +1315,67 @@ class MusicCog(commands.Cog, name="music_cog"):
         if track.thumbnail:
             embed.set_thumbnail(url=track.thumbnail)
         await self._send_ctx_message(ctx, embed=embed)
+
+    def _create_now_playing_embed(self, state: GuildState, track: Track) -> discord.Embed:
+        status_icon = "⏸️" if state.is_paused else "▶️"
+        status_text = "Paused" if state.is_paused else "Playing"
+        
+        requester_mention = "Unknown"
+        if track.requester_id:
+            requester_mention = f"<@{track.requester_id}>"
+            
+        embed = discord.Embed(
+            title=f"{status_icon} Now {status_text}",
+            color=discord.Color.from_rgb(99, 102, 241)
+        )
+        embed.description = f"**[{track.title}]({track.url})**"
+        
+        uploader_val = track.uploader if track.uploader else "Unknown"
+        embed.add_field(name="Channel / Uploader", value=uploader_val, inline=True)
+        embed.add_field(name="Requested By", value=requester_mention, inline=True)
+        embed.add_field(name="Duration", value=format_duration(track.duration), inline=True)
+        
+        remaining = state.queue.qsize()
+        embed.add_field(name="Queue Position", value=f"{remaining} songs in queue", inline=True)
+        
+        if track.thumbnail:
+            embed.set_thumbnail(url=track.thumbnail)
+            
+        embed.set_footer(text="MOMOKA Music Player")
+        return embed
+
+    async def _update_now_playing_message_ui(self, guild_id: int):
+        state = self._get_guild_state(guild_id)
+        if not state or not state.last_now_playing_message:
+            return
+            
+        if not state.current_track:
+            try:
+                finished_embed = discord.Embed(
+                    title="⏹️ Playback Stopped",
+                    description="Playback was stopped by the user.",
+                    color=discord.Color.light_grey()
+                )
+                disabled_view = discord.ui.View()
+                for item in ["Pause", "Skip", "Stop"]:
+                    btn = discord.ui.Button(
+                        style=discord.ButtonStyle.secondary,
+                        label=item,
+                        disabled=True
+                    )
+                    disabled_view.add_item(btn)
+                await state.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
+            except Exception:
+                pass
+            state.last_now_playing_message = None
+            return
+
+        try:
+            embed = self._create_now_playing_embed(state, state.current_track)
+            view = MusicControllerView(self, guild_id)
+            await state.last_now_playing_message.edit(embed=embed, view=view)
+        except Exception:
+            pass
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         if total <= 0:

@@ -21,6 +21,7 @@ class Track:
     stream_url: Optional[str] = None
     requester_id: Optional[int] = None
     original_query: Optional[str] = None
+    uploader: Optional[str] = None
 
 
 # --- yt-dlp 設定 ---
@@ -130,7 +131,8 @@ def _entry_to_track(entry: dict, *, is_downloaded_nico: bool = False) -> Track:
         duration=int(entry.get("duration") or 0),
         thumbnail=entry.get("thumbnail"),
         stream_url=stream_url_val,
-        original_query=entry.get("original_query")  # extractで設定されていれば
+        original_query=entry.get("original_query"),  # extractで設定されていれば
+        uploader=entry.get("uploader") or entry.get("channel") or entry.get("uploader_id")
     )
 
 
