@@ -375,7 +375,8 @@ async def extract(
             print(f"[ytdlp_wrapper Info] 情報抽出失敗 (ExtractorError): {e_ext} (Query: {query})")
             # extracted_info は None のまま
         except Exception as e_gen:  # その他の予期せぬyt-dlpエラー
-            print(f"[ytdlp_wrapper Error] yt-dlp実行中に予期せぬエラー: {e_gen} (Query: {query})", exc_info=True)
+            # loggerオブジェクトを使用してスタックトレースを含む詳細なエラーを出力する
+            logger.error(f"[ytdlp_wrapper Error] yt-dlp実行中に予期せぬエラー: {e_gen} (Query: {query})", exc_info=True)
             # extracted_info は None のまま
 
     await loop.run_in_executor(None, _run_yt_dlp_extraction)
