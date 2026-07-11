@@ -94,7 +94,6 @@ COMMON_YTDL_OPTS: dict = {
     }
 }
 
-
 # --- ヘルパー関数 ---
 def _is_nico(url_or_query: str) -> bool:
     """ニコニコ動画のURLか判定する"""
@@ -223,11 +222,9 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
         # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
         opts_for_ensure["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
     else:
-        # クッキーファイルが無い場合はOAuth2によるデバイス認証を使用してログインする
-        # クッキーを手動でエクスポートする手間を無くし、キャッシュされたトークンで長期間年齢制限を回避するため
-        opts_for_ensure["username"] = "oauth2"
-        # 認証パスワードに oauth2 を指定してデバイスコードフローを開始する
-        opts_for_ensure["password"] = "oauth2"
+        # クッキーファイルが無い場合はEdgeブラウザから自動的にクッキーをインポートする
+        # メインブラウザのログイン汚染（アカウント規制リスク）を防ぐため、Microsoft Edgeに固定する
+        opts_for_ensure["cookiesfrombrowser"] = ("edge",)
     # 単一の動画情報のみを正確に取得するためのパラメータで辞書を更新する
     opts_for_ensure.update({
         # プレイリスト展開を無効化する
@@ -337,11 +334,9 @@ async def extract(
             # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
             ytdl_final_opts["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
         else:
-            # クッキーファイルが無い場合はOAuth2によるデバイス認証を使用してログインする
-            # クッキーを手動でエクスポートする手間を無くし、キャッシュされたトークンで長期間年齢制限を回避するため
-            ytdl_final_opts["username"] = "oauth2"
-            # 認証パスワードに oauth2 を指定してデバイスコードフローを開始する
-            ytdl_final_opts["password"] = "oauth2"
+            # クッキーファイルが無い場合はEdgeブラウザから自動的にクッキーをインポートする
+            # メインブラウザのログイン汚染（アカウント規制リスク）を防ぐため、Microsoft Edgeに固定する
+            ytdl_final_opts["cookiesfrombrowser"] = ("edge",)
         # ストリーミング再生のため、直接のファイル全体のダウンロード処理はスキップする
         ytdl_final_opts["skip_download"] = True
         # プレイリストURLが指定された場合も中身を展開して処理する
