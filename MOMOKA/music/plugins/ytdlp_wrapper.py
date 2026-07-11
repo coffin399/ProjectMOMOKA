@@ -78,12 +78,8 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # YouTubeからの403エラーを回避するため、利用可能なプレイヤークライアントを明示的に指定する
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["ios", "android", "web"]
-        }
-    }
+    # クッキー(youtube_cookies.txt)適用時のフォーマット取得エラーを防ぐため、手動のplayer_client指定を削除し、
+    # yt-dlpデフォルトのクライアント自動選択および最適なフォールバック機能に委ねる
 }
 
 
