@@ -671,8 +671,20 @@ class MusicCog(commands.Cog, name="music_cog"):
             await current_mixer.add_source('music', source, volume=state.volume)
 
             if not state.voice_client or not state.voice_client.is_connected():
-                logger.error(f"Guild {guild_id}: voice_client is None or disconnected, cannot play")
-                raise RuntimeError("ボイスクライアントが切断されています。再接続してください。")
+                # ボイスクライアントが存在しない、あるいは切断されている場合は再生を中断する
+                logger.info(f"Guild {guild_id}: voice_client is None or disconnected, aborting playback")
+                # 再生中フラグを初期化する
+                state.is_playing = False
+                # 再生中トラック情報を初期化する
+                state.current_track = None
+                # 再生時間追跡情報を初期化する
+                state.reset_playback_tracking()
+                # アイドルミキサーをクリーンアップする
+                await self._cleanup_idle_mixer(state)
+                # 再生中メッセージのUIを最新化する（停止状態に更新する）
+                await self._update_now_playing_message_ui(guild_id)
+                # 処理を正常終了する
+                return
 
             if state.voice_client.source is not current_mixer:
                 # 旧AudioPlayerが残留している場合（_cleanup_idle_mixer後のレース等）は

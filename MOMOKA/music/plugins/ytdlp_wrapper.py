@@ -39,8 +39,13 @@ CACHE_DIR = Path("./cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 NICO_COOKIE_PATH = Path("./nico_cookies.txt")
+# ニコニコ動画用クッキーファイルが存在しない場合は作成する
 if not NICO_COOKIE_PATH.exists():
-    NICO_COOKIE_PATH.touch(exist_ok=True)  # 存在しない場合のみ作成
+    # 空ファイルを作成する
+    NICO_COOKIE_PATH.touch(exist_ok=True)
+
+# YouTube用クッキーファイルの保存パスを定義する
+YOUTUBE_COOKIE_PATH = Path("./youtube_cookies.txt")
 
 COMMON_YTDL_OPTS: dict = {
     # 音声の品質指定（Opusを最優先し、48kHzステレオをターゲットにする）
@@ -203,6 +208,10 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
     loop = asyncio.get_running_loop()
     # 呼び出し元が指定したオーバーライド設定または共通のyt-dlpオプションのコピーを作成する
     opts_for_ensure = (ytdl_opts_override or COMMON_YTDL_OPTS).copy()
+    # YouTube用のクッキーファイルが存在するか判定する
+    if YOUTUBE_COOKIE_PATH.exists():
+        # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
+        opts_for_ensure["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
     # 単一の動画情報のみを正確に取得するためのパラメータで辞書を更新する
     opts_for_ensure.update({
         # プレイリスト展開を無効化する
@@ -295,11 +304,20 @@ async def extract(
     else:
         # YouTubeやその他のサイト: ストリーミング用情報を取得
         ytdl_final_opts = COMMON_YTDL_OPTS.copy()
-        ytdl_final_opts["skip_download"] = True  # ストリーミングなのでダウンロードしない
-        ytdl_final_opts["noplaylist"] = False  # プレイリストも処理
+        # YouTube用のクッキーファイルが存在するか判定する
+        if YOUTUBE_COOKIE_PATH.exists():
+            # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
+            ytdl_final_opts["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
+        # ストリーミング再生のため、直接のファイル全体のダウンロード処理はスキップする
+        ytdl_final_opts["skip_download"] = True
+        # プレイリストURLが指定された場合も中身を展開して処理する
+        ytdl_final_opts["noplaylist"] = False
+        # プレイリストの高速なインデックス取得を行うためのフラット展開設定
         ytdl_final_opts["extract_flat"] = "in_playlist"
+        # プレイリストの最大読み込み数が指定されているか判定する
         if max_playlist_items and max_playlist_items > 0:
-            ytdl_final_opts["playlistend"] = max_playlist_items  # プレイリストの読み込み上限
+            # プレイリスト展開の読み込み上限数を設定する
+            ytdl_final_opts["playlistend"] = max_playlist_items
 
     extracted_info: Optional[dict] = None
 
