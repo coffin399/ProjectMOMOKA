@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Dict, Any
 
 import discord
 from discord import app_commands
+from discord.ext import commands
 
 if TYPE_CHECKING:
     from MOMOKA.music.plugins.ytdlp_wrapper import Track
@@ -77,27 +78,44 @@ class MusicCogExceptionHandler:
         # --- Generic Fallback ---
         return self.get_message("error_playing", error=f"予期せぬエラーが発生しました: {type(error).__name__}")
 
-    async def handle_generic_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+    async def handle_generic_command_error(self, ctx_or_interaction: discord.Interaction | commands.Context, error: Exception):
         """
         コマンドで発生した予期せぬエラーを処理し、ユーザーに応答する汎用ハンドラ。
-
-        Args:
-            interaction (discord.Interaction): エラーが発生したインタラクション。
-            error (app_commands.AppCommandError): 発生したエラー。
         """
-        command_name = interaction.command.qualified_name if interaction.command else "Unknown Command"
+        # 引数がInteractionであるか判定し、Interactionオブジェクトを取得または構築する
+        interaction = ctx_or_interaction if isinstance(ctx_or_interaction, discord.Interaction) else getattr(ctx_or_interaction, "interaction", None)
+        
+        # デフォルトのコマンド名を「Unknown Command」に初期化する
+        command_name = "Unknown Command"
+        # Interactionが存在し、かつコマンドオブジェクトが登録されているか判定する
+        if interaction and interaction.command:
+            # コマンドのフルネーム（クオリファイドネーム）を取得して格納する
+            command_name = interaction.command.qualified_name
+        # Interactionがなく、Contextオブジェクトであり、かつコマンドが存在するか判定する
+        elif not interaction and isinstance(ctx_or_interaction, commands.Context) and ctx_or_interaction.command:
+            # Contextからコマンドのフルネームを取得して格納する
+            command_name = ctx_or_interaction.command.qualified_name
+
+        # 発生したエラーログを詳細情報（スタックトレース）を含めて出力する
         logger.error(f"An unexpected error occurred in command '{command_name}': {error}", exc_info=True)
 
-        # ユーザーに表示するメッセージ
+        # ユーザー向けの日本語および英語の汎用エラーメッセージを定義する
         message = "コマンドの実行中に予期せぬエラーが発生しました。\nAn unexpected error occurred while executing the command."
 
         try:
-            # 応答がまだ送信されていないか確認
-            if not interaction.response.is_done():
-                await interaction.response.send_message(message, ephemeral=True)
+            # 有効なInteractionオブジェクトが存在するか判定する
+            if interaction:
+                # すでにインタラクションへの最初のレスポンスが完了しているか（deferなど）を判定する
+                if not interaction.response.is_done():
+                    # 最初のレスポンスとして、エフェメラル（他者に見えない）設定でエラーメッセージを送信する
+                    await interaction.response.send_message(message, ephemeral=True)
+                else:
+                    # すでにレスポンスが完了している場合は、フォローアップメッセージとして送信する
+                    await interaction.followup.send(message, ephemeral=True)
             else:
-                # 既に応答済み（deferなど）の場合はfollowupを使用
-                await interaction.followup.send(message, ephemeral=True)
+                # Interactionが存在しないContextの場合は、通常のメッセージとして送信する
+                await ctx_or_interaction.send(message, ephemeral=True)
+        # DiscordのHTTP通信エラーを検知した場合の例外ハンドリングを行う
         except discord.errors.HTTPException as e:
-            # 応答送信に失敗した場合のログ
+            # メッセージ送信自体に失敗した事実をエラーログとして記録する
             logger.error(f"Failed to send error message for command '{command_name}': {e}")

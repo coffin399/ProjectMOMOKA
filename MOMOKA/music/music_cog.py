@@ -297,31 +297,56 @@ class MusicCog(commands.Cog, name="music_cog"):
             view: Optional[discord.ui.View] = None,
             ephemeral: bool = False,
             **kwargs,
-    ):
+    ) -> Optional[discord.Message]:
+        # ContextオブジェクトからInteractionを取得する（スラッシュコマンドの場合は存在する）
         interaction = getattr(ctx, "interaction", None)
         try:
+            # Interactionが存在する場合の処理
             if interaction:
+                # 送信用のパラメータ辞書を構築する
                 kwargs_to_send = {
                     "content": content,
                     "embed": embed,
                     "ephemeral": ephemeral,
                     **kwargs,
                 }
+                # 表示するView（ボタンなど）が指定されているか判定する
                 if view is not None:
+                    # 送信用パラメータにViewを追加する
                     kwargs_to_send["view"] = view
 
+                # インタラクションに対する最初の応答が完了していないか判定する
                 if not interaction.response.is_done():
+                    # 最初のレスポンスメッセージを送信する
                     await interaction.response.send_message(**kwargs_to_send)
+                    try:
+                        # スラッシュコマンドのオリジナル応答メッセージオブジェクトを取得して返す
+                        return await interaction.original_response()
+                    # メッセージ取得中に例外が発生した場合のハンドリング
+                    except Exception:
+                        # 取得できなかった場合はNoneを返す
+                        return None
                 else:
-                    await interaction.followup.send(**kwargs_to_send)
+                    # すでに一度応答している場合は、followupを使ってメッセージを送信して返す
+                    return await interaction.followup.send(**kwargs_to_send)
+            # Interactionが存在しない（通常のテキストコマンドなどの）場合の処理
             else:
+                # メッセージがephemeral（一時表示）指定されているか判定する
                 if ephemeral:
+                    # プレフィックスコマンドでは一時表示ができないため、ログを出力する
                     logger.debug("Ephemeral messages are not supported for prefix commands; sending normally.")
-                await ctx.send(content=content, embed=embed, view=view, **kwargs)
+                # 通常のメッセージ送信を行い、そのメッセージオブジェクトを返す
+                return await ctx.send(content=content, embed=embed, view=view, **kwargs)
+        # 送信処理中にエラーが発生した場合のハンドリングを行う
         except Exception as e:
+            # エラーが発生したギルド（サーバー）の情報を取得する
             guild = ctx.guild
+            # ギルド情報がある場合は「ID (名称)」、ない場合は「Unknown guild」として文字列を構築する
             guild_info = f"{guild.id} ({guild.name})" if guild else "Unknown guild"
+            # エラー内容をログに出力する
             logger.error(f"Guild {guild_info}: Response error: {e}")
+            # エラー時はNoneを返す
+            return None
 
     async def _send_response(self, ctx: commands.Context, message_key: str, ephemeral: bool = False,
                              **kwargs):
@@ -527,7 +552,7 @@ class MusicCog(commands.Cog, name="music_cog"):
         # ミキサーを停止（read()がb''を返す→voice_clientのプレイヤーが停止）
         mixer.stop()
 
-    async def _play_next_song(self, guild_id: int, seek_seconds: int = 0):
+    async def _play_next_song(self, guild_id: int, seek_seconds: int = 0, play_msg: Optional[discord.Message] = None):
         state = self._get_guild_state(guild_id)
         if not state:
             return
@@ -668,21 +693,42 @@ class MusicCog(commands.Cog, name="music_cog"):
             if is_seek_operation:
                 state.is_seeking = False
 
-            if state.last_now_playing_message:
+            # 既に直前の Now Playing メッセージが存在するか判定する
+            # ただし、play_msg が渡されており、それを編集する場合は、古いメッセージの削除は行わない
+            if state.last_now_playing_message and not play_msg:
                 try:
+                    # 直前の Now Playing メッセージをチャンネルから削除する
                     await state.last_now_playing_message.delete()
+                # 削除処理中に例外が発生した場合のハンドリング
                 except Exception:
+                    # 削除失敗時はパスする
                     pass
+                # メッセージの参照を初期化する
                 state.last_now_playing_message = None
 
+            # 最後のアクティブなテキストチャンネルIDが存在し、かつシーク操作ではないか判定する
             if state.last_text_channel_id and not is_seek_operation:
+                # 再生対象曲の情報を用いて Now Playing 用の Embed を構築する
                 embed = self._create_now_playing_embed(state, track_to_play)
+                # 再生コントロール用ボタン（View）を初期化する
                 view = MusicControllerView(self, guild_id)
+                # 送信先のチャンネルオブジェクトをボットのキャッシュ等から取得する
                 channel = self.bot.get_channel(state.last_text_channel_id)
+                # チャンネルオブジェクトが正しく取得できたか判定する
                 if channel:
                     try:
-                        state.last_now_playing_message = await channel.send(embed=embed, view=view)
+                        # 編集対象のメッセージ (play_msg) が渡されているか判定する
+                        if play_msg:
+                            # 既存メッセージのテキストを空にし、Embedとボタンをアタッチして編集する
+                            await play_msg.edit(content=None, embed=embed, view=view)
+                            # 編集したメッセージを最新の Now Playing メッセージとして保存する
+                            state.last_now_playing_message = play_msg
+                        else:
+                            # 新規メッセージとして Embed とボタンをアタッチして送信し、保存する
+                            state.last_now_playing_message = await channel.send(embed=embed, view=view)
+                    # 送信または編集処理中に例外が発生した場合のハンドリング
                     except Exception as e:
+                        # 送信失敗エラーをログに記録する
                         logger.error(f"Failed to send now playing message: {e}")
         except Exception as e:
             guild = self.bot.get_guild(guild_id)
@@ -760,88 +806,150 @@ class MusicCog(commands.Cog, name="music_cog"):
     @commands.hybrid_command(name="play", description="曲を再生またはキューに追加します。")
     @app_commands.describe(query="再生したい曲のタイトル、またはURL")
     async def play(self, ctx: commands.Context, *, query: str):
+        # レスポンス送信を保留（defer）にし、処理がタイムアウトしないようにする
         await ctx.defer()
 
+        # ギルド固有の再生状態クラスを取得する
         state = self._get_guild_state(ctx.guild.id)
+        # 再生状態クラスが正しく取得できたか（上限に達していないか）判定する
         if not state:
+            # 取得に失敗した場合は、エラーメッセージを送信して処理を終了する
             await self._send_ctx_message(ctx, content="サーバーの上限に達しています。", ephemeral=True)
+            # コマンドの実行を終了する
             return
 
+        # ボイスチャンネルへの接続を確認、または新規接続を行い、ボイスクライアントを取得する
         vc = await self._ensure_voice(ctx, connect_if_not_in=True)
+        # ボイスチャンネルに接続できなかったか判定する
         if not vc:
+            # 接続失敗時はこれ以上処理を進めず終了する
             return
 
+        # キューのサイズが設定上の上限値に達しているか判定する
         if state.queue.qsize() >= self.max_queue_size:
+            # キュー上限到達のエラーレスポンスを返信して終了する
             await self._send_response(ctx, "max_queue_size_reached",
                                       max_size=self.max_queue_size)
+            # コマンドの実行を終了する
             return
 
+        # コマンド開始時点での再生状態、または読み込み状態を取得してフラグに保持する
         was_playing = state.is_playing or state.is_loading
+        # 読み込み状態フラグをTrueにする
         state.is_loading = True
 
+        # 検索中のメッセージオブジェクトを初期化する
+        searching_msg = None
         try:
-            await self._send_ctx_message(
+            # 検索開始した事実を示す一時的メッセージを送信し、オブジェクトを保持する
+            searching_msg = await self._send_ctx_message(
                 ctx,
                 content=self.exception_handler.get_message("searching_for_song", query=query),
             )
 
+            # yt-dlp等を用いて検索クエリから音声情報を抽出する
             extracted_media = await extract_audio_data(query, shuffle_playlist=False)
 
+            # 音声情報の抽出に失敗した（結果が空だった）か判定する
             if not extracted_media:
-                await self._send_ctx_message(
-                    ctx,
-                    content=self.exception_handler.get_message("search_no_results", query=query),
-                )
+                # 検索メッセージが取得できていれば、検索結果なしのテキストに書き換える
+                if searching_msg:
+                    # 検索メッセージの内容を更新する
+                    await searching_msg.edit(content=self.exception_handler.get_message("search_no_results", query=query))
+                else:
+                    # メッセージが無い場合は、新規に検索結果なしメッセージを送信する
+                    await self._send_ctx_message(
+                        ctx,
+                        content=self.exception_handler.get_message("search_no_results", query=query),
+                    )
 
+                # コマンドの実行を終了する
                 return
 
+            # 抽出されたデータがリスト（プレイリスト）であるか判定し、トラックリストに変換する
             tracks = extracted_media if isinstance(extracted_media, list) else [extracted_media]
+            # 追加された曲数と、最初のトラックへの参照を初期化する
             added_count, first_track = 0, None
 
+            # 抽出されたトラックのリストを走査する
             for track in tracks:
+                # キューが上限数に達していないか走査のたびに判定する
                 if state.queue.qsize() < self.max_queue_size:
+                    # トラックのリクエストユーザーIDを設定する
                     track.requester_id = ctx.author.id
+                    # ストリームURLを初期状態としてNoneにする
                     track.stream_url = None
+                    # トラックオブジェクトを非同期の再生キューに追加する
                     await state.queue.put(track)
+                    # 最初のトラックである（added_countが0）か判定する
                     if added_count == 0:
+                        # 最初のトラックへの参照を保持する
                         first_track = track
+                    # 追加曲数のカウントを1加算する
                     added_count += 1
+                # キュー上限に達したため走査を終了する
                 else:
+                    # すでに曲追加中の場合、キュー上限エラーメッセージを送信する
                     await self._send_ctx_message(
                         ctx,
                         content=self.exception_handler.get_message("max_queue_size_reached",
                                                                   max_size=self.max_queue_size)
                     )
 
+                    # ループ処理を終了する
                     break
 
-            if added_count > 1:
-                await self._send_ctx_message(
-                    ctx,
-                    content=self.exception_handler.get_message("added_playlist_to_queue",
-                                                              count=added_count)
-                )
+            # すでに何らかの音楽が再生中であったか判定する
+            if was_playing:
+                # 複数曲（プレイリスト）がキューに追加されたか判定する
+                if added_count > 1:
+                    # 追加完了の文言を取得する
+                    added_playlist_content = self.exception_handler.get_message("added_playlist_to_queue", count=added_count)
+                    # 検索開始メッセージが保持されているか判定する
+                    if searching_msg:
+                        # 既存の検索開始メッセージをキュー追加完了メッセージに編集する
+                        await searching_msg.edit(content=added_playlist_content)
+                    else:
+                        # メッセージがない場合は新規にキュー追加メッセージを送信する
+                        await self._send_ctx_message(ctx, content=added_playlist_content)
 
-            elif added_count == 1 and first_track:
-                await self._send_ctx_message(
-                    ctx,
-                    content=self.exception_handler.get_message("added_to_queue",
-                                                              title=first_track.title,
-                                                              duration=format_duration(first_track.duration),
-                                                              requester_display_name=ctx.author.display_name)
-                )
+                # 1曲だけが追加され、かつそのトラックオブジェクトが有効か判定する
+                elif added_count == 1 and first_track:
+                    # 1曲追加完了の文言をフォーマットして取得する
+                    added_song_content = self.exception_handler.get_message("added_to_queue",
+                                                                           title=first_track.title,
+                                                                           duration=format_duration(first_track.duration),
+                                                                           requester_display_name=ctx.author.display_name)
+                    # 検索開始メッセージが保持されているか判定する
+                    if searching_msg:
+                        # 既存の検索開始メッセージを1曲追加メッセージに編集する
+                        await searching_msg.edit(content=added_song_content)
+                    else:
+                        # メッセージがない場合は新規に1曲追加メッセージを送信する
+                        await self._send_ctx_message(ctx, content=added_song_content)
 
+            # 再生中ではない（この play コマンドで新規再生を開始する）か判定する
             if not was_playing:
-                await self._play_next_song(ctx.guild.id)
+                # _play_next_songを実行し、searching_msgを再生メッセージとして流用・編集する
+                await self._play_next_song(ctx.guild.id, play_msg=searching_msg)
 
+        # 検索または追加処理中に例外が発生した場合のハンドリングを行う
         except Exception as e:
+            # 例外内容を解析し、ギルド用のエラーメッセージを取得する
             error_message = self.exception_handler.handle_error(e, ctx.guild)
-            await self._send_ctx_message(
-                ctx,
-                content=self.exception_handler.get_message("error_message_wrapper", error=error_message)
-            )
+            # エラー文言をフォーマットして取得する
+            wrapped_error_msg = self.exception_handler.get_message("error_message_wrapper", error=error_message)
+            # 検索中メッセージが存在するか判定する
+            if searching_msg:
+                # 検索メッセージをエラーメッセージに編集する
+                await searching_msg.edit(content=wrapped_error_msg)
+            else:
+                # メッセージがない場合は、新規にエラーメッセージを送信する
+                await self._send_ctx_message(ctx, content=wrapped_error_msg)
 
+        # 最終的に必ず実行するクリーンアップ処理
         finally:
+            # 読み込み状態フラグをFalseに戻す
             state.is_loading = False
 
     @commands.hybrid_command(name="seek", description="再生位置を指定した時刻に移動します。")
@@ -1163,64 +1271,99 @@ class MusicCog(commands.Cog, name="music_cog"):
 
     @commands.hybrid_command(name="nowplaying", description="現在再生中の曲の情報を表示します。")
     async def nowplaying(self, ctx: commands.Context):
+        # ギルドの再生状態オブジェクトを取得する
         state = self._get_guild_state(ctx.guild.id)
+        # 再生状態オブジェクトが存在しない、または現在再生中のトラックが無いか判定する
         if not state or not state.current_track:
+            # 再生中の曲がない旨を示すエラーレスポンスを送信する
             await self._send_ctx_message(
                 ctx,
                 content=self.exception_handler.get_message("now_playing_nothing"),
                 ephemeral=True,
             )
 
+            # コマンドの実行を終了する
             return
 
-        track = state.current_track
-        status_icon = "▶️" if state.is_playing else ("⏸️" if state.is_paused else "⏹️")
-        try:
-            requester = ctx.guild.get_member(track.requester_id) or await self.bot.fetch_user(
-                track.requester_id)
-        except:
-            requester = None
+        # コマンドのレスポンス保留（defer）を開始する
+        await ctx.defer()
+        
+        # 既に Now Playing コントロールメッセージが存在しているか判定する
+        if state.last_now_playing_message:
+            try:
+                # チャット上の古いコントロールメッセージを削除する
+                await state.last_now_playing_message.delete()
+            # メッセージ削除中に発生した例外のハンドリング
+            except Exception:
+                # 削除失敗時はパスする
+                pass
+            # 古いメッセージへの参照を初期化する
+            state.last_now_playing_message = None
 
-        current_pos = state.get_current_position()
-        progress_bar = self._create_progress_bar(current_pos, track.duration)
-
-        embed = discord.Embed(
-            title=f"{status_icon} {track.title}",
-            url=track.url,
-            description=f"{progress_bar}\n`{format_duration(current_pos)}` / `{format_duration(track.duration)}`\n\nリクエスト: **{requester.display_name if requester else '不明'}**\nURL: {track.url}\nループモード: `{state.loop_mode.name.lower()}`",
-            color=discord.Color.green() if state.is_playing else (
-                discord.Color.orange() if state.is_paused else discord.Color.light_grey())
-        )
-        if track.thumbnail:
-            embed.set_thumbnail(url=track.thumbnail)
-        await self._send_ctx_message(ctx, embed=embed)
+        # 統一されたレイアウトの Now Playing 用 Embed オブジェクトを構築する
+        embed = self._create_now_playing_embed(state, state.current_track)
+        # 操作用ボタンを付与した View オブジェクトを構築する
+        view = MusicControllerView(self, ctx.guild.id)
+        
+        # 新しい Now Playing Embed と View（ボタン）を送信する
+        msg = await self._send_ctx_message(ctx, embed=embed, view=view)
+        # 送信が成功してメッセージオブジェクトが返ってきたか判定する
+        if msg:
+            # 送信したメッセージオブジェクトを最新の Now Playing メッセージとして保存する
+            state.last_now_playing_message = msg
 
     def _create_now_playing_embed(self, state: GuildState, track: Track) -> discord.Embed:
+        # 再生が一時停止中であるか判定して、表示用アイコンを設定する
         status_icon = "⏸️" if state.is_paused else "▶️"
+        # 再生が一時停止中であるか判定して、表示用のステータス文字列を設定する
         status_text = "Paused" if state.is_paused else "Playing"
         
+        # リクエストユーザーのメンション文字列を初期化する
         requester_mention = "Unknown"
+        # トラック情報にリクエストユーザーIDが存在するか判定する
         if track.requester_id:
+            # ユーザーIDをDiscordのメンション形式に変換して設定する
             requester_mention = f"<@{track.requester_id}>"
             
+        # Embedオブジェクトを作成し、タイトルとブランドカラー（インディゴ系）を設定する
         embed = discord.Embed(
             title=f"{status_icon} Now {status_text}",
             color=discord.Color.from_rgb(99, 102, 241)
         )
+        # Embedのメイン説明文として、再生中のトラックタイトルをリンク付きで設定する
         embed.description = f"**[{track.title}]({track.url})**"
         
+        # 現在の再生位置（秒）を取得する
+        current_pos = state.get_current_position()
+        # 再生位置と曲の長さからプログレスバー文字列を生成する
+        progress_bar = self._create_progress_bar(current_pos, track.duration)
+        # 現在の再生時間と曲の総時間をフォーマットした文字列を構築する
+        duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
+        # プログレスバーと再生時間を表示するフィールドをEmbedに追加する
+        embed.add_field(name="Progress", value=f"{progress_bar}\n{duration_str}", inline=False)
+        
+        # アップローダー/チャンネル名が定義されているか判定し、無ければ「Unknown」にする
         uploader_val = track.uploader if track.uploader else "Unknown"
+        # アップローダー名を記載するフィールドをEmbedに追加する
         embed.add_field(name="Channel / Uploader", value=uploader_val, inline=True)
+        # リクエストユーザーを記載するフィールドをEmbedに追加する
         embed.add_field(name="Requested By", value=requester_mention, inline=True)
-        embed.add_field(name="Duration", value=format_duration(track.duration), inline=True)
+        # 現在有効になっているループモード名を表示するフィールドをEmbedに追加する
+        embed.add_field(name="Loop Mode", value=f"`{state.loop_mode.name.lower()}`", inline=True)
         
+        # 現在のキューに残っている曲数を取得する
         remaining = state.queue.qsize()
-        embed.add_field(name="Queue Position", value=f"{remaining} songs in queue", inline=True)
+        # 残り曲数を表示するフィールドをEmbedに追加する
+        embed.add_field(name="Queue Status", value=f"{remaining} songs in queue", inline=True)
         
-        if track.thumbnail:
+        # サムネイル画像のURLが有効であり、かつ文字列「None」ではないか判定する
+        if track.thumbnail and track.thumbnail.strip() and track.thumbnail != "None":
+            # サムネイルURLをEmbedの右上サムネイル画像として登録する
             embed.set_thumbnail(url=track.thumbnail)
             
+        # フッターにMOMOKAミュージックプレイヤーのクレジットを設定する
         embed.set_footer(text="MOMOKA Music Player")
+        # 構築完了したEmbedオブジェクトを返す
         return embed
 
     async def _update_now_playing_message_ui(self, guild_id: int):
@@ -1441,20 +1584,29 @@ class MusicCog(commands.Cog, name="music_cog"):
 
     @reload.command(name="music_cog", description="音楽Cogを再読み込みして、問題をリセットします。/ Reloads the music cog to fix issues.")
     async def reload_music_cog(self, ctx: commands.Context):
+        # 処理がタイムアウトしないようレスポンス送信を保留にし、他者に見えないエフェメラルに設定する
         await ctx.defer(ephemeral=True)
+        # 現在のモジュール（拡張機能）名を取得する
         module_name = self.__module__
+        # Cogの再読み込み試行をログに出力する
         logger.info(f"音楽Cog ({module_name}) の再読み込みを試みます。リクエスト者: {ctx.author}")
 
         try:
+            # ボットに対して拡張機能（このモジュール自身）の再読み込みを実行する
             await self.bot.reload_extension(module_name)
+            # 再読み込み成功の旨をログに出力する
             logger.info(f"音楽Cog ({module_name}) の再読み込みに成功しました。")
-            await ctx.followup.send(
+            # 完了のメッセージをエフェメラル（一時表示）設定で送信する
+            await ctx.send(
                 "🎵 音楽機能の再読み込みが完了しました。\n🎵 Music feature has been successfully reloaded.",
                 ephemeral=True
             )
+        # 再読み込み処理中に何らかの例外が発生した場合のハンドリングを行う
         except Exception as e:
+            # エラーの詳細をログ（スタックトレース付き）に出力する
             logger.error(f"音楽Cog ({module_name}) の再読み込み中にエラーが発生しました: {e}", exc_info=True)
-            await ctx.followup.send(
+            # エラーが発生した旨とエラーの詳細内容をエフェメラル設定で送信する
+            await ctx.send(
                 f"❌ 音楽機能の再読み込み中にエラーが発生しました。\n❌ An error occurred while reloading the music feature.\n```py\n{type(e).__name__}: {e}\n```",
                 ephemeral=True
             )
