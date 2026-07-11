@@ -45,6 +45,9 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
+# Now Playing プログレスバーの更新間隔（秒）。Discord rate limit を考慮して 10 秒にする
+PROGRESS_UPDATE_INTERVAL = 10
+
 
 def format_duration(duration_seconds: int) -> str:
     if duration_seconds is None or duration_seconds < 0:
@@ -108,6 +111,8 @@ class GuildState:
         self.mixer: Optional[AudioMixer] = None
         self._playing_next: bool = False  # 次の曲を再生中かどうかのフラグ
         self.last_now_playing_message: Optional[discord.Message] = None
+        # プログレスバー定期更新タスク（未起動時は None）
+        self.progress_update_task: Optional[asyncio.Task] = None
 
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -144,30 +149,23 @@ class GuildState:
                 break
         self.queue = asyncio.Queue()
 
+    def stop_progress_updater(self):
+        # プログレス更新タスクが存在し、まだ完了していないか判定する
+        if self.progress_update_task and not self.progress_update_task.done():
+            # 定期更新ループをキャンセルする
+            self.progress_update_task.cancel()
+        # タスク参照をクリアする
+        self.progress_update_task = None
+
     async def cleanup_voice_client(self):
         if self.cleanup_in_progress:
             return
         self.cleanup_in_progress = True
         try:
-            if self.last_now_playing_message:
-                try:
-                    finished_embed = self.last_now_playing_message.embeds[0]
-                    finished_embed.title = "⏹️ Playback Ended"
-                    finished_embed.description = "The bot has disconnected from the voice channel."
-                    finished_embed.color = discord.Color.light_grey()
-                    
-                    disabled_view = discord.ui.View()
-                    for item in ["Pause", "Skip", "Stop"]:
-                        btn = discord.ui.Button(
-                            style=discord.ButtonStyle.secondary,
-                            label=item,
-                            disabled=True
-                        )
-                        disabled_view.add_item(btn)
-                    await self.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
-                except Exception:
-                    pass
-                self.last_now_playing_message = None
+            # 切断時はプログレスバー更新を止める
+            self.stop_progress_updater()
+            # Now Playing のグレーアウト表示は MusicCog 側で行うため、ここでは参照のみクリアする
+            self.last_now_playing_message = None
 
             if self.mixer:
                 self.mixer.stop()
@@ -592,34 +590,33 @@ class MusicCog(commands.Cog, name="music_cog"):
                 pass
 
         if not track_to_play:
+            # 再生対象が無いので再生状態をクリアする
             state.current_track = None
+            # 再生中フラグを下ろす
             state.is_playing = False
+            # 再生位置トラッキングを初期化する
             state.reset_playback_tracking()
+            # キュー終了時はプログレスバー更新を停止する
+            state.stop_progress_updater()
+            # Now Playing メッセージが残っているか判定する
             if state.last_now_playing_message:
-                try:
-                    finished_embed = state.last_now_playing_message.embeds[0]
-                    finished_embed.title = "⏹️ Queue Finished"
-                    finished_embed.description = "All songs in the queue have been played."
-                    finished_embed.color = discord.Color.light_grey()
-                    
-                    disabled_view = discord.ui.View()
-                    for item in ["Pause", "Skip", "Stop"]:
-                        btn = discord.ui.Button(
-                            style=discord.ButtonStyle.secondary,
-                            label=item,
-                            disabled=True
-                        )
-                        disabled_view.add_item(btn)
-                    await state.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
-                except Exception:
-                    pass
-                state.last_now_playing_message = None
+                # V2 LayoutView のグレーアウト UI に切り替える（旧 Embed 編集は使わない）
+                await self._update_now_playing_message_ui(
+                    guild_id,
+                    finished_message=(
+                        "⏹️ **Queue Finished**\n"
+                        "All songs in the queue have been played."
+                    ),
+                )
             else:
+                # メッセージが無い場合のみテキスト通知を送る
                 if state.last_text_channel_id:
+                    # キュー終了メッセージを送信する
                     await self._send_background_message(state.last_text_channel_id, "queue_ended")
             # キュー終了時：ミキサーにソースが残っていなければ停止してクリーンアップ
             # （TTS等が残っている場合はミキサーを維持する）
             await self._cleanup_idle_mixer(state)
+            # 次曲再生処理を終了する
             return
 
         if not is_seek_operation:
@@ -695,6 +692,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                 await self._cleanup_idle_mixer(state)
                 # 再生中メッセージのUIを最新化する（停止状態に更新する）
                 await self._update_now_playing_message_ui(guild_id)
+                # 切断時はプログレスバー更新も停止する
+                state.stop_progress_updater()
                 # 処理を正常終了する
                 return
 
@@ -758,6 +757,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                         else:
                             # 新規メッセージとして V2レイアウトのみを送信し、保存する
                             state.last_now_playing_message = await channel.send(view=view)
+                        # Now Playing 表示後にプログレスバーの定期更新を開始する
+                        self._start_progress_updater(guild_id)
                     # 送信または編集処理中に例外が発生した場合のハンドリング
                     except Exception as e:
                         # 送信失敗エラーをログに記録する
@@ -775,6 +776,8 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.is_seeking = False
             state.is_playing = False
             state.reset_playback_tracking()
+            # 再生エラー時はプログレスバー更新を停止する
+            state.stop_progress_updater()
             asyncio.create_task(self._play_next_song(guild_id))
 
     def _schedule_auto_leave(self, guild_id: int):
@@ -796,14 +799,94 @@ class MusicCog(commands.Cog, name="music_cog"):
                 await state.voice_client.disconnect()
 
     async def _cleanup_guild_state(self, guild_id: int):
-        state = self.guild_states.pop(guild_id, None)
+        # 破棄前に状態を取得する（UI 更新に必要）
+        state = self._get_guild_state(guild_id)
+        # 状態が存在するか判定する
         if state:
+            # ギルド破棄前にプログレスバー更新を停止する
+            state.stop_progress_updater()
+            # 切断前に再生中トラックをクリアしてグレーアウト表示できるようにする
+            state.current_track = None
+            # 再生中フラグも下ろす
+            state.is_playing = False
+            # Now Playing メッセージがある場合は切断用のグレーアウト UI に更新する
+            if state.last_now_playing_message:
+                # V2 LayoutView で Playback Ended 表示に切り替える
+                await self._update_now_playing_message_ui(
+                    guild_id,
+                    finished_message=(
+                        "⏹️ **Playback Ended**\n"
+                        "The bot has disconnected from the voice channel."
+                    ),
+                )
+        # ギルド状態を辞書から取り出す
+        state = self.guild_states.pop(guild_id, None)
+        # 取り出した状態が存在するか判定する
+        if state:
+            # ボイス接続とミキサーをクリーンアップする
             await state.cleanup_voice_client()
+            # 自動退出タスクが動いていればキャンセルする
             if state.auto_leave_task and not state.auto_leave_task.done():
+                # 自動退出タスクをキャンセルする
                 state.auto_leave_task.cancel()
+            # キューを空にする
             await state.clear_queue()
+            # ギルド名解決用にギルドオブジェクトを取得する
             guild = self.bot.get_guild(guild_id)
+            # クリーンアップ完了をログに残す
             logger.info(f"Guild {guild_id} ({guild.name if guild else ''}): State cleaned up")
+
+    def _start_progress_updater(self, guild_id: int):
+        # 対象ギルドの再生状態を取得する
+        state = self._get_guild_state(guild_id)
+        # 状態が無ければ開始できないので終了する
+        if not state:
+            # 早期リターン
+            return
+        # 既存の更新タスクがあれば先に止める（二重起動防止）
+        state.stop_progress_updater()
+        # 10秒間隔のプログレス更新ループをバックグラウンドで開始する
+        state.progress_update_task = asyncio.create_task(
+            self._progress_updater_loop(guild_id),
+            name=f"music_progress_{guild_id}",
+        )
+
+    async def _progress_updater_loop(self, guild_id: int):
+        try:
+            # 再生中は一定間隔で Now Playing UI を更新し続ける
+            while True:
+                # Discord rate limit を避けるため更新間隔だけ待機する
+                await asyncio.sleep(PROGRESS_UPDATE_INTERVAL)
+                # 待機後に最新のギルド状態を再取得する
+                state = self._get_guild_state(guild_id)
+                # 状態・再生・メッセージのいずれかが無効ならループを終了する
+                if (
+                    not state
+                    or not state.is_playing
+                    or not state.current_track
+                    or not state.last_now_playing_message
+                ):
+                    # 更新対象が無いのでループを抜ける
+                    break
+                # 一時停止中は位置が変わらないため API 呼び出しをスキップする
+                if state.is_paused:
+                    # 次の間隔まで待つ
+                    continue
+                # プログレスバー込みで Now Playing UI を再描画する
+                await self._update_now_playing_message_ui(guild_id)
+        except asyncio.CancelledError:
+            # タスクキャンセルは正常終了として扱う
+            pass
+        except Exception as e:
+            # 想定外エラーをログに残し、ループは終了する
+            logger.error(f"Guild {guild_id}: Progress updater error: {e}", exc_info=True)
+        finally:
+            # ループ終了時にタスク参照をクリアする（生存中の state がある場合のみ）
+            state = self._get_guild_state(guild_id)
+            # 状態が残っており、かつ自分自身のタスク参照ならクリアする
+            if state and state.progress_update_task is asyncio.current_task():
+                # 参照を None にして再利用可能にする
+                state.progress_update_task = None
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -1109,6 +1192,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.is_paused = False
         state.current_track = None
         state.reset_playback_tracking()
+        # stop 時はプログレスバー更新を停止する
+        state.stop_progress_updater()
         await self._send_response(ctx, "stopped_playback")
         await self._update_now_playing_message_ui(ctx.guild.id)
 
@@ -1341,6 +1426,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         if msg:
             # 送信したメッセージオブジェクトを最新の Now Playing メッセージとして保存する
             state.last_now_playing_message = msg
+            # nowplaying 再表示時もプログレスバー定期更新を開始する
+            self._start_progress_updater(ctx.guild.id)
 
     def _create_now_playing_embed(self, state: GuildState, track: Track) -> discord.Embed:
         # 再生が一時停止中であるか判定して、表示用アイコンを設定する
@@ -1396,7 +1483,11 @@ class MusicCog(commands.Cog, name="music_cog"):
         # 構築完了したEmbedオブジェクトを返す
         return embed
 
-    async def _update_now_playing_message_ui(self, guild_id: int):
+    async def _update_now_playing_message_ui(
+        self,
+        guild_id: int,
+        finished_message: Optional[str] = None,
+    ):
         # ギルドの再生状態オブジェクトを取得する
         state = self._get_guild_state(guild_id)
         # 再生状態、または直前の再生中メッセージが存在しない場合は処理を中断する
@@ -1406,7 +1497,11 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         try:
             # 最新の再生状態を元に一体型UI（LayoutView）を新規構築する
-            view = MusicControllerView(self, guild_id)
+            view = MusicControllerView(
+                self,
+                guild_id,
+                finished_message=finished_message,
+            )
             # 古いメッセージの Embed をクリアしつつ、新しい V2レイアウトでメッセージを上書き編集する
             await state.last_now_playing_message.edit(embed=None, view=view)
         # 編集処理中に例外が発生した場合のハンドリング
@@ -1420,11 +1515,17 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.last_now_playing_message = None
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
+        # 総時間が無効な場合は空のバーを返す
         if total <= 0:
+            # 未確定長の曲向けにプレースホルダを返す
             return "─" * length
-        progress = min(current / total, 1.0)
-        filled = int(length * progress)
+        # 0.0〜1.0 に正規化した進捗率を計算する
+        progress = min(max(current, 0) / total, 1.0)
+        # バー末尾に ○ を残すため、塗りつぶしは最大 length-1 にする
+        filled = min(int(length * progress), length - 1)
+        # 塗りつぶし・現在位置・残りを結合してプログレスバー文字列を作る
         bar = "━" * filled + "○" + "─" * (length - filled - 1)
+        # 生成したバー文字列を返す
         return bar
 
     @commands.hybrid_command(name="shuffle", description="再生キューをシャッフルします。")
@@ -1635,13 +1736,20 @@ class MusicCog(commands.Cog, name="music_cog"):
     async def reload_music_cog_error(self, ctx: commands.Context, error: commands.CommandError):
         await self.exception_handler.handle_generic_command_error(ctx, error)
 class MusicControllerView(discord.ui.LayoutView):
-    def __init__(self, cog: MusicCog, guild_id: int):
+    def __init__(
+        self,
+        cog: MusicCog,
+        guild_id: int,
+        finished_message: Optional[str] = None,
+    ):
         # タイムアウトなしで初期化する
         super().__init__(timeout=None)
         # 親のMusicCogインスタンスを保持する
         self.cog = cog
         # 対象のギルドIDを保持する
         self.guild_id = guild_id
+        # 停止/終了時に表示するカスタム文言（無ければデフォルト文）
+        self.finished_message = finished_message
         # UI（V2コンポーネント）の構築処理を実行する
         self.rebuild_ui()
 
@@ -1655,10 +1763,13 @@ class MusicControllerView(discord.ui.LayoutView):
         if not state or not state.current_track:
             # グレーのアクセントカラーでコンテナを生成する
             container = discord.ui.Container(accent_color=discord.Color.light_grey())
-            # Section は accessory 必須のため、停止メッセージは TextDisplay のみ使う
-            container.add_item(
-                discord.ui.TextDisplay("⏹️ **Playback Stopped**\nPlayback was stopped or the queue has finished.")
+            # 呼び出し元指定の終了文言があれば使い、無ければ停止用のデフォルト文を使う
+            stopped_text = self.finished_message or (
+                "⏹️ **Playback Stopped**\n"
+                "Playback was stopped or the queue has finished."
             )
+            # Section は accessory 必須のため、停止メッセージは TextDisplay のみ使う
+            container.add_item(discord.ui.TextDisplay(stopped_text))
 
             # 無効化されたボタンを配置するアクション行を作成する
             action_row = discord.ui.ActionRow()
@@ -1895,6 +2006,8 @@ class MusicControllerView(discord.ui.LayoutView):
         state.current_track = None
         # 再生時間計測情報を初期化する
         state.reset_playback_tracking()
+        # UI 停止時はプログレスバー更新も止める
+        state.stop_progress_updater()
 
         # 停止した状態に基づいてUIを再構築する
         self.rebuild_ui()
