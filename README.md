@@ -12,8 +12,8 @@
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![discord.py](https://img.shields.io/badge/discord.py-2.0+-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![discord.py](https://img.shields.io/badge/discord.py-2.7+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coffin399/ProjectMOMOKA)
 [![Discord](https://img.shields.io/discord/1305004687921250436?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/H79HKKqx3s)
@@ -56,10 +56,10 @@
    cd ProjectMOMOKA
    ```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **Requirements**
+   - **Python 3.11.x** (required — 3.10 / 3.12+ / 3.14 are not supported)
+   - On Windows, install so that `py -3.11` works
+   - Optional for music: place Netscape-format `youtube_cookie.txt` in the project root
 
 3. **Configure the bot**
    - Copy `config.default.yaml` to `config.yaml`
@@ -89,13 +89,18 @@
 
 4. **Run the bot**
    
-   **Windows (Recommended):** Use the all-in-one batch file that handles virtual environment setup and package installation automatically:
+   **Windows (Recommended):** Creates a Python 3.11 venv, installs deps, and starts the bot:
    ```bash
    startMOMOKA.bat
    ```
+   If an old `.venv` (e.g. 3.10) exists, the script recreates it automatically.
    
    **Manual start (Linux/Mac or if you prefer):**
    ```bash
+   py -3.11 -m venv .venv   # or: python3.11 -m venv .venv
+   # Windows: .venv\Scripts\activate
+   # Linux/Mac: source .venv/bin/activate
+   pip install -r requirements.txt
    python main.py
    ```
 

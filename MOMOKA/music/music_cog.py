@@ -23,7 +23,12 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 try:
-    from MOMOKA.music.plugins.ytdlp_wrapper import Track, extract as extract_audio_data, ensure_stream
+    from MOMOKA.music.plugins.ytdlp_wrapper import (
+        Track,
+        extract as extract_audio_data,
+        ensure_stream,
+        set_youtube_cookie_path,
+    )
     from MOMOKA.music.error.errors import MusicCogExceptionHandler
     from MOMOKA.music.plugins.audio_mixer import AudioMixer, MusicAudioSource
     from MOMOKA.music.plugins.voice_dave_patch import apply_dave_patch
@@ -32,6 +37,7 @@ except ImportError as e:
     Track = None
     extract_audio_data = None
     ensure_stream = None
+    set_youtube_cookie_path = None
     MusicCogExceptionHandler = None
     AudioMixer = None
     MusicAudioSource = None
@@ -194,6 +200,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.ffmpeg_before_options = self.music_config.get('ffmpeg_before_options',
                                                            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5")
         self.ffmpeg_options = self.music_config.get('ffmpeg_options', "-vn")
+        # YouTube クッキーパスを yt-dlp ラッパーへ反映する
+        self._apply_youtube_cookie_config()
         self.auto_leave_timeout = self.music_config.get('auto_leave_timeout', 10)
         self.max_queue_size = self.music_config.get('max_queue_size', 9000)
         self.max_guilds = self.music_config.get('max_guilds', 100000000)
@@ -215,6 +223,15 @@ class MusicCog(commands.Cog, name="music_cog"):
         if not self.cleanup_task or self.cleanup_task.done():
             self.cleanup_task = self.cleanup_task_loop.start()
         logger.info("MusicCog loaded and cleanup task started")
+
+    def _apply_youtube_cookie_config(self) -> None:
+        """config の youtube_cookie_file を yt-dlp ラッパーへ反映する"""
+        # ラッパーが未インポートの場合は何もしない
+        if set_youtube_cookie_path is None:
+            # 早期リターンする
+            return
+        # 未指定時は youtube_cookie.txt を既定として渡す（自動検出の優先候補になる）
+        set_youtube_cookie_path(self.music_config.get('youtube_cookie_file', 'youtube_cookie.txt'))
 
     def _load_bot_config(self) -> dict:
         if hasattr(self.bot, 'config') and self.bot.config:
@@ -628,21 +645,43 @@ class MusicCog(commands.Cog, name="music_cog"):
                 updated_track = await ensure_stream(track_to_play)
                 if not updated_track or not updated_track.stream_url:
                     raise RuntimeError(f"'{track_to_play.title}' の有効なストリームURLを取得できませんでした。")
+                # ストリームURLを最新値へ更新する
                 track_to_play.stream_url = updated_track.stream_url
+                # FFmpeg が CDN へアクセスできるよう HTTP ヘッダー（Cookie 含む）も同期する
+                track_to_play.http_headers = updated_track.http_headers
 
             ffmpeg_before_opts = self.ffmpeg_before_options
             if seek_seconds > 0:
                 # シーク指定位置から再生を開始するための開始オプションを構築する
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"
 
-            # トラックオブジェクトに HTTP ヘッダー情報が存在し、かつ空ではないか判定する
+            # YouTube 等の署名付き URL は Cookie / Referer 無しだと 403 になり無音になるため、
+            # yt-dlp が返した http_headers を FFmpeg の -headers へすべて渡す
             if hasattr(track_to_play, "http_headers") and track_to_play.http_headers:
-                # ヘッダー辞書から大文字小文字を区別せず User-Agent キーを検索する
-                ua = next((v for k, v in track_to_play.http_headers.items() if k.lower() == "user-agent"), None)
-                # User-Agent が正常に取得できたか判定する
-                if ua:
-                    # FFmpegの入力オプションとして user_agent オプションを追加してアクセス制限を回避する
-                    ffmpeg_before_opts = f"{ffmpeg_before_opts} -user_agent \"{ua}\""
+                # FFmpeg -headers 用の "Key: Value" 行を組み立てる
+                header_lines = []
+                # 各ヘッダーを走査する
+                for key, value in track_to_play.http_headers.items():
+                    # 値が空のヘッダーはスキップする
+                    if value is None or value == "":
+                        # 次のヘッダーへ進む
+                        continue
+                    # ダブルクォートをエスケープして行を追加する
+                    safe_value = str(value).replace('"', '\\"')
+                    # "Name: Value" 形式の1行を追加する
+                    header_lines.append(f"{key}: {safe_value}")
+                # 有効なヘッダー行が1つ以上あるか判定する
+                if header_lines:
+                    # FFmpeg はヘッダー区切りに CRLF を要求する
+                    headers_payload = "\r\n".join(header_lines) + "\r\n"
+                    # before_options へ -headers を追記する
+                    ffmpeg_before_opts = f'{ffmpeg_before_opts} -headers "{headers_payload}"'
+                    # デバッグ用に渡したヘッダー名だけログへ残す（値は秘匿）
+                    logger.debug(
+                        "Guild %s: FFmpeg headers attached: %s",
+                        guild_id,
+                        ", ".join(k.split(":")[0] for k in header_lines),
+                    )
 
             # MusicAudioSource内部でstderrを一時ファイルにリダイレクトするため、
             # ここではstderrを指定しない

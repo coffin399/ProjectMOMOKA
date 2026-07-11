@@ -732,7 +732,8 @@ class EarthquakeTsunamiCog(commands.Cog, name="EarthquakeNotifications"):
 
     async def generate_single_earthquake_map(self, quake: dict, info_type: str) -> io.BytesIO:
         """単一の地震の位置を地図に表示"""
-        loop = asyncio.get_event_loop()
+        # 実行中のイベントループを取得する（3.11 では get_event_loop は非推奨）
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._generate_single_map_sync, quake, info_type)
 
     def _calculate_smart_map_extent(self, lat: float, lon: float, max_scale: int) -> tuple:
@@ -1555,7 +1556,8 @@ class EarthquakeTsunamiCog(commands.Cog, name="EarthquakeNotifications"):
 
     async def generate_earthquake_map(self, quakes: list, min_scale: Optional[str], hours: int) -> io.BytesIO:
         """地震マップ画像を生成"""
-        loop = asyncio.get_event_loop()
+        # 実行中のイベントループを取得する（3.11 では get_event_loop は非推奨）
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._generate_map_sync, quakes, min_scale, hours)
 
     @app_commands.command(name="earthquake_history", description="最近の地震情報を表示します")

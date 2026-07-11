@@ -316,7 +316,8 @@ class LocalTxt2ImgPipeline:
             params.sampler_name or "default",
         )
 
-        loop = asyncio.get_event_loop()
+        # 実行中のイベントループを取得する（3.11 では get_event_loop は非推奨）
+        loop = asyncio.get_running_loop()
 
         def _run_pipeline() -> Image.Image:
             invocation_kwargs = dict(

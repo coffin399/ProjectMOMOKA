@@ -16,6 +16,19 @@ import platform
 from io import StringIO
 import aiohttp
 
+# Python 3.11 未満では依存パッケージ（discord.py 2.7 / torch 等）の動作保証外のため起動を拒否する
+if sys.version_info < (3, 11):
+    # 現在のインタプリタバージョンをユーザー向けに表示する
+    _current = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    # 標準エラーへ要件を明示して終了する
+    sys.stderr.write(
+        f"MOMOKA requires Python 3.11 or higher (detected {_current}).\n"
+        "Please recreate the virtual environment with Python 3.11 "
+        "(e.g. `py -3.11 -m venv .venv` or startMOMOKA.bat).\n"
+    )
+    # 非ゼロ終了コードでプロセスを終了する
+    sys.exit(1)
+
 # --- グローバル変数 ---
 log_viewer_thread = None
 
@@ -213,6 +226,13 @@ class Momoka(commands.Bot):
 
     async def setup_hook(self):
         """Botの初期セットアップ（ログイン後、接続準備完了前）"""
+        # 実行中の Python バージョンを起動ログへ残す（3.11 前提の切り分け用）
+        logging.info(
+            "Runtime Python %s.%s.%s (MOMOKA requires 3.11.x)",
+            sys.version_info.major,
+            sys.version_info.minor,
+            sys.version_info.micro,
+        )
         # 設定ファイルの読み込み
         if not os.path.exists(CONFIG_FILE):
             if os.path.exists(DEFAULT_CONFIG_FILE):

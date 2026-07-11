@@ -231,9 +231,10 @@ models/
 
 ### Requirements
 
-- Python 3.8 or higher
+- **Python 3.11.x** (required; 3.10 / 3.12+ are not supported)
 - Discord Bot Token
 - Various API keys (depending on features used)
+- (Optional) Netscape-format `youtube_cookie.txt` in the project root for YouTube music
 
 ### Installation Steps
 
@@ -261,8 +262,8 @@ models/
    
    **Manual start (Linux/Mac or if you prefer manual setup):**
    ```bash
-   # Create virtual environment (recommended)
-   python -m venv .venv
+   # Create a Python 3.11 virtual environment (required)
+   py -3.11 -m venv .venv   # or: python3.11 -m venv .venv
    .venv\Scripts\activate  # Windows
    source .venv/bin/activate  # Linux/Mac
    
@@ -272,6 +273,8 @@ models/
    # Start the bot
    python main.py
    ```
+   
+   If you still have an old `.venv` (e.g. Python 3.10), delete it and recreate. On Windows, `startMOMOKA.bat` recreates it automatically.
 
 ---
 
@@ -616,7 +619,7 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 ### Bot won't start
 
 1. Check if `bot_token` is correctly set in `config.yaml`
-2. Check if Python version is 3.8 or higher
+2. Check if Python version is 3.11 or higher
 3. Check if required packages are installed
 
 ### AI doesn't respond
@@ -630,6 +633,7 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 1. Check if the bot is connected to a voice channel
 2. Check audio file permissions
 3. Check if FFmpeg is installed (if yt-dlp uses it)
+4. Place a Netscape-format cookie file as `youtube_cookie.txt` in the project root (or set `music.youtube_cookie_file` in `config.yaml`). Age-restricted / bot-check videos need this; FFmpeg also receives Cookie headers from yt-dlp.
 
 ### Image generation doesn't work
 

@@ -1,2 +1,28 @@
 /config.yaml
 /models/image-models/modelA/
+
+# 仮想環境・キャッシュ
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.cache/
+/cache/
+
+# 認証クッキー（リポジトリへコミットしない）
+youtube_cookie.txt
+youtube_cookies.txt
+nico_cookies.txt
+
+# ローカル設定・秘密情報
+.env
+*.log
+
+# ビルド成果物
+/dist/
+/build/
+*.exe
+*.bin

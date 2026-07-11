@@ -61,8 +61,20 @@ jobs:
       - name: Install Nuitka
         run: pip install nuitka==${{ env.NUITKA_VERSION }}
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux/Windows CUDA)
+        if: matrix.os != 'macos-latest'
         run: pip install -r requirements.txt
+
+      - name: Install dependencies (macOS CPU — no cu118 / xformers wheels)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          # CUDA ホイール行と xformers / extra-index を除外してベース依存を入れる
+          grep -vE '^(--extra-index-url|torch==|torchvision==|torchaudio==|xformers==)' requirements.txt \
+            > /tmp/requirements-base.txt
+          pip install -r /tmp/requirements-base.txt
+          # Nuitka ビルド用に CPU 版 PyTorch を入れる（実行時 CUDA は対象外）
+          pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0
 
       - name: Build executable (Linux/macOS)
         if: matrix.os != 'windows-latest'

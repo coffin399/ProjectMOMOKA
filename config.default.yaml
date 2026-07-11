@@ -318,6 +318,9 @@ music:
   inactive_timeout_minutes: 3
   ffmpeg_before_options: "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
   ffmpeg_options: "-vn"
+  # YouTube用 Netscape 形式クッキーファイル（相対パス可）
+  # 未指定時は youtube_cookie.txt → youtube_cookies.txt の順で自動検出
+  youtube_cookie_file: "youtube_cookie.txt"
   gdrive_folder_id: "YOUR_GDRIVE_FOLDER_ID_HERE"
   niconico:
     email: ""
