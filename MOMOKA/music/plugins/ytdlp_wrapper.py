@@ -48,8 +48,10 @@ if not NICO_COOKIE_PATH.exists():
 YOUTUBE_COOKIE_PATH = Path("./youtube_cookies.txt")
 
 COMMON_YTDL_OPTS: dict = {
-    # 音声の品質指定（Opusを最優先し、48kHzステレオをターゲットにする）
-    "format": "bestaudio[acodec=opus][asr=48000]/bestaudio/best",
+    # 音声フォーマットの品質指定
+    # YouTubeの一部動画で「Requested format is not available」エラーが発生するのを防ぐため、
+    # 特定のacodecやasrに制限せず、利用可能な中で最良のオーディオストリームをフォールバック付きで取得する
+    "format": "bestaudio/best",
     # プレイリストURLが指定された場合も中身を展開して処理する
     "noplaylist": False,
     # プレイリストの高速なインデックス取得を行うためのフラット展開設定
@@ -228,8 +230,20 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
         with yt_dlp.YoutubeDL(opts_for_ensure) as ytdl:
             # 指定されたURLから最新の動画メタデータを抽出する（ダウンロードはスキップ）
             info = ytdl.extract_info(track.url, download=False)
-            # 抽出結果がプレイリスト形式で返されたか判定し、対象のエントリを抽出する
+            # 抽出した情報（info）が None であるか判定する
+            # ignoreerrors=True の設定により、情報抽出失敗時に例外ではなく None が返されるため、
+            # 後続の get メソッド呼び出しで AttributeError が発生するのを防ぐ目的
+            if info is None:
+                # 取得失敗を示す RuntimeError を明示的に送出する
+                raise RuntimeError(f"ストリーム情報の抽出に失敗しました（動画が非公開、または無効なフォーマットです）。URL: {track.url}")
+            # 抽出結果がプレイリスト形式か判定し、プレイリストの場合は最初のエントリ、それ以外はinfo自体を選択する
+            # _type が playlist であり、かつ entries リストが存在する場合のみ最初のエントリを対象とする
             entry_to_use = info.get("entries")[0] if info.get("_type") == "playlist" and info.get("entries") else info
+            # 選択したエントリ（entry_to_use）が None であるか判定する
+            # プレイリストが空の場合などに、後続の Track オブジェクト変換でエラーになるのを防ぐ目的
+            if entry_to_use is None:
+                # エントリが取得できないことを示す RuntimeError を明示的に送出する
+                raise RuntimeError(f"プレイリスト内の有効な動画エントリが見つかりませんでした。URL: {track.url}")
 
             # 抽出したメタデータから一時的なTrackオブジェクトを構築する
             temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
