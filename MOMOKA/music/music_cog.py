@@ -655,40 +655,12 @@ class MusicCog(commands.Cog, name="music_cog"):
                 # シーク指定位置から再生を開始するための開始オプションを構築する
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"
 
-            # YouTube 等の署名付き URL は Cookie / Referer 無しだと 403 になり無音になるため、
-            # yt-dlp が返した http_headers を FFmpeg の -headers へすべて渡す
-            if hasattr(track_to_play, "http_headers") and track_to_play.http_headers:
-                # FFmpeg -headers 用の "Key: Value" 行を組み立てる
-                header_lines = []
-                # 各ヘッダーを走査する
-                for key, value in track_to_play.http_headers.items():
-                    # 値が空のヘッダーはスキップする
-                    if value is None or value == "":
-                        # 次のヘッダーへ進む
-                        continue
-                    # ダブルクォートをエスケープして行を追加する
-                    safe_value = str(value).replace('"', '\\"')
-                    # "Name: Value" 形式の1行を追加する
-                    header_lines.append(f"{key}: {safe_value}")
-                # 有効なヘッダー行が1つ以上あるか判定する
-                if header_lines:
-                    # FFmpeg はヘッダー区切りに CRLF を要求する
-                    headers_payload = "\r\n".join(header_lines) + "\r\n"
-                    # before_options へ -headers を追記する
-                    ffmpeg_before_opts = f'{ffmpeg_before_opts} -headers "{headers_payload}"'
-                    # デバッグ用に渡したヘッダー名だけログへ残す（値は秘匿）
-                    logger.debug(
-                        "Guild %s: FFmpeg headers attached: %s",
-                        guild_id,
-                        ", ".join(k.split(":")[0] for k in header_lines),
-                    )
-
-            # MusicAudioSource内部でstderrを一時ファイルにリダイレクトするため、
-            # ここではstderrを指定しない
+            # MusicAudioSource が HTTP ヘッダーを argv へ直接渡す（shlex 経由だと CRLF が壊れ 403 になる）
             source = MusicAudioSource(
                 track_to_play.stream_url,
                 title=track_to_play.title,
                 guild_id=guild_id,
+                http_headers=getattr(track_to_play, "http_headers", None),
                 executable=self.ffmpeg_path,
                 before_options=ffmpeg_before_opts,
                 options=self.ffmpeg_options,
@@ -1682,12 +1654,10 @@ class MusicControllerView(discord.ui.LayoutView):
         if not state or not state.current_track:
             # グレーのアクセントカラーでコンテナを生成する
             container = discord.ui.Container(accent_color=discord.Color.light_grey())
-            # 停止メッセージのテキストセクションを作成する
-            stop_sec = discord.ui.Section(
+            # Section は accessory 必須のため、停止メッセージは TextDisplay のみ使う
+            container.add_item(
                 discord.ui.TextDisplay("⏹️ **Playback Stopped**\nPlayback was stopped or the queue has finished.")
             )
-            # コンテナに停止メッセージセクションを追加する
-            container.add_item(stop_sec)
 
             # 無効化されたボタンを配置するアクション行を作成する
             action_row = discord.ui.ActionRow()
@@ -1718,20 +1688,20 @@ class MusicControllerView(discord.ui.LayoutView):
         # インディゴカラーのアクセント色でV2コンテナを初期化する
         container = discord.ui.Container(accent_color=discord.Color.from_rgb(99, 102, 241))
 
-        # サムネイル表示用の変数を初期化する
-        accessory = None
-        # サムネイル画像URLが有効な文字列であるか判定する
+        # タイトル本文を構築する
+        title_text = f"### {status_icon} Now {status_text}\n**[{track.title}]({track.url})**"
+        # サムネイルがあるときだけ Section（accessory 必須）を使い、無いときは TextDisplay
         if track.thumbnail and track.thumbnail.strip() and track.thumbnail != "None":
-            # サムネイル画像をV2コンポーネントとして生成する
-            accessory = discord.ui.Thumbnail(track.thumbnail)
-
-        # 曲名タイトルとステータス、およびサムネイル画像を含む Section を作成する
-        title_sec = discord.ui.Section(
-            discord.ui.TextDisplay(f"### {status_icon} Now {status_text}\n**[{track.title}]({track.url})**"),
-            accessory=accessory
-        )
-        # コンテナにタイトルセクションを追加する
-        container.add_item(title_sec)
+            # 右上サムネイル付きセクションを追加する
+            container.add_item(
+                discord.ui.Section(
+                    discord.ui.TextDisplay(title_text),
+                    accessory=discord.ui.Thumbnail(track.thumbnail),
+                )
+            )
+        else:
+            # サムネイル無しはテキストのみ追加する
+            container.add_item(discord.ui.TextDisplay(title_text))
 
         # 現在の再生位置（秒）を取得する
         current_pos = state.get_current_position()
@@ -1739,12 +1709,10 @@ class MusicControllerView(discord.ui.LayoutView):
         progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
         # 再生時間と総再生時間の文字列フォーマットを生成する
         duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
-        # 進行状況用の Section を作成する
-        progress_sec = discord.ui.Section(
+        # 進行状況は TextDisplay のみ（Section は accessory 必須のため使わない）
+        container.add_item(
             discord.ui.TextDisplay(f"**Progress**\n{progress_bar}\n{duration_str}")
         )
-        # コンテナに進行状況セクションを追加する
-        container.add_item(progress_sec)
 
         # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
         uploader_val = track.uploader if track.uploader else "Unknown"
@@ -1758,12 +1726,8 @@ class MusicControllerView(discord.ui.LayoutView):
             f"**Channel:** {uploader_val}  |  **Requested By:** {requester_mention}\n"
             f"**Loop Mode:** `{state.loop_mode.name.lower()}`  |  **Queue:** {remaining} songs"
         )
-        # メタデータ用の Section を作成する
-        info_sec = discord.ui.Section(
-            discord.ui.TextDisplay(info_text)
-        )
-        # コンテナにメタデータセクションを追加する
-        container.add_item(info_sec)
+        # メタデータも TextDisplay のみで追加する
+        container.add_item(discord.ui.TextDisplay(info_text))
 
         # 一時停止/再生ボタンを初期化する
         self.pause_resume_btn = discord.ui.Button(

@@ -3,6 +3,8 @@ import discord
 import struct
 import asyncio
 import io
+import shlex
+import subprocess
 import tempfile
 import threading
 from typing import Dict, Optional, List, Tuple
@@ -211,23 +213,36 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
     """
     音楽再生用のFFmpegオーディオソース。
     stderrを一時ファイルにリダイレクトしてFFmpegエラーを確実にキャプチャする。
-    FFmpegの起動猶予（ストリーム接続待ち）機能つき。
+    HTTPヘッダーは argv リストへ直接渡し、shlex による CRLF 破壊（→ YouTube 403）を防ぐ。
     """
 
     # 20ms × 250 = 5秒間のFFmpeg起動猶予（ストリームURL接続待ち）
     STARTUP_GRACE_FRAMES = 250
     # 3840バイト = 960サンプル × 2バイト(16bit) × 2チャンネル(ステレオ) = 20ms分の無音PCMフレーム
     SILENCE_FRAME = b'\x00' * 3840
+    # googlevideo 向けフォールバック UA
+    _DEFAULT_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
 
-    def __init__(self, source, *, title: str = "Unknown Track", guild_id: int, **kwargs):
+    def __init__(
+        self,
+        source,
+        *,
+        title: str = "Unknown Track",
+        guild_id: int,
+        http_headers: Optional[dict] = None,
+        executable: str = "ffmpeg",
+        before_options: Optional[str] = None,
+        options: Optional[str] = None,
+        **kwargs,
+    ):
         # stderrを一時ファイルにリダイレクト（PIPEより確実にエラーを捕捉できる）
-        self._stderr_file = tempfile.TemporaryFile(mode='w+b')
-        kwargs['stderr'] = self._stderr_file
+        self._stderr_file = tempfile.TemporaryFile(mode="w+b")
         # ストリームURLを保持（エラーログ用）
         self._stream_url = source if isinstance(source, str) else "(pipe)"
-
-        super().__init__(source, **kwargs)
-
         # トラックのタイトル（ログ用）
         self.title = title
         # ギルドID（ログ用）
@@ -237,15 +252,100 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         # 1フレームでもオーディオを出力したかどうか
         self._has_produced_audio = False
 
+        # YouTube CDN 用ヘッダーを正規化する
+        headers = self._normalize_headers(source, http_headers)
+
+        # FFmpeg 引数をリストで組み立てる（-headers の CRLF を shlex に通さない）
+        args: list = []
+        # before_options 文字列があれば従来どおり分割して先頭へ追加する
+        if isinstance(before_options, str) and before_options.strip():
+            # シェル風の分割で reconnect 等を展開する
+            args.extend(shlex.split(before_options))
+        # HTTP ヘッダーがある場合は -headers を1引数として追加する
+        if headers:
+            # FFmpeg はヘッダー区切りに実 CRLF を要求する
+            header_block = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+            # argv 要素として直接渡す（クォート不要）
+            args.extend(["-headers", header_block])
+            # 渡したヘッダー名だけ INFO ログへ残す（値は秘匿）
+            logger.info(
+                "Guild %s: FFmpeg HTTP headers attached for '%s': %s",
+                guild_id,
+                title,
+                ", ".join(headers.keys()),
+            )
+        else:
+            # ヘッダー無しは 403 の温床なので警告する
+            logger.warning(
+                "Guild %s: No HTTP headers for '%s' — YouTube CDN may return 403",
+                guild_id,
+                title,
+            )
+
+        # 入力 URL を指定する
+        args.append("-i")
+        # ソースパス/URL を追加する
+        args.append(source)
+        # Discord 向け PCM 出力パラメータを追加する
+        blocksize = getattr(discord.FFmpegPCMAudio, "BLOCKSIZE", 8192)
+        args.extend(
+            (
+                "-f",
+                "s16le",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-loglevel",
+                "warning",
+                "-blocksize",
+                str(blocksize),
+            )
+        )
+        # options（例: -vn）があれば分割して追加する
+        if isinstance(options, str) and options.strip():
+            # オプション文字列を分割する
+            args.extend(shlex.split(options))
+        # stdout へ PCM を出す
+        args.append("pipe:1")
+
+        # FFmpegPCMAudio.__init__ をスキップし、FFmpegAudio に args を直接渡す
+        discord.FFmpegAudio.__init__(
+            self,
+            source,
+            executable=executable,
+            args=args,
+            stdin=subprocess.DEVNULL,
+            stderr=self._stderr_file,
+        )
+
         # FFmpegのPIDをログ出力
         pid = "N/A"
         try:
-            if hasattr(self, '_process') and self._process:
+            if hasattr(self, "_process") and self._process:
                 pid = self._process.pid
         except Exception:
             pass
-        logger.info(f"Guild {guild_id}: FFmpeg PID={pid} started for '{title}' "
-                    f"url={self._stream_url[:150]}...")
+        logger.info(
+            f"Guild {guild_id}: FFmpeg PID={pid} started for '{title}' "
+            f"url={self._stream_url[:150]}..."
+        )
+
+    @classmethod
+    def _normalize_headers(cls, source, http_headers: Optional[dict]) -> dict:
+        """googlevideo 向けに Referer / User-Agent を補完したヘッダー辞書を返す。"""
+        # 入力ヘッダーをコピーする（None なら空）
+        headers = {str(k): str(v) for k, v in (http_headers or {}).items() if v is not None and v != ""}
+        # googlevideo URL のときだけ必須ヘッダーを補う
+        if isinstance(source, str) and "googlevideo.com" in source:
+            # Referer が無ければ YouTube トップを付ける
+            if not any(k.lower() == "referer" for k in headers):
+                headers["Referer"] = "https://www.youtube.com/"
+            # User-Agent が無ければ既定 UA を付ける
+            if not any(k.lower() == "user-agent" for k in headers):
+                headers["User-Agent"] = cls._DEFAULT_UA
+        # 正規化済みヘッダーを返す
+        return headers
 
     def read(self) -> bytes:
         """
@@ -271,7 +371,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         # FFmpegプロセスがまだ生きているか確認
         process_alive = False
         try:
-            if hasattr(self, '_process') and self._process:
+            if hasattr(self, "_process") and self._process:
                 process_alive = self._process.poll() is None
         except Exception:
             pass
@@ -291,7 +391,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         if not self._has_produced_audio:
             returncode = None
             try:
-                if hasattr(self, '_process') and self._process:
+                if hasattr(self, "_process") and self._process:
                     returncode = self._process.poll()
             except Exception:
                 pass
@@ -309,7 +409,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                 f"after {self._read_count} reads."
             )
 
-        return b''
+        return b""
 
     def _read_stderr_file(self) -> str:
         """一時ファイルからFFmpegのstderrを読み取る。"""
@@ -319,7 +419,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
             self._stderr_file.seek(0)
             raw = self._stderr_file.read(4096)
             if raw:
-                return raw.decode('utf-8', errors='replace').strip()
+                return raw.decode("utf-8", errors="replace").strip()
             return "(empty)"
         except Exception as e:
             return f"(stderr file read error: {e})"
