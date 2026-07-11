@@ -89,7 +89,8 @@ COMMON_YTDL_OPTS: dict = {
     # defaultのクライアント構成に加え、クッキー認証と相性の良いweb_creatorクライアントをフォールバックに指定する
     "extractor_args": {
         "youtube": {
-            "player_client": ["default", "web_creator"]
+            # クッキー認証と相性の悪いモバイルクライアントを避けるため、web_creatorとwebのみを指定する
+            "player_client": ["web_creator", "web"]
         }
     }
 }
