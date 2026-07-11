@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import tempfile
 import threading
+from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 import logging
 
@@ -212,20 +213,15 @@ class AudioMixer(discord.AudioSource):
 class MusicAudioSource(discord.FFmpegPCMAudio):
     """
     音楽再生用のFFmpegオーディオソース。
-    stderrを一時ファイルにリダイレクトしてFFmpegエラーを確実にキャプチャする。
-    HTTPヘッダーは argv リストへ直接渡し、shlex による CRLF 破壊（→ YouTube 403）を防ぐ。
+    YouTube は googlevideo 直読みだと FFmpeg が 403 になるため、
+    yt-dlp の stdout を FFmpeg stdin へパイプして再生する。
+    ローカルファイル等はそのまま -i URL/PATH で再生する。
     """
 
-    # 20ms × 250 = 5秒間のFFmpeg起動猶予（ストリームURL接続待ち）
-    STARTUP_GRACE_FRAMES = 250
+    # 20ms × 500 = 10秒間の起動猶予（yt-dlp EJS + パイプ開始待ち）
+    STARTUP_GRACE_FRAMES = 500
     # 3840バイト = 960サンプル × 2バイト(16bit) × 2チャンネル(ステレオ) = 20ms分の無音PCMフレーム
     SILENCE_FRAME = b'\x00' * 3840
-    # googlevideo 向けフォールバック UA
-    _DEFAULT_UA = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    )
 
     def __init__(
         self,
@@ -233,6 +229,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         *,
         title: str = "Unknown Track",
         guild_id: int,
+        webpage_url: Optional[str] = None,
         http_headers: Optional[dict] = None,
         executable: str = "ffmpeg",
         before_options: Optional[str] = None,
@@ -251,73 +248,113 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         self._read_count = 0
         # 1フレームでもオーディオを出力したかどうか
         self._has_produced_audio = False
+        # yt-dlp パイプ用プロセス（未使用時は None）
+        self._ytdlp_proc: Optional[subprocess.Popen] = None
 
-        # YouTube CDN 用ヘッダーを正規化する
-        headers = self._normalize_headers(source, http_headers)
-
-        # FFmpeg 引数をリストで組み立てる（-headers の CRLF を shlex に通さない）
-        args: list = []
-        # before_options 文字列があれば従来どおり分割して先頭へ追加する
-        if isinstance(before_options, str) and before_options.strip():
-            # シェル風の分割で reconnect 等を展開する
-            args.extend(shlex.split(before_options))
-        # HTTP ヘッダーがある場合は -headers を1引数として追加する
-        if headers:
-            # FFmpeg はヘッダー区切りに実 CRLF を要求する
-            header_block = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
-            # argv 要素として直接渡す（クォート不要）
-            args.extend(["-headers", header_block])
-            # 渡したヘッダー名だけ INFO ログへ残す（値は秘匿）
-            logger.info(
-                "Guild %s: FFmpeg HTTP headers attached for '%s': %s",
-                guild_id,
-                title,
-                ", ".join(headers.keys()),
-            )
-        else:
-            # ヘッダー無しは 403 の温床なので警告する
-            logger.warning(
-                "Guild %s: No HTTP headers for '%s' — YouTube CDN may return 403",
-                guild_id,
-                title,
-            )
-
-        # 入力 URL を指定する
-        args.append("-i")
-        # ソースパス/URL を追加する
-        args.append(source)
-        # Discord 向け PCM 出力パラメータを追加する
-        blocksize = getattr(discord.FFmpegPCMAudio, "BLOCKSIZE", 8192)
-        args.extend(
-            (
-                "-f",
-                "s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-loglevel",
-                "warning",
-                "-blocksize",
-                str(blocksize),
-            )
+        # YouTube 判定用に遅延インポートする（循環 import 回避）
+        from MOMOKA.music.plugins.ytdlp_wrapper import (
+            build_ytdlp_pipe_command,
+            is_youtube_media_url,
         )
+
+        # ページ URL または CDN URL が YouTube 系ならパイプ再生する
+        use_ytdlp_pipe = bool(
+            webpage_url
+            and is_youtube_media_url(webpage_url)
+            and not (isinstance(source, str) and Path(source).is_file())
+        ) or (
+            isinstance(source, str)
+            and is_youtube_media_url(source)
+            and webpage_url
+            and not Path(source).is_file()
+        )
+
+        # FFmpeg 共通の出力引数を組み立てる
+        out_args: list = [
+            "-f",
+            "s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-loglevel",
+            "warning",
+            "-blocksize",
+            str(getattr(discord.FFmpegPCMAudio, "BLOCKSIZE", 8192)),
+        ]
         # options（例: -vn）があれば分割して追加する
         if isinstance(options, str) and options.strip():
             # オプション文字列を分割する
-            args.extend(shlex.split(options))
+            out_args.extend(shlex.split(options))
         # stdout へ PCM を出す
-        args.append("pipe:1")
+        out_args.append("pipe:1")
 
-        # FFmpegPCMAudio.__init__ をスキップし、FFmpegAudio に args を直接渡す
-        discord.FFmpegAudio.__init__(
-            self,
-            source,
-            executable=executable,
-            args=args,
-            stdin=subprocess.DEVNULL,
-            stderr=self._stderr_file,
-        )
+        # YouTube: yt-dlp → FFmpeg(pipe:0)
+        if use_ytdlp_pipe and webpage_url:
+            # yt-dlp CLI コマンドを組み立てる
+            ytdlp_cmd = build_ytdlp_pipe_command(webpage_url)
+            # yt-dlp を起動し stdout をパイプする
+            self._ytdlp_proc = subprocess.Popen(
+                ytdlp_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+            )
+            # パイプ再生であることをログする
+            logger.info(
+                "Guild %s: Using yt-dlp pipe for '%s' (avoids googlevideo 403)",
+                guild_id,
+                title,
+            )
+            # シーク等の before_options はパイプ入力では限定的にしか効かないが、
+            # -ss が含まれる場合は出力側オプションへ回すためここでは入力前のみ使用しない
+            ffmpeg_args: list = ["-i", "pipe:0", *out_args]
+            # FFmpegAudio を pipe:0 / stdin=ytdlp.stdout で初期化する
+            discord.FFmpegAudio.__init__(
+                self,
+                "pipe:0",
+                executable=executable,
+                args=ffmpeg_args,
+                stdin=self._ytdlp_proc.stdout,
+                stderr=self._stderr_file,
+            )
+            # 親プロセス側の stdout ハンドルを閉じ、FFmpeg 側だけが読めるようにする
+            try:
+                if self._ytdlp_proc.stdout:
+                    # 親の複製 FD を閉じる
+                    self._ytdlp_proc.stdout.close()
+            except Exception:
+                # クローズ失敗は致命的ではない
+                pass
+        else:
+            # ローカルファイルや非 YouTube: 従来どおり直接 -i source
+            ffmpeg_args = []
+            # before_options（reconnect / -ss）を先頭へ追加する
+            if isinstance(before_options, str) and before_options.strip():
+                # シェル風に分割する
+                ffmpeg_args.extend(shlex.split(before_options))
+            # 非 YouTube でヘッダーがあれば付与する（一部 CDN 向け）
+            headers = {
+                str(k): str(v)
+                for k, v in (http_headers or {}).items()
+                if v is not None and v != ""
+            }
+            if headers:
+                # CRLF 区切りのヘッダーブロックを作る
+                header_block = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+                # argv に直接渡す
+                ffmpeg_args.extend(["-headers", header_block])
+            # 入力を指定する
+            ffmpeg_args.extend(["-i", source, *out_args])
+            # FFmpegAudio を初期化する
+            discord.FFmpegAudio.__init__(
+                self,
+                source,
+                executable=executable,
+                args=ffmpeg_args,
+                stdin=subprocess.DEVNULL,
+                stderr=self._stderr_file,
+            )
 
         # FFmpegのPIDをログ出力
         pid = "N/A"
@@ -326,26 +363,11 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                 pid = self._process.pid
         except Exception:
             pass
+        ytdlp_pid = self._ytdlp_proc.pid if self._ytdlp_proc else None
         logger.info(
-            f"Guild {guild_id}: FFmpeg PID={pid} started for '{title}' "
+            f"Guild {guild_id}: FFmpeg PID={pid} yt-dlp PID={ytdlp_pid} started for '{title}' "
             f"url={self._stream_url[:150]}..."
         )
-
-    @classmethod
-    def _normalize_headers(cls, source, http_headers: Optional[dict]) -> dict:
-        """googlevideo 向けに Referer / User-Agent を補完したヘッダー辞書を返す。"""
-        # 入力ヘッダーをコピーする（None なら空）
-        headers = {str(k): str(v) for k, v in (http_headers or {}).items() if v is not None and v != ""}
-        # googlevideo URL のときだけ必須ヘッダーを補う
-        if isinstance(source, str) and "googlevideo.com" in source:
-            # Referer が無ければ YouTube トップを付ける
-            if not any(k.lower() == "referer" for k in headers):
-                headers["Referer"] = "https://www.youtube.com/"
-            # User-Agent が無ければ既定 UA を付ける
-            if not any(k.lower() == "user-agent" for k in headers):
-                headers["User-Agent"] = cls._DEFAULT_UA
-        # 正規化済みヘッダーを返す
-        return headers
 
     def read(self) -> bytes:
         """
@@ -376,17 +398,30 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         except Exception:
             pass
 
-        # FFmpegがまだ生きていて、オーディオ未出力で、猶予フレーム内なら無音を返す
-        if process_alive and not self._has_produced_audio and self._read_count <= self.STARTUP_GRACE_FRAMES:
+        # yt-dlp がまだ生きていれば起動中とみなす材料にする
+        ytdlp_alive = False
+        try:
+            if self._ytdlp_proc is not None:
+                ytdlp_alive = self._ytdlp_proc.poll() is None
+        except Exception:
+            pass
+
+        # FFmpeg または yt-dlp が生きていて、オーディオ未出力で、猶予フレーム内なら無音を返す
+        if (
+            (process_alive or ytdlp_alive)
+            and not self._has_produced_audio
+            and self._read_count <= self.STARTUP_GRACE_FRAMES
+        ):
             if self._read_count % 50 == 0:  # 1秒ごとにログ出力
                 logger.info(
-                    f"Guild {self.guild_id}: FFmpeg for '{self.title}' still starting up "
+                    f"Guild {self.guild_id}: FFmpeg/yt-dlp for '{self.title}' still starting up "
                     f"(read #{self._read_count}, {self._read_count * 20}ms elapsed)"
                 )
             return self.SILENCE_FRAME
 
         # --- 本当にソース終了 ---
         stderr_output = self._read_stderr_file()
+        ytdlp_err = self._read_ytdlp_stderr()
 
         if not self._has_produced_audio:
             returncode = None
@@ -399,9 +434,10 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
             logger.error(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio!\n"
                 f"  read_count={self._read_count}, returncode={returncode}, "
-                f"process_alive={process_alive}\n"
+                f"process_alive={process_alive}, ytdlp_alive={ytdlp_alive}\n"
                 f"  url={self._stream_url[:200]}\n"
-                f"  stderr={stderr_output}"
+                f"  stderr={stderr_output}\n"
+                f"  ytdlp_stderr={ytdlp_err}"
             )
         else:
             logger.info(
@@ -424,17 +460,47 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         except Exception as e:
             return f"(stderr file read error: {e})"
 
-    def cleanup(self):
-        """FFmpegプロセスと一時ファイルのクリーンアップ"""
-        logger.info(f"Guild {self.guild_id}: Music FFmpeg process for '{self.title}' is being cleaned up.")
-        super().cleanup()
-        # 一時ファイルをクローズ（自動削除される）
+    def _read_ytdlp_stderr(self) -> str:
+        """yt-dlp の stderr を非ブロッキング気味に読み取る。"""
         try:
-            if self._stderr_file:
-                self._stderr_file.close()
-                self._stderr_file = None
-        except Exception:
-            pass
+            if not self._ytdlp_proc or not self._ytdlp_proc.stderr:
+                return "(no ytdlp stderr)"
+            # プロセス終了後なら残データを読む
+            raw = self._ytdlp_proc.stderr.read()
+            if raw:
+                return raw.decode("utf-8", errors="replace").strip()[:2000]
+            return "(empty)"
+        except Exception as e:
+            return f"(ytdlp stderr read error: {e})"
+
+    def cleanup(self):
+        """FFmpeg / yt-dlp プロセスと一時ファイルのクリーンアップ"""
+        logger.info(f"Guild {self.guild_id}: Music FFmpeg process for '{self.title}' is being cleaned up.")
+        # 先に FFmpeg を止める
+        try:
+            super().cleanup()
+        finally:
+            # yt-dlp パイププロセスを停止する
+            if self._ytdlp_proc is not None:
+                try:
+                    # まだ生きていれば強制終了する
+                    if self._ytdlp_proc.poll() is None:
+                        self._ytdlp_proc.kill()
+                    # 終了を短時間待つ
+                    self._ytdlp_proc.wait(timeout=2)
+                except Exception:
+                    # 終了待ち失敗は無視する
+                    pass
+                finally:
+                    # 参照をクリアする
+                    self._ytdlp_proc = None
+            # 一時ファイルをクローズ（自動削除される）
+            try:
+                if self._stderr_file:
+                    self._stderr_file.close()
+                    self._stderr_file = None
+            except Exception:
+                pass
 
 
 class TTSAudioSource(discord.FFmpegPCMAudio):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import random
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Union, Optional
@@ -209,6 +210,59 @@ def apply_youtube_ejs_opts(opts: dict) -> dict:
     merged.setdefault("remote_components", ["ejs:github"])
     # 注入後のオプションを返す
     return merged
+
+
+def is_youtube_media_url(url: Optional[str]) -> bool:
+    """YouTube / googlevideo の URL かどうかを判定する。"""
+    # 空なら False
+    if not url:
+        return False
+    # 小文字化して判定する
+    lower = url.lower()
+    # YouTube 関連ホストを含むか返す
+    return any(
+        host in lower
+        for host in (
+            "youtube.com",
+            "youtu.be",
+            "googlevideo.com",
+            "youtube-nocookie.com",
+        )
+    )
+
+
+def build_ytdlp_pipe_command(webpage_url: str) -> list[str]:
+    """
+    FFmpeg へ標準出力パイプするための yt-dlp CLI コマンドを組み立てる。
+    直接 googlevideo URL を FFmpeg に渡すと 403 になるため、yt-dlp 経由で取得する。
+    """
+    # 現在の Python で yt_dlp モジュールを起動する
+    cmd: list[str] = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--quiet",
+        "--no-warnings",
+        "--no-playlist",
+        "--no-part",
+        "-f",
+        "bestaudio*/best*",
+        "-o",
+        "-",
+        "--remote-components",
+        "ejs:github",
+        "--extractor-args",
+        "youtube:player_client=tv_embedded,tv,android",
+    ]
+    # 有効なクッキーがあれば付与する
+    cookie_path = resolve_youtube_cookie_path()
+    if cookie_path is not None:
+        # --cookies に絶対パスを渡す
+        cmd.extend(["--cookies", str(cookie_path.resolve())])
+    # 対象の動画ページ URL を末尾に追加する
+    cmd.append(webpage_url)
+    # 完成したコマンドリストを返す
+    return cmd
 
 
 def _extract_once(opts: dict, url: str, *, download: bool):

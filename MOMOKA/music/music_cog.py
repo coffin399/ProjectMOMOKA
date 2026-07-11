@@ -655,11 +655,12 @@ class MusicCog(commands.Cog, name="music_cog"):
                 # シーク指定位置から再生を開始するための開始オプションを構築する
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"
 
-            # MusicAudioSource が HTTP ヘッダーを argv へ直接渡す（shlex 経由だと CRLF が壊れ 403 になる）
+            # YouTube は yt-dlp パイプ再生（googlevideo 直読みは 403 になる）
             source = MusicAudioSource(
                 track_to_play.stream_url,
                 title=track_to_play.title,
                 guild_id=guild_id,
+                webpage_url=track_to_play.url,
                 http_headers=getattr(track_to_play, "http_headers", None),
                 executable=self.ffmpeg_path,
                 before_options=ffmpeg_before_opts,
