@@ -85,8 +85,13 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # クッキー(youtube_cookies.txt)適用時のフォーマット取得エラーを防ぐため、手動のplayer_client指定を削除し、
-    # yt-dlpデフォルトのクライアント自動選択および最適なフォールバック機能に委ねる
+    # YouTubeの年齢制限やクッキー適用時のフォーマット取得エラーを回避するため、
+    # defaultのクライアント構成に加え、クッキー認証と相性の良いweb_creatorクライアントをフォールバックに指定する
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["default", "web_creator"]
+        }
+    }
 }
 
 
