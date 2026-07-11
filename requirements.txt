@@ -9,7 +9,7 @@ openai
 pyyaml
 google-genai
 PyNaCl
-yt-dlp
+yt-dlp>=2025.1.15
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib

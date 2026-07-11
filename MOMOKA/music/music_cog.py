@@ -632,7 +632,17 @@ class MusicCog(commands.Cog, name="music_cog"):
 
             ffmpeg_before_opts = self.ffmpeg_before_options
             if seek_seconds > 0:
+                # シーク指定位置から再生を開始するための開始オプションを構築する
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"
+
+            # トラックオブジェクトに HTTP ヘッダー情報が存在し、かつ空ではないか判定する
+            if hasattr(track_to_play, "http_headers") and track_to_play.http_headers:
+                # ヘッダー辞書から大文字小文字を区別せず User-Agent キーを検索する
+                ua = next((v for k, v in track_to_play.http_headers.items() if k.lower() == "user-agent"), None)
+                # User-Agent が正常に取得できたか判定する
+                if ua:
+                    # FFmpegの入力オプションとして user_agent オプションを追加してアクセス制限を回避する
+                    ffmpeg_before_opts = f"{ffmpeg_before_opts} -user_agent \"{ua}\""
 
             # MusicAudioSource内部でstderrを一時ファイルにリダイレクトするため、
             # ここではstderrを指定しない
