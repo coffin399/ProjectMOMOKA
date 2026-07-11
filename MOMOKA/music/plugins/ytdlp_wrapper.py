@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Union, Optional
 
+import logging
 import yt_dlp
+# yt-dlpの出力ログをMOMOKAのログシステムに統合するためのロガーを設定する
+logger = logging.getLogger("MOMOKA.music.plugins.ytdlp")
 from yt_dlp.utils import ExtractorError  # 個別のエラーをキャッチするため
 
 
@@ -56,10 +59,14 @@ COMMON_YTDL_OPTS: dict = {
     "noplaylist": False,
     # プレイリストの高速なインデックス取得を行うためのフラット展開設定
     "extract_flat": "in_playlist",
-    # コンソールへの余計な出力を抑制して非表示にする
-    "quiet": True,
-    # 警告メッセージの出力を非表示にする
-    "no_warnings": True,
+    # 詳細なログを取得するために出力を抑制しない設定にする
+    "quiet": False,
+    # 警告情報を出力させる設定にする
+    "no_warnings": False,
+    # 詳細なデバッグログ（[debug]で始まる行など）を出力させる設定にする
+    "verbose": True,
+    # ログの出力先を定義した logger オブジェクトに設定する
+    "logger": logger,
     # URLでない文字列が入力された場合はYouTube検索を実行する
     "default_search": "ytsearch",
     # IPv4およびIPv6を自動で選択してバインドするIPアドレス
