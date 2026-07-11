@@ -131,6 +131,22 @@ if exist "youtube_cookie.txt" (
 ) else (
     echo [INFO] No YouTube cookie file found ^(optional: place youtube_cookie.txt in project root^).
 )
+
+REM YouTube EJS: Deno / Node が無いと signature solving に失敗して無音・format エラーになる
+where deno >nul 2>&1
+if errorlevel 1 (
+    where node >nul 2>&1
+    if errorlevel 1 (
+        echo [WARN] Neither Deno nor Node.js found on PATH.
+        echo [WARN] YouTube music needs a JS runtime for yt-dlp EJS.
+        echo [WARN] Install Deno: https://docs.deno.com/runtime/getting_started/installation/
+        echo [WARN] Or Node.js 22+: https://nodejs.org/
+    ) else (
+        echo [INFO] Node.js found — yt-dlp will use it for YouTube EJS.
+    )
+) else (
+    echo [INFO] Deno found — yt-dlp will use it for YouTube EJS ^(recommended^).
+)
 echo.
 
 REM MOMOKAの起動

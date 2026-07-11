@@ -16,6 +16,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from MOMOKA.media_downloader.error.errors import YTDLPExceptionHandler
+from MOMOKA.music.plugins.ytdlp_wrapper import apply_youtube_ejs_opts
 
 # --- 設定項目 ---
 CLIENT_SECRETS_FILE = 'client_secrets.json'
@@ -121,14 +122,14 @@ class VideoFormatSelect(discord.ui.Select):
         format_id = self.values[0]
         video_title = self.info.get('title', 'video')
         base_uuid = str(uuid.uuid4())
-        ydl_opts = {
+        ydl_opts = apply_youtube_ejs_opts({
             'format': f"{format_id}+bestaudio[acodec^=mp4a]/bestvideo+bestaudio",
             'outtmpl': os.path.join(DOWNLOAD_DIR, f"{base_uuid}.%(ext)s"),
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
             'noprogress': True,
-        }
+        })
         downloaded_file_path = None
         try:
             def download_sync():
@@ -216,14 +217,14 @@ class YtdlpGdriveCog(commands.Cog):
         await interaction.response.defer(thinking=True)
         unique_id = uuid.uuid4()
         output_path = os.path.join(DOWNLOAD_DIR, f"{unique_id}.{audio_format}")
-        ydl_opts = {
-            'format': 'bestaudio/best',
+        ydl_opts = apply_youtube_ejs_opts({
+            'format': 'bestaudio*/best*',
             'outtmpl': os.path.join(DOWNLOAD_DIR, f"{unique_id}.%(ext)s"),
             'postprocessors': [
                 {'key': 'FFmpegExtractAudio', 'preferredcodec': audio_format, 'preferredquality': '192'}],
             'noplaylist': True, 'default_search': 'ytsearch', 'quiet': True, 'no_warnings': True,
             'noprogress': True,
-        }
+        })
 
         temp_original_file_path = None
         message = None
@@ -284,7 +285,9 @@ class YtdlpGdriveCog(commands.Cog):
             return
         await interaction.response.defer(thinking=True)
         try:
-            ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'noplaylist': True, 'noprogress': True}
+            ydl_opts = apply_youtube_ejs_opts(
+                {'quiet': True, 'default_search': 'ytsearch', 'noplaylist': True, 'noprogress': True}
+            )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, query, download=False)

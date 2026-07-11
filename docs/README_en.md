@@ -634,6 +634,7 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 2. Check audio file permissions
 3. Check if FFmpeg is installed (if yt-dlp uses it)
 4. Place a Netscape-format cookie file as `youtube_cookie.txt` in the project root (or set `music.youtube_cookie_file` in `config.yaml`). Age-restricted / bot-check videos need this; FFmpeg also receives Cookie headers from yt-dlp.
+5. **YouTube EJS (required):** Install **Deno (recommended)** or **Node.js 22+** on PATH so yt-dlp can solve JS challenges. Also run `pip install -U "yt-dlp[default]"` for `yt-dlp-ejs`. Without these you get `Signature solving failed` / `Only images are available`. See https://github.com/yt-dlp/yt-dlp/wiki/EJS
 
 ### Image generation doesn't work
 
