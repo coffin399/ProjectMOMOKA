@@ -221,10 +221,6 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
     if YOUTUBE_COOKIE_PATH.exists():
         # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
         opts_for_ensure["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
-    else:
-        # クッキーファイルが無い場合はFirefoxブラウザから自動的にクッキーをインポートする
-        # Chromiumの暗号化制限を回避し、かつ起動中のロックを防ぐため、Firefoxに固定する
-        opts_for_ensure["cookiesfrombrowser"] = ("firefox",)
     # 単一の動画情報のみを正確に取得するためのパラメータで辞書を更新する
     opts_for_ensure.update({
         # プレイリスト展開を無効化する
@@ -237,29 +233,49 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
 
     # yt-dlp をスレッド上で同期実行してストリーム情報とヘッダーを取得するローカル関数を定義する
     def _run_extract_single_info():
-        # コンテキストマネージャで yt-dlp インスタンスを初期化する
-        with yt_dlp.YoutubeDL(opts_for_ensure) as ytdl:
-            # 指定されたURLから最新の動画メタデータを抽出する（ダウンロードはスキップ）
-            info = ytdl.extract_info(track.url, download=False)
-            # 抽出した情報（info）が None であるか判定する
-            # ignoreerrors=True の設定により、情報抽出失敗時に例外ではなく None が返されるため、
-            # 後続の get メソッド呼び出しで AttributeError が発生するのを防ぐ目的
-            if info is None:
-                # 取得失敗を示す RuntimeError を明示的に送出する
-                raise RuntimeError(f"ストリーム情報の抽出に失敗しました（動画が非公開、または無効なフォーマットです）。URL: {track.url}")
-            # 抽出結果がプレイリスト形式か判定し、プレイリストの場合は最初のエントリ、それ以外はinfo自体を選択する
-            # _type が playlist であり、かつ entries リストが存在する場合のみ最初のエントリを対象とする
-            entry_to_use = info.get("entries")[0] if info.get("_type") == "playlist" and info.get("entries") else info
-            # 選択したエントリ（entry_to_use）が None であるか判定する
-            # プレイリストが空の場合などに、後続の Track オブジェクト変換でエラーになるのを防ぐ目的
-            if entry_to_use is None:
-                # エントリが取得できないことを示す RuntimeError を明示的に送出する
-                raise RuntimeError(f"プレイリスト内の有効な動画エントリが見つかりませんでした。URL: {track.url}")
+        # クッキーインポート設定を含めた一時オプションで処理を試みる
+        try:
+            # コンテキストマネージャで yt-dlp インスタンスを初期化する
+            with yt_dlp.YoutubeDL(opts_for_ensure) as ytdl:
+                # 指定されたURLから最新の動画メタデータを抽出する（ダウンロードはスキップ）
+                info = ytdl.extract_info(track.url, download=False)
+        except Exception as e:
+            # クッキーの読み込み失敗などが発生した場合に備える
+            # cookiesfrombrowser 設定が存在する場合のみフォールバックを実行する
+            if "cookiesfrombrowser" in opts_for_ensure:
+                # クッキー読み込みエラーを検知してコンソールに警告を表示する
+                print(f"[ytdlp_wrapper Warning] クッキー自動インポートに失敗しました。クッキーなしで再試行します: {e}")
+                # オプションのコピーを作成してクッキー設定を削除する
+                fallback_opts = opts_for_ensure.copy()
+                # クッキーインポートのオプションを安全に削除する
+                fallback_opts.pop("cookiesfrombrowser", None)
+                # 再度 yt-dlp をクッキーなしの状態で初期化する
+                with yt_dlp.YoutubeDL(fallback_opts) as ytdl:
+                    # 指定されたURLから最新の動画メタデータを抽出する（ダウンロードはスキップ）
+                    info = ytdl.extract_info(track.url, download=False)
+            else:
+                # クッキー設定がないか再試行でも解決しなかった場合は例外をそのまま送出する
+                raise
 
-            # 抽出したメタデータから一時的なTrackオブジェクトを構築する
-            temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
-            # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報をタプルで返す
-            return temp_track.stream_url, temp_track.http_headers, temp_track.thumbnail, temp_track.uploader
+        # 抽出した情報（info）が None であるか判定する
+        # ignoreerrors=True の設定により、情報抽出失敗時に例外ではなく None が返されるため、
+        # 後続の get メソッド呼び出しで AttributeError が発生するのを防ぐ目的
+        if info is None:
+            # 取得失敗を示す RuntimeError を明示的に送出する
+            raise RuntimeError(f"ストリーム情報の抽出に失敗しました（動画が非公開、または無効なフォーマットです）。URL: {track.url}")
+        # 抽出結果がプレイリスト形式か判定し、プレイリストの場合は最初のエントリ、それ以外はinfo自体を選択する
+        # _type が playlist であり、かつ entries リストが存在する場合のみ最初のエントリを対象とする
+        entry_to_use = info.get("entries")[0] if info.get("_type") == "playlist" and info.get("entries") else info
+        # 選択したエントリ（entry_to_use）が None であるか判定する
+        # プレイリストが空の場合などに、後続の Track オブジェクト変換でエラーになるのを防ぐ目的
+        if entry_to_use is None:
+            # エントリが取得できないことを示す RuntimeError を明示的に送出する
+            raise RuntimeError(f"プレイリスト内の有効な動画エントリが見つかりませんでした。URL: {track.url}")
+
+        # 抽出したメタデータから一時的なTrackオブジェクトを構築する
+        temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
+        # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報をタプルで返す
+        return temp_track.stream_url, temp_track.http_headers, temp_track.thumbnail, temp_track.uploader
 
     try:
         # 同期実行のyt-dlp抽出処理を非同期イベントループのバックグラウンドスレッドプールで実行する
@@ -333,10 +349,6 @@ async def extract(
         if YOUTUBE_COOKIE_PATH.exists():
             # クッキーファイルをオプションに設定して年齢制限等の認証を通過させる
             ytdl_final_opts["cookiefile"] = str(YOUTUBE_COOKIE_PATH)
-        else:
-            # クッキーファイルが無い場合はFirefoxブラウザから自動的にクッキーをインポートする
-            # Chromiumの暗号化制限を回避し、かつ起動中のロックを防ぐため、Firefoxに固定する
-            ytdl_final_opts["cookiesfrombrowser"] = ("firefox",)
         # ストリーミング再生のため、直接のファイル全体のダウンロード処理はスキップする
         ytdl_final_opts["skip_download"] = True
         # プレイリストURLが指定された場合も中身を展開して処理する
@@ -375,9 +387,40 @@ async def extract(
             print(f"[ytdlp_wrapper Info] 情報抽出失敗 (ExtractorError): {e_ext} (Query: {query})")
             # extracted_info は None のまま
         except Exception as e_gen:  # その他の予期せぬyt-dlpエラー
-            # loggerオブジェクトを使用してスタックトレースを含む詳細なエラーを出力する
-            logger.error(f"[ytdlp_wrapper Error] yt-dlp実行中に予期せぬエラー: {e_gen} (Query: {query})", exc_info=True)
-            # extracted_info は None のまま
+            # クッキーの読み込み失敗などが発生した場合に備える
+            # cookiesfrombrowser 設定が存在する場合のみフォールバックを実行する
+            if "cookiesfrombrowser" in ytdl_final_opts:
+                # クッキー読み込みエラーを検知してコンソールに警告を表示する
+                print(f"[ytdlp_wrapper Warning] クッキー自動インポートに失敗しました。クッキーなしで再試行します: {e_gen}")
+                # オプションのコピーを作成してクッキー設定を削除する
+                fallback_opts = ytdl_final_opts.copy()
+                # クッキーインポートのオプションを安全に削除する
+                fallback_opts.pop("cookiesfrombrowser", None)
+                try:
+                    # 再度 yt-dlp をクッキーなしの状態で初期化する
+                    with yt_dlp.YoutubeDL(fallback_opts) as ytdl_fallback:
+                        # extract_info を実行して結果を保存する
+                        info_result_fallback = ytdl_fallback.extract_info(query, download=perform_download_for_nico)
+                        # 抽出成功した結果がある場合のみ後処理を実行する
+                        if info_result_fallback:
+                            if perform_download_for_nico:
+                                if info_result_fallback.get("entries"):
+                                    for entry in info_result_fallback["entries"]:
+                                        if entry: _inject_local_path_nico(entry, ytdl_fallback)
+                                else:
+                                    _inject_local_path_nico(info_result_fallback, ytdl_fallback)
+                                try:
+                                    ytdl_fallback.cookiejar.save(str(NICO_COOKIE_PATH), ignore_discard=True, ignore_expires=True)
+                                except Exception as e_cookie:
+                                    print(f"[ytdlp_wrapper Warning] ニコニコ動画のクッキー保存に失敗: {e_cookie}")
+                            # 抽出結果をクロージャ変数に保存する
+                            extracted_info = info_result_fallback
+                except Exception as e_fallback:
+                    # フォールバック後も失敗した場合はエラーログを記録する
+                    logger.error(f"[ytdlp_wrapper Error] クッキーなしの再試行中にエラーが発生しました: {e_fallback}", exc_info=True)
+            else:
+                # クッキー設定がないか再試行でも解決しなかった場合はエラーログを記録する
+                logger.error(f"[ytdlp_wrapper Error] yt-dlp実行中に予期せぬエラー: {e_gen} (Query: {query})", exc_info=True)
 
     await loop.run_in_executor(None, _run_yt_dlp_extraction)
 
