@@ -718,9 +718,7 @@ class MusicCog(commands.Cog, name="music_cog"):
 
             # 最後のアクティブなテキストチャンネルIDが存在し、かつシーク操作ではないか判定する
             if state.last_text_channel_id and not is_seek_operation:
-                # 再生対象曲の情報を用いて Now Playing 用の Embed を構築する
-                embed = self._create_now_playing_embed(state, track_to_play)
-                # 再生コントロール用ボタン（View）を初期化する
+                # 再生コントロール用と一体型UIをアタッチした LayoutView オブジェクトを構築する
                 view = MusicControllerView(self, guild_id)
                 # 送信先のチャンネルオブジェクトをボットのキャッシュ等から取得する
                 channel = self.bot.get_channel(state.last_text_channel_id)
@@ -729,13 +727,13 @@ class MusicCog(commands.Cog, name="music_cog"):
                     try:
                         # 編集対象のメッセージ (play_msg) が渡されているか判定する
                         if play_msg:
-                            # 既存メッセージのテキストを空にし、Embedとボタンをアタッチして編集する
-                            await play_msg.edit(content=None, embed=embed, view=view)
+                            # 既存の Embed をクリアし、V2レイアウト（LayoutView）に更新して編集する
+                            await play_msg.edit(content=None, embed=None, view=view)
                             # 編集したメッセージを最新の Now Playing メッセージとして保存する
                             state.last_now_playing_message = play_msg
                         else:
-                            # 新規メッセージとして Embed とボタンをアタッチして送信し、保存する
-                            state.last_now_playing_message = await channel.send(embed=embed, view=view)
+                            # 新規メッセージとして V2レイアウトのみを送信し、保存する
+                            state.last_now_playing_message = await channel.send(view=view)
                     # 送信または編集処理中に例外が発生した場合のハンドリング
                     except Exception as e:
                         # 送信失敗エラーをログに記録する
@@ -1310,13 +1308,11 @@ class MusicCog(commands.Cog, name="music_cog"):
             # 古いメッセージへの参照を初期化する
             state.last_now_playing_message = None
 
-        # 統一されたレイアウトの Now Playing 用 Embed オブジェクトを構築する
-        embed = self._create_now_playing_embed(state, state.current_track)
-        # 操作用ボタンを付与した View オブジェクトを構築する
+        # 一体型UIが統合された LayoutView オブジェクトを構築する
         view = MusicControllerView(self, ctx.guild.id)
         
-        # 新しい Now Playing Embed と View（ボタン）を送信する
-        msg = await self._send_ctx_message(ctx, embed=embed, view=view)
+        # 新しい Now Playing リッチUIを送信する（embedは指定しない）
+        msg = await self._send_ctx_message(ctx, view=view)
         # 送信が成功してメッセージオブジェクトが返ってきたか判定する
         if msg:
             # 送信したメッセージオブジェクトを最新の Now Playing メッセージとして保存する
@@ -1377,37 +1373,27 @@ class MusicCog(commands.Cog, name="music_cog"):
         return embed
 
     async def _update_now_playing_message_ui(self, guild_id: int):
+        # ギルドの再生状態オブジェクトを取得する
         state = self._get_guild_state(guild_id)
+        # 再生状態、または直前の再生中メッセージが存在しない場合は処理を中断する
         if not state or not state.last_now_playing_message:
-            return
-            
-        if not state.current_track:
-            try:
-                finished_embed = discord.Embed(
-                    title="⏹️ Playback Stopped",
-                    description="Playback was stopped by the user.",
-                    color=discord.Color.light_grey()
-                )
-                disabled_view = discord.ui.View()
-                for item in ["Pause", "Skip", "Stop"]:
-                    btn = discord.ui.Button(
-                        style=discord.ButtonStyle.secondary,
-                        label=item,
-                        disabled=True
-                    )
-                    disabled_view.add_item(btn)
-                await state.last_now_playing_message.edit(embed=finished_embed, view=disabled_view)
-            except Exception:
-                pass
-            state.last_now_playing_message = None
+            # 早期リターン
             return
 
         try:
-            embed = self._create_now_playing_embed(state, state.current_track)
+            # 最新の再生状態を元に一体型UI（LayoutView）を新規構築する
             view = MusicControllerView(self, guild_id)
-            await state.last_now_playing_message.edit(embed=embed, view=view)
-        except Exception:
-            pass
+            # 古いメッセージの Embed をクリアしつつ、新しい V2レイアウトでメッセージを上書き編集する
+            await state.last_now_playing_message.edit(embed=None, view=view)
+        # 編集処理中に例外が発生した場合のハンドリング
+        except Exception as e:
+            # エラーログを出力する
+            logger.error(f"Failed to update now playing message UI: {e}")
+
+        # 再生中の曲がなくなっている（再生が終了または停止している）か判定する
+        if not state.current_track:
+            # メッセージの参照をクリアして、次の再生に備える
+            state.last_now_playing_message = None
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         if total <= 0:
@@ -1624,124 +1610,284 @@ class MusicCog(commands.Cog, name="music_cog"):
     @reload_music_cog.error
     async def reload_music_cog_error(self, ctx: commands.Context, error: commands.CommandError):
         await self.exception_handler.handle_generic_command_error(ctx, error)
-class MusicControllerView(discord.ui.View):
+class MusicControllerView(discord.ui.LayoutView):
     def __init__(self, cog: MusicCog, guild_id: int):
+        # タイムアウトなしで初期化する
         super().__init__(timeout=None)
+        # 親のMusicCogインスタンスを保持する
         self.cog = cog
+        # 対象のギルドIDを保持する
         self.guild_id = guild_id
-        
+        # UI（V2コンポーネント）の構築処理を実行する
+        self.rebuild_ui()
+
+    def rebuild_ui(self):
+        # 既存のビューアイテムをすべてクリアする
+        self.clear_items()
+
+        # ギルドの再生状態オブジェクトを取得する
         state = self.cog._get_guild_state(self.guild_id)
-        is_paused = state.is_paused if state else False
-        
+        # 再生状態、または再生中のトラックが存在しないか判定する
+        if not state or not state.current_track:
+            # グレーのアクセントカラーでコンテナを生成する
+            container = discord.ui.Container(accent_color=discord.Color.light_grey())
+            # 停止メッセージのテキストセクションを作成する
+            stop_sec = discord.ui.Section(
+                discord.ui.TextDisplay("⏹️ **Playback Stopped**\nPlayback was stopped or the queue has finished.")
+            )
+            # コンテナに停止メッセージセクションを追加する
+            container.add_item(stop_sec)
+
+            # 無効化されたボタンを配置するアクション行を作成する
+            action_row = discord.ui.ActionRow()
+            # 一時停止ボタンを無効状態で追加する
+            action_row.add_item(discord.ui.Button(label="⏸️ Pause", style=discord.ButtonStyle.secondary, disabled=True))
+            # スキップボタンを無効状態で追加する
+            action_row.add_item(discord.ui.Button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, disabled=True))
+            # 停止ボタンを無効状態で追加する
+            action_row.add_item(discord.ui.Button(label="⏹️ Stop", style=discord.ButtonStyle.secondary, disabled=True))
+            # コンテナにアクション行を追加する
+            container.add_item(action_row)
+
+            # ビュー自体にコンテナを追加して完了する
+            self.add_item(container)
+            # 処理を終了する
+            return
+
+        # 再生中のトラック情報を取得する
+        track = state.current_track
+        # 一時停止状態であるか取得する
+        is_paused = state.is_paused
+
+        # 再起アイコンと再生ステータスの文言を一時停止状態に合わせて決定する
+        status_icon = "⏸️" if is_paused else "▶️"
+        # ステータス文字列を設定する
+        status_text = "Paused" if is_paused else "Playing"
+
+        # インディゴカラーのアクセント色でV2コンテナを初期化する
+        container = discord.ui.Container(accent_color=discord.Color.from_rgb(99, 102, 241))
+
+        # サムネイル表示用の変数を初期化する
+        accessory = None
+        # サムネイル画像URLが有効な文字列であるか判定する
+        if track.thumbnail and track.thumbnail.strip() and track.thumbnail != "None":
+            # サムネイル画像をV2コンポーネントとして生成する
+            accessory = discord.ui.Thumbnail(track.thumbnail)
+
+        # 曲名タイトルとステータス、およびサムネイル画像を含む Section を作成する
+        title_sec = discord.ui.Section(
+            discord.ui.TextDisplay(f"### {status_icon} Now {status_text}\n**[{track.title}]({track.url})**"),
+            accessory=accessory
+        )
+        # コンテナにタイトルセクションを追加する
+        container.add_item(title_sec)
+
+        # 現在の再生位置（秒）を取得する
+        current_pos = state.get_current_position()
+        # 進行状況バー（テキストアート）を生成する
+        progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
+        # 再生時間と総再生時間の文字列フォーマットを生成する
+        duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
+        # 進行状況用の Section を作成する
+        progress_sec = discord.ui.Section(
+            discord.ui.TextDisplay(f"**Progress**\n{progress_bar}\n{duration_str}")
+        )
+        # コンテナに進行状況セクションを追加する
+        container.add_item(progress_sec)
+
+        # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
+        uploader_val = track.uploader if track.uploader else "Unknown"
+        # リクエストユーザーのメンション文字列を設定する
+        requester_mention = f"<@{track.requester_id}>" if track.requester_id else "Unknown"
+        # 残りのキューの数を取得する
+        remaining = state.queue.qsize()
+
+        # 詳細メタデータ用のテキスト文字列を構築する
+        info_text = (
+            f"**Channel:** {uploader_val}  |  **Requested By:** {requester_mention}\n"
+            f"**Loop Mode:** `{state.loop_mode.name.lower()}`  |  **Queue:** {remaining} songs"
+        )
+        # メタデータ用の Section を作成する
+        info_sec = discord.ui.Section(
+            discord.ui.TextDisplay(info_text)
+        )
+        # コンテナにメタデータセクションを追加する
+        container.add_item(info_sec)
+
+        # 一時停止/再生ボタンを初期化する
         self.pause_resume_btn = discord.ui.Button(
+            # 一時停止中なら緑色、再生中ならグレーでボタンのカラーを設定する
             style=discord.ButtonStyle.success if is_paused else discord.ButtonStyle.secondary,
+            # 一時停止中なら「再開」、再生中なら「一時停止」でラベルを設定する
             label="▶️ Resume" if is_paused else "⏸️ Pause",
+            # カスタムIDを設定する
             custom_id=f"music_pause_resume_{self.guild_id}"
         )
+        # コールバックメソッドを紐付ける
         self.pause_resume_btn.callback = self.pause_resume_callback
-        self.add_item(self.pause_resume_btn)
-        
+
+        # スキップボタンをプライマリカラーで初期化する
         self.skip_btn = discord.ui.Button(
             style=discord.ButtonStyle.primary,
             label="⏭️ Skip",
             custom_id=f"music_skip_{self.guild_id}"
         )
+        # コールバックメソッドを紐付ける
         self.skip_btn.callback = self.skip_callback
-        self.add_item(self.skip_btn)
-        
+
+        # 停止ボタンをレッドカラーで初期化する
         self.stop_btn = discord.ui.Button(
             style=discord.ButtonStyle.danger,
             label="⏹️ Stop",
             custom_id=f"music_stop_{self.guild_id}"
         )
+        # コールバックメソッドを紐付ける
         self.stop_btn.callback = self.stop_callback
-        self.add_item(self.stop_btn)
+
+        # アクション行（ボタン配置用）を作成する
+        action_row = discord.ui.ActionRow()
+        # ボタンを追加する
+        action_row.add_item(self.pause_resume_btn)
+        # ボタンを追加する
+        action_row.add_item(self.skip_btn)
+        # ボタンを追加する
+        action_row.add_item(self.stop_btn)
+        # コンテナにボタンを格納したアクション行を追加する
+        container.add_item(action_row)
+
+        # ビューに構築したコンテナをアタッチする
+        self.add_item(container)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # ギルドの再生状態オブジェクトを取得する
         state = self.cog._get_guild_state(self.guild_id)
+        # 再生状態、またはボイス接続が存在しないか判定する
         if not state or not state.voice_client:
+            # エフェメラルエラーを送信する
             await interaction.response.send_message("The bot is not in a voice channel.", ephemeral=True)
+            # チェック失敗
             return False
-            
+
+        # 操作を実行したユーザーのボイス接続状態を取得する
         user_voice = interaction.user.voice
+        # ユーザーがボイスチャンネルに入っていない、またはボットと異なるチャンネルか判定する
         if not user_voice or not user_voice.channel or user_voice.channel != state.voice_client.channel:
+            # エフェメラルエラーを送信する
             await interaction.response.send_message("You must be in the same voice channel as the bot to use the controls.", ephemeral=True)
+            # チェック失敗
             return False
+        # チェックパス
         return True
 
     async def pause_resume_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
         await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
         state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
         if not state:
+            # 処理終了
             return
-            
+
+        # 現在一時停止中であるか判定する
         if state.is_paused:
+            # ボイス接続が存在するか判定する
             if state.voice_client:
+                # 音声再生を再開する
                 state.voice_client.resume()
+            # 一時停止フラグをFalseに設定する
             state.is_paused = False
+            # 一時停止開始のタイムスタンプが存在するか判定する
             if state.paused_at and state.playback_start_time:
+                # 一時停止されていた実経過時間を算出する
                 pause_duration = time.time() - state.paused_at
+                # 総再生開始時刻に一時停止時間を加算して進行位置を補正する
                 state.playback_start_time += pause_duration
+            # 一時停止開始時刻を初期化する
             state.paused_at = None
+            # 再開ログを記録する
             logger.info(f"Guild {self.guild_id}: playback resumed via UI button")
         else:
+            # ボイス接続が存在するか判定する
             if state.voice_client:
+                # 音声再生を一時停止する
                 state.voice_client.pause()
+            # 一時停止フラグをTrueに設定する
             state.is_paused = True
+            # 現在の時刻を一時停止開始時刻として記録する
             state.paused_at = time.time()
+            # 一時停止ログを記録する
             logger.info(f"Guild {self.guild_id}: playback paused via UI button")
-            
-        embed = self.cog._create_now_playing_embed(state, state.current_track)
-        new_view = MusicControllerView(self.cog, self.guild_id)
-        await interaction.message.edit(embed=embed, view=new_view)
+
+        # 変更された再生状態に基づいてUIを再構築する
+        self.rebuild_ui()
+        # メッセージ上の表示をクリア（embed=None）しつつ、最新 of V2レイアウトで更新する
+        await interaction.message.edit(embed=None, view=self)
 
     async def skip_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
         await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
         state = self.cog._get_guild_state(self.guild_id)
+        # 再生状態、または再生中のトラックが存在しない場合は終了する
         if not state or not state.current_track:
+            # 処理終了
             return
-            
+
+        # スキップ開始をログに記録する
         logger.info(f"Guild {self.guild_id}: skipping song via UI button")
+        # オーディオミキサーが存在するか判定する
         if state.mixer:
+            # ミキサーから対象の音源を削除してスキップをトリガーする
             await state.mixer.remove_source('music')
+        # ミキサーがなく、ボイスクライアントが直接再生中であるか判定する
         elif state.voice_client and state.voice_client.is_playing():
+            # 再生を停止してスキップをトリガーする
             state.voice_client.stop()
 
     async def stop_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
         await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
         state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
         if not state:
+            # 処理終了
             return
-            
+
+        # 停止処理の開始をログに記録する
         logger.info(f"Guild {self.guild_id}: stopping playback via UI button")
+        # ループモードをOFFに設定する
         state.loop_mode = LoopMode.OFF
+        # キューの内容をすべて消去する
         await state.clear_queue()
+        # オーディオミキサーが存在するか判定する
         if state.mixer:
+            # ミキサーを完全に停止する
             state.mixer.stop()
+            # ミキサーオブジェクトを破棄する
             state.mixer = None
+        # ボイスクライアントが直接再生中であるか判定する
         if state.voice_client and state.voice_client.is_playing():
+            # 再生を停止する
             state.voice_client.stop()
+        # 再生中フラグを初期化する
         state.is_playing = False
+        # 一時停止フラグを初期化する
         state.is_paused = False
+        # 再生中トラック情報を初期化する
         state.current_track = None
+        # 再生時間計測情報を初期化する
         state.reset_playback_tracking()
-        
-        finished_embed = discord.Embed(
-            title="⏹️ Playback Stopped",
-            description="Playback was stopped by the user.",
-            color=discord.Color.light_grey()
-        )
-        disabled_view = discord.ui.View()
-        for item in ["Pause", "Skip", "Stop"]:
-            btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label=item,
-                disabled=True
-            )
-            disabled_view.add_item(btn)
-        await interaction.message.edit(embed=finished_embed, view=disabled_view)
-        
+
+        # 停止した状態に基づいてUIを再構築する
+        self.rebuild_ui()
+        # メッセージ上の表示をクリアしつつ、停止状態のV2レイアウト（ボタン無効）に上書き更新する
+        await interaction.message.edit(embed=None, view=self)
+
+        # 直前の Now Playing メッセージへの参照が存在するか判定する
         if state.last_now_playing_message:
+            # 参照を初期化する
             state.last_now_playing_message = None
 
 
