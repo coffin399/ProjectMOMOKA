@@ -224,18 +224,22 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
 
             # 抽出したメタデータから一時的なTrackオブジェクトを構築する
             temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
-            # 再生に必要なストリームURLとHTTPヘッダー情報をタプルで返す
-            return temp_track.stream_url, temp_track.http_headers
+            # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報をタプルで返す
+            return temp_track.stream_url, temp_track.http_headers, temp_track.thumbnail, temp_track.uploader
 
     try:
         # 同期実行のyt-dlp抽出処理を非同期イベントループのバックグラウンドスレッドプールで実行する
-        new_stream_url, new_http_headers = await loop.run_in_executor(None, _run_extract_single_info)
+        new_stream_url, new_http_headers, new_thumbnail, new_uploader = await loop.run_in_executor(None, _run_extract_single_info)
         # 取得した新しいストリームURLが有効か判定する
         if new_stream_url:
             # トラックオブジェクトのストリームURLを最新のものに更新する
             track.stream_url = new_stream_url
             # トラックオブジェクトのHTTPヘッダー情報を最新のものに更新する
             track.http_headers = new_http_headers
+            # トラックオブジェクトのサムネイル画像を更新する
+            track.thumbnail = new_thumbnail
+            # トラックオブジェクトのアップローダー情報を更新する
+            track.uploader = new_uploader
         else:
             # 取得失敗時は警告メッセージをコンソールに出力する
             print(f"[ytdlp_wrapper Warning] ストリームURLの再取得に失敗: {track.title} (URL: {track.url})")
