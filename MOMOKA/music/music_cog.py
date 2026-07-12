@@ -263,6 +263,48 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.guild_states.clear()
         logger.info("MusicCog unloaded.")
 
+    async def notify_admin_restart(self) -> None:
+        """再起動前に Now Playing UI を管理者再起動メッセージへ切り替える。"""
+        # 共有の再起動文言を遅延インポートする（循環参照回避）
+        from MOMOKA.utilities.restart_notice import RESTART_NOTICE_MUSIC
+        # Now Playing があるギルドだけを対象にする
+        target_guild_ids = [
+            guild_id
+            for guild_id, state in list(self.guild_states.items())
+            if state.last_now_playing_message is not None
+        ]
+        # 対象が無ければ何もしない
+        if not target_guild_ids:
+            # 早期リターン
+            return
+        # ギルドごとに UI を再起動表示へ更新する
+        for guild_id in target_guild_ids:
+            # 最新のギルド状態を取得する
+            state = self._get_guild_state(guild_id)
+            # 状態が消えていればスキップする
+            if not state:
+                # 次のギルドへ
+                continue
+            try:
+                # プログレス更新を止めて編集競合を避ける
+                state.stop_progress_updater()
+                # LayoutView の終了表示分岐に入るため再生中トラックをクリアする
+                state.current_track = None
+                # 再生中フラグも下ろす
+                state.is_playing = False
+                # Now Playing を再起動文言付きグレーアウト UI に更新する
+                await self._update_now_playing_message_ui(
+                    guild_id,
+                    finished_message=RESTART_NOTICE_MUSIC,
+                )
+            except Exception as e:
+                # 1ギルドの失敗で他ギルド通知を止めない
+                logger.warning(
+                    "Guild %s: failed to notify admin restart on Now Playing: %s",
+                    guild_id,
+                    e,
+                )
+
     @tasks.loop(minutes=5)
     async def cleanup_task_loop(self):
         try:

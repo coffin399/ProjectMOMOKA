@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands, tasks
 import yaml
@@ -15,6 +16,8 @@ import ctypes
 import platform
 from io import StringIO
 import aiohttp
+
+from MOMOKA.utilities.restart_notice import SHUTDOWN_USER_ID
 
 # Python 3.11 未満では依存パッケージ（discord.py 2.7 / torch 等）の動作保証外のため起動を拒否する
 if sys.version_info < (3, 11):
@@ -197,6 +200,9 @@ from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueErr
 class Momoka(commands.Bot):
     """MOMOKA Botのメインクラス"""
 
+    # /shutdown を実行できるユーザー ID（ハードコード定数）
+    SHUTDOWN_USER_ID = SHUTDOWN_USER_ID
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = None
@@ -223,6 +229,46 @@ class Momoka(commands.Bot):
         """ユーザーが管理者かどうかをチェック"""
         admin_ids = self.config.get('admin_user_ids', [])
         return user_id in admin_ids
+
+    async def notify_active_users_of_restart(self) -> None:
+        """利用中ユーザー（音楽・LLM）へ再起動通知を送る。"""
+        # 並列通知用のコルーチン一覧
+        tasks = []
+        # 音楽 Cog を名前で取得する
+        music_cog = self.get_cog("music_cog")
+        # 通知メソッドがある場合のみキューに入れる
+        if music_cog is not None and hasattr(music_cog, "notify_admin_restart"):
+            # MusicCog の再起動通知をキューへ追加する
+            tasks.append(music_cog.notify_admin_restart())
+        # LLM Cog を名前で取得する
+        llm_cog = self.get_cog("LLM")
+        # 通知メソッドがある場合のみキューに入れる
+        if llm_cog is not None and hasattr(llm_cog, "notify_admin_restart"):
+            # LLMCog の再起動通知をキューへ追加する
+            tasks.append(llm_cog.notify_admin_restart())
+        # 対象が無ければ何もしない
+        if not tasks:
+            # 早期リターン
+            return
+        # 各 Cog の通知を並行実行し、例外は個別に収集する
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 失敗した通知だけログに残す
+        for result in results:
+            # 例外オブジェクトかどうかを判定する
+            if isinstance(result, Exception):
+                # 通知失敗を警告ログへ出す
+                logging.warning("Failed to notify active users of restart: %s", result)
+
+    async def close(self) -> None:
+        """終了前に利用中ユーザーへ通知してから接続を閉じる。"""
+        try:
+            # Ctrl+C /shutdown 共通で再起動通知を送る
+            await self.notify_active_users_of_restart()
+        except Exception as e:
+            # 通知失敗でもシャットダウン自体は継続する
+            logging.warning("notify_active_users_of_restart failed during close: %s", e)
+        # discord.py 本来のクローズ処理へ進む
+        await super().close()
 
     async def setup_hook(self):
         """Botの初期セットアップ（ログイン後、接続準備完了前）"""
@@ -263,7 +309,7 @@ class Momoka(commands.Bot):
         # ステータスローテーションの設定
         self.status_templates = self.config.get('status_rotation', [
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-07-10",
+            "prjMOMOKA Ver.2026-07-11",
         ])
         self.rotate_status.start()
 
@@ -1248,8 +1294,36 @@ if __name__ == "__main__":
 
 
     # ===============================================================
-    # ===== Cogリロードコマンド =====================================
+    # ===== シャットダウン / Cogリロードコマンド =====================
     # ===============================================================
+    @bot_instance.tree.command(
+        name="shutdown",
+        description="Shut down the bot after notifying active users (owner only).",
+    )
+    async def shutdown_command(interaction: discord.Interaction):
+        # ハードコード UID 以外は拒否する
+        if interaction.user.id != Momoka.SHUTDOWN_USER_ID:
+            # 権限不足を ephemeral で返す
+            await interaction.response.send_message(
+                "❌ You are not allowed to use this command.",
+                ephemeral=True,
+            )
+            # 処理終了
+            return
+        # シャットダウン開始を応答する
+        await interaction.response.send_message(
+            "Shutting down... Active users will be notified.",
+            ephemeral=False,
+        )
+        # 実行者をログに残す
+        logging.info(
+            "/shutdown was executed by user %s (%s)",
+            interaction.user,
+            interaction.user.id,
+        )
+        # close() 内で再起動通知してからプロセスを終了する
+        await bot_instance.close()
+
     @bot_instance.tree.command(name="reload_plana", description="🔄 Cogをリロードします（管理者専用）")
     async def reload_cog(interaction: discord.Interaction, cog_name: str = None):
         if not bot_instance.is_admin(interaction.user.id):
