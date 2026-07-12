@@ -131,9 +131,14 @@ class ThreadCreationView(discord.ui.View):
                         if text_content or image_contents:
                             user_content_parts = []
                             if text_content:
+                                # 履歴ターンには言語リマインダを付けない
                                 user_content_parts.append({
                                     "type": "text",
-                                    "text": f"{current_msg.created_at.astimezone(self.llm_cog.jst).strftime('[%H:%M]')} {text_content}"
+                                    "text": self.llm_cog._format_user_text_for_api(
+                                        current_msg.created_at.astimezone(self.llm_cog.jst).strftime('[%H:%M]'),
+                                        text_content,
+                                        mirror_language=False,
+                                    )
                                 })
                             user_content_parts.extend(image_contents)
                             messages.append({"role": "user", "content": user_content_parts})
@@ -417,17 +422,26 @@ class LLMCog(commands.Cog, name="LLM"):
         if client: self.llm_clients[model_string] = client
         return client
 
+    # 日本語 few-shot / キャラ設定より優先させる言語固定指示（config 非依存）
+    _LANGUAGE_ENFORCEMENT_BLOCK = (
+        "# Language Control (ABSOLUTE — overrides character examples)\n"
+        "- Always reply in the exact same language as the user's LATEST message.\n"
+        "- Dialogue examples are TONE/STYLE only. Never copy their language.\n"
+        "- Do NOT default to Japanese. Use Japanese only if the latest user message is Japanese.\n"
+        "- English → English. Thai → Thai. Other languages → that same language."
+    )
+
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
         """system_prompt と language_prompt を1本の system メッセージへ結合して返す。
 
         Mistral 等は複数 system を弱い扱い／無視しやすいため、
-        language_prompt は別 role ではなく同一 content 末尾へ統合する。
+        language_prompt は別 role ではなく同一 content へ統合する。
         """
         # config からシステムプロンプトテンプレートを取得する
         system_prompt_template = self.llm_config.get('system_prompt', '')
 
-        # 現在日時を JST で取得する（テンプレート置換用）
-        current_date_str = datetime.now(self.jst).strftime('%Y年%m月%d日')
+        # 日付は ISO 形式にし、システム側の日本語文字混入を避ける
+        current_date_str = datetime.now(self.jst).strftime('%Y-%m-%d')
         # 現在時刻を JST で取得する（テンプレート置換用）
         current_time_str = datetime.now(self.jst).strftime('%H:%M')
         try:
@@ -448,17 +462,42 @@ class LLMCog(commands.Cog, name="LLM"):
                 .replace('{available_commands}', '')
             )
 
-        # language_prompt があれば同一 system 末尾へ結合する（別 system role は送らない）
+        # 先頭に言語固定を置き、日本語例より先に制約を効かせる
+        system_prompt = f"{self._LANGUAGE_ENFORCEMENT_BLOCK}\n\n{system_prompt.lstrip()}"
+
+        # language_prompt があれば末尾にも結合し、few-shot より後で再強調する
         if self.language_prompt and self.language_prompt.strip():
-            # 日本語 few-shot より後に置き、言語指示の優先度を上げる
+            # config の言語指示を同一 system 末尾へ付ける
             system_prompt = f"{system_prompt.rstrip()}\n\n{self.language_prompt.strip()}"
             # 結合済みであることをログに残す
             logger.info("🌐 [LANG] Merged language_prompt into single system message")
+
+        # 末尾にもコード側の言語固定を重ね、最終指示として残す
+        system_prompt = f"{system_prompt.rstrip()}\n\n{self._LANGUAGE_ENFORCEMENT_BLOCK}"
 
         # 最終プロンプト長をログに出す
         logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         # 結合済みの単一システムプロンプトを返す
         return system_prompt
+
+    def _format_user_text_for_api(self, timestamp: str, text: str, *, mirror_language: bool = False) -> str:
+        """API 送信用のユーザー本文を組み立てる。
+
+        mirror_language=True のときだけ、最新発話の言語追従リマインダを付与する。
+        履歴側には付けず、文脈チェーンは role 履歴で維持する。
+        """
+        # 時刻プレフィックス付きの本文を先に作る
+        body = f"{timestamp} {text}"
+        # 最新ターン以外は言語リマインダを付けない
+        if not mirror_language:
+            # 履歴用はそのまま返す
+            return body
+        # 最新ユーザー発話の直後に言語追従を明示する（Mistral 対策）
+        return (
+            f"{body}\n\n"
+            "[Language: Reply in the same language as the user message above. "
+            "Do not switch to Japanese unless that message is Japanese.]"
+        )
 
     def get_tools_definition(self) -> Optional[List[Dict[str, Any]]]:
         definitions = []
@@ -540,8 +579,16 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                                                '').strip()
                     if text_content or image_contents:
                         user_content_parts = []
-                        if text_content: user_content_parts.append({"type": "text",
-                                                                    "text": f"{parent_msg.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"})
+                        if text_content:
+                            # 履歴の親メッセージにも言語リマインダは付けない
+                            user_content_parts.append({
+                                "type": "text",
+                                "text": self._format_user_text_for_api(
+                                    parent_msg.created_at.astimezone(self.jst).strftime('[%H:%M]'),
+                                    text_content,
+                                    mirror_language=False,
+                                )
+                            })
                         user_content_parts.extend(image_contents)
                         history.append({"role": "user", "content": user_content_parts})
                 else:
@@ -610,39 +657,62 @@ class LLMCog(commands.Cog, name="LLM"):
             return None
 
     async def _prepare_multimodal_content(self, message: discord.Message) -> Tuple[List[Dict[str, Any]], str]:
+        """画像は返信チェーンから収集し、本文は対象メッセージのみ返す。
+
+        文脈は `_collect_conversation_history` 側の role 履歴で維持する。
+        本文を親メッセージと結合すると、最新入力に過去言語が混ざるため分離する。
+        """
+        # 画像収集用の走査リストと訪問済み ID を初期化する
         image_inputs, processed_urls, messages_to_scan, visited_ids, current_msg = [], set(), [], set(), message
+        # 返信チェーンを最大5件まで遡って画像ソースを集める
         for i in range(5):
+            # 無効・循環参照なら走査を止める
             if not current_msg or current_msg.id in visited_ids: break
+            # 削除済み参照はこれ以上辿れない
             if isinstance(current_msg, discord.DeletedReferencedMessage): break
+            # 画像スキャン対象に現在メッセージを追加する
             messages_to_scan.append(current_msg)
+            # 同一メッセージの再訪を防ぐ
             visited_ids.add(current_msg.id)
+            # 親メッセージがあれば続行する
             if current_msg.reference and current_msg.reference.message_id:
                 try:
+                    # resolved があれば使い、無ければ fetch する
                     current_msg = current_msg.reference.resolved or await message.channel.fetch_message(
                         current_msg.reference.message_id)
                 except (discord.NotFound, discord.HTTPException):
+                    # 親が取れなければチェーン終端とする
                     break
             else:
+                # 参照が無ければ終端とする
                 break
-        source_urls, text_parts = [], []
+
+        # 画像 URL だけチェーン全体から集める（本文は混ぜない）
+        source_urls = []
         for msg in reversed(messages_to_scan):
-            if msg.author != self.bot.user:
-                if text_content_part := IMAGE_URL_PATTERN.sub('', msg.content).strip(): text_parts.append(
-                    text_content_part)
+            # 本文中の直リンク画像を拾う
             for url in IMAGE_URL_PATTERN.findall(msg.content):
                 if url not in processed_urls: source_urls.append(url); processed_urls.add(url)
+            # 添付画像を拾う
             for attachment in msg.attachments:
                 if attachment.content_type and attachment.content_type.startswith(
                     'image/') and attachment.url not in processed_urls: source_urls.append(
                     attachment.url); processed_urls.add(attachment.url)
+            # embed の image / thumbnail を拾う
             for embed in msg.embeds:
                 if embed.image and embed.image.url and embed.image.url not in processed_urls: source_urls.append(
                     embed.image.url); processed_urls.add(embed.image.url)
                 if embed.thumbnail and embed.thumbnail.url and embed.thumbnail.url not in processed_urls: source_urls.append(
                     embed.thumbnail.url); processed_urls.add(embed.thumbnail.url)
+
+        # 本文は「引数の message」だけを使う（親テキストは履歴 role に任せる）
+        text_content = IMAGE_URL_PATTERN.sub('', message.content).strip()
+
+        # 設定上限まで画像をダウンロードして multimodal 化する
         max_images = self.llm_config.get('max_images', 1)
         for url in source_urls[:max_images]:
             if image_data := await self._process_image_url(url): image_inputs.append(image_data)
+        # 上限超過時はチャンネルへ警告する
         if len(source_urls) > max_images:
             try:
                 await message.channel.send(self.llm_config.get('error_msg', {}).get('msg_max_image_size',
@@ -650,7 +720,8 @@ class LLMCog(commands.Cog, name="LLM"):
                     max_images=max_images), delete_after=10, silent=True)
             except discord.HTTPException:
                 pass
-        return image_inputs, "\n".join(text_parts)
+        # 画像リストと、対象メッセージ単独の本文を返す
+        return image_inputs, text_content
 
 
     @commands.Cog.listener()
@@ -711,17 +782,25 @@ class LLMCog(commands.Cog, name="LLM"):
         conversation_history = await self._collect_conversation_history(message)
         messages_for_api.extend(conversation_history)
         user_content_parts = []
-        if text_content: user_content_parts.append(
-            {"type": "text", "text": f"{message.created_at.astimezone(self.jst).strftime('[%H:%M]')} {text_content}"})
+        if text_content:
+            # 最新発話だけ言語追従リマインダを付与する（履歴は別 role で維持）
+            user_content_parts.append({
+                "type": "text",
+                "text": self._format_user_text_for_api(
+                    message.created_at.astimezone(self.jst).strftime('[%H:%M]'),
+                    text_content,
+                    mirror_language=True,
+                )
+            })
         user_content_parts.extend(image_contents)
         if image_contents: logger.debug(f"Including {len(image_contents)} image(s) in request")
         user_message_for_api = {"role": "user", "content": user_content_parts}
         messages_for_api.append(user_message_for_api)
         logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
-        # system 本文に言語指示が結合済みかをデバッグログへ出す
+        # system に言語固定が入っているかをデバッグログへ出す
         logger.debug(
             f"Messages structure: system={len(messages_for_api[0]['content'])} chars, "
-            f"lang_merged={'present' if self.language_prompt and 'CRITICAL' in messages_for_api[0]['content'] else 'absent'}"
+            f"lang_enforced={'present' if 'Language Control' in messages_for_api[0]['content'] else 'absent'}"
         )
         try:
             # スレッド作成ボタンは削除（常にFalse）
@@ -967,8 +1046,9 @@ class LLMCog(commands.Cog, name="LLM"):
                 other_messages.append(message)
         if not has_system_message: return messages, ""
         combined_system_prompt = "\n\n".join(system_prompts_content)
+        # 確認応答は英語にし、Gemini 経路でも日本語プライミングしない
         converted_messages = [{"role": "user", "content": combined_system_prompt},
-                              {"role": "assistant", "content": "承知いたしました。指示に従います。"}]
+                              {"role": "assistant", "content": "Understood. I will follow the instructions."}]
         converted_messages.extend(other_messages)
         return converted_messages, combined_system_prompt
 
@@ -1372,9 +1452,15 @@ class LLMCog(commands.Cog, name="LLM"):
                                                               interaction.user.display_name)
             # language_prompt は _prepare_system_prompt 内で既に結合済み
             messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-            # /chat の本文を時刻付き text パートとして組み立てる
-            user_content_parts = [{"type": "text",
-                                   "text": f"{interaction.created_at.astimezone(self.jst).strftime('[%H:%M]')} {message}"}]
+            # /chat も最新発話として言語追従リマインダを付与する
+            user_content_parts = [{
+                "type": "text",
+                "text": self._format_user_text_for_api(
+                    interaction.created_at.astimezone(self.jst).strftime('[%H:%M]'),
+                    message,
+                    mirror_language=True,
+                )
+            }]
             # 添付画像があれば multimodal パートへ追加する
             user_content_parts.extend(image_contents)
             # ユーザーメッセージを API 用リストへ追加する
