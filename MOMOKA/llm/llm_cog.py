@@ -167,12 +167,9 @@ class ThreadCreationView(discord.ui.View):
                     thread.id, interaction.user.id, interaction.user.display_name
                 )
                 
+                # language_prompt は _prepare_system_prompt 内で既に結合済み
                 messages_for_api = [{"role": "system", "content": system_prompt}]
-                
-                # 言語プロンプト追加
-                if self.llm_cog.language_prompt:
-                    messages_for_api.append({"role": "system", "content": self.llm_cog.language_prompt})
-                
+                # 会話履歴を system の後に続ける
                 messages_for_api.extend(messages)
                 
                 # スレッド内でLLM応答を生成
@@ -421,30 +418,46 @@ class LLMCog(commands.Cog, name="LLM"):
         return client
 
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
-        """config.yamlのsystem_promptのみを使用してシステムプロンプトを組み立てる"""
-        # config.yamlからシステムプロンプトテンプレートを取得
+        """system_prompt と language_prompt を1本の system メッセージへ結合して返す。
+
+        Mistral 等は複数 system を弱い扱い／無視しやすいため、
+        language_prompt は別 role ではなく同一 content 末尾へ統合する。
+        """
+        # config からシステムプロンプトテンプレートを取得する
         system_prompt_template = self.llm_config.get('system_prompt', '')
 
-        # 現在日時をJSTで取得
+        # 現在日時を JST で取得する（テンプレート置換用）
         current_date_str = datetime.now(self.jst).strftime('%Y年%m月%d日')
+        # 現在時刻を JST で取得する（テンプレート置換用）
         current_time_str = datetime.now(self.jst).strftime('%H:%M')
         try:
-            # テンプレート変数を置換（{available_commands} が残っていれば空文字で埋める）
+            # テンプレート変数を置換する（未使用プレースホルダは空文字）
             system_prompt = system_prompt_template.format(
                 current_date=current_date_str,
                 current_time=current_time_str,
                 available_commands=""
             )
         except (KeyError, ValueError) as e:
+            # format 失敗時は警告だけ出して手動置換へフォールバックする
             logger.warning(f"Could not format system_prompt: {e}")
-            # フォールバック: 文字列置換で対応
+            # プレースホルダを個別に置換してプロンプトを組み立てる
             system_prompt = (
                 system_prompt_template
                 .replace('{current_date}', current_date_str)
                 .replace('{current_time}', current_time_str)
                 .replace('{available_commands}', '')
             )
+
+        # language_prompt があれば同一 system 末尾へ結合する（別 system role は送らない）
+        if self.language_prompt and self.language_prompt.strip():
+            # 日本語 few-shot より後に置き、言語指示の優先度を上げる
+            system_prompt = f"{system_prompt.rstrip()}\n\n{self.language_prompt.strip()}"
+            # 結合済みであることをログに残す
+            logger.info("🌐 [LANG] Merged language_prompt into single system message")
+
+        # 最終プロンプト長をログに出す
         logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
+        # 結合済みの単一システムプロンプトを返す
         return system_prompt
 
     def get_tools_definition(self) -> Optional[List[Dict[str, Any]]]:
@@ -692,10 +705,9 @@ class LLMCog(commands.Cog, name="LLM"):
         thread_id = await self._get_conversation_thread_id(message)
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
+        # language_prompt は _prepare_system_prompt 内で既に結合済み
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        if self.language_prompt:
-            messages_for_api.append({"role": "system", "content": self.language_prompt})
-            logger.info("🌐 [LANG] Using language prompt from config")
+        # Discord 返信チェーンから会話履歴を収集する
         conversation_history = await self._collect_conversation_history(message)
         messages_for_api.extend(conversation_history)
         user_content_parts = []
@@ -706,9 +718,11 @@ class LLMCog(commands.Cog, name="LLM"):
         user_message_for_api = {"role": "user", "content": user_content_parts}
         messages_for_api.append(user_message_for_api)
         logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
+        # system 本文に言語指示が結合済みかをデバッグログへ出す
         logger.debug(
-            # FIX IS HERE
-            f"Messages structure: system={len(messages_for_api[0]['content'])} chars, lang_override={'present' if len(messages_for_api) > 1 and 'CRITICAL' in str(messages_for_api) else 'absent'}")
+            f"Messages structure: system={len(messages_for_api[0]['content'])} chars, "
+            f"lang_merged={'present' if self.language_prompt and 'CRITICAL' in messages_for_api[0]['content'] else 'absent'}"
+        )
         try:
             # スレッド作成ボタンは削除（常にFalse）
             is_first_response = False
@@ -1356,13 +1370,14 @@ class LLMCog(commands.Cog, name="LLM"):
                 f"[/chat] {interaction.guild.name if interaction.guild else 'DM'}({interaction.guild.id if interaction.guild else 0}),{interaction.user.name}({interaction.user.id})💬 [USER_INPUT] {((message[:200] + '...') if len(message) > 203 else message).replace(chr(10), ' ')}")
             system_prompt = await self._prepare_system_prompt(interaction.channel_id, interaction.user.id,
                                                               interaction.user.display_name)
+            # language_prompt は _prepare_system_prompt 内で既に結合済み
             messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+            # /chat の本文を時刻付き text パートとして組み立てる
             user_content_parts = [{"type": "text",
                                    "text": f"{interaction.created_at.astimezone(self.jst).strftime('[%H:%M]')} {message}"}]
+            # 添付画像があれば multimodal パートへ追加する
             user_content_parts.extend(image_contents)
-            if self.language_prompt:
-                messages_for_api.append({"role": "system", "content": self.language_prompt})
-                logger.info("🌐 [LANG] Using language prompt from config")
+            # ユーザーメッセージを API 用リストへ追加する
             messages_for_api.append({"role": "user", "content": user_content_parts})
             logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
             model_name = llm_client.model_name_for_api_calls

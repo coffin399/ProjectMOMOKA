@@ -303,6 +303,33 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.guild_states[guild_id].update_activity()
         return self.guild_states[guild_id]
 
+    @staticmethod
+    async def _to_durable_message(
+        message: Optional[discord.Message],
+    ) -> Optional[discord.Message]:
+        """Interaction応答メッセージをチャンネル編集可能な通常Messageへ変換する。
+
+        InteractionMessage.edit は webhook token（約15分で失効）に依存するため、
+        長期更新する Now Playing は必ず channel Message 経由で編集する。
+        """
+        # メッセージが無い場合はそのまま返す
+        if message is None:
+            # 変換対象なし
+            return None
+        try:
+            # Interaction/Webhook由来のメッセージは fetch で通常Messageに置き換える
+            # （どちらも webhook token 依存で約15分後に 50027 になる）
+            if isinstance(message, (discord.InteractionMessage, discord.WebhookMessage)):
+                # GET /channels/.../messages/... で永続編集可能なMessageを取得する
+                return await message.fetch()
+            # 既に通常Messageならそのまま使う
+            return message
+        except Exception as e:
+            # fetch失敗時は元メッセージを残し、呼び出し側でフォールバックする
+            logger.warning(f"Failed to convert interaction message to durable message: {e}")
+            # 失敗時は元オブジェクトを返す
+            return message
+
     async def _send_ctx_message(
             self,
             ctx: commands.Context,
@@ -750,6 +777,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                     try:
                         # 編集対象のメッセージ (play_msg) が渡されているか判定する
                         if play_msg:
+                            # webhook期限切れ回避のため、先にチャンネル経由Messageへ変換する
+                            play_msg = await self._to_durable_message(play_msg)
                             # 既存の Embed をクリアし、V2レイアウト（LayoutView）に更新して編集する
                             await play_msg.edit(content=None, embed=None, view=view)
                             # 編集したメッセージを最新の Now Playing メッセージとして保存する
@@ -1424,8 +1453,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         msg = await self._send_ctx_message(ctx, view=view)
         # 送信が成功してメッセージオブジェクトが返ってきたか判定する
         if msg:
-            # 送信したメッセージオブジェクトを最新の Now Playing メッセージとして保存する
-            state.last_now_playing_message = msg
+            # webhook期限切れ回避のため、チャンネル経由のMessageへ変換して保存する
+            state.last_now_playing_message = await self._to_durable_message(msg)
             # nowplaying 再表示時もプログレスバー定期更新を開始する
             self._start_progress_updater(ctx.guild.id)
 
@@ -1495,15 +1524,40 @@ class MusicCog(commands.Cog, name="music_cog"):
             # 早期リターン
             return
 
+        # 最新の再生状態を元に一体型UI（LayoutView）を新規構築する
+        view = MusicControllerView(
+            self,
+            guild_id,
+            finished_message=finished_message,
+        )
+        # 編集対象メッセージをローカル変数に保持する
+        target_message = state.last_now_playing_message
+
         try:
-            # 最新の再生状態を元に一体型UI（LayoutView）を新規構築する
-            view = MusicControllerView(
-                self,
-                guild_id,
-                finished_message=finished_message,
-            )
+            # InteractionMessageのままならチャンネル経由Messageへ変換する
+            target_message = await self._to_durable_message(target_message)
+            # 変換結果を状態へ反映する
+            state.last_now_playing_message = target_message
             # 古いメッセージの Embed をクリアしつつ、新しい V2レイアウトでメッセージを上書き編集する
-            await state.last_now_playing_message.edit(embed=None, view=view)
+            await target_message.edit(embed=None, view=view)
+        except discord.HTTPException as e:
+            # Invalid Webhook Token（50027）は期限切れInteraction応答の典型なので復旧を試みる
+            if e.code == 50027:
+                recovered = await self._recover_now_playing_message(state, view)
+                # 復旧できなければ参照を捨ててエラー連打を防ぐ
+                if not recovered:
+                    # 期限切れ参照を破棄する
+                    state.last_now_playing_message = None
+                    # プログレス更新も止めて無駄なAPI呼び出しを防ぐ
+                    state.stop_progress_updater()
+                    # 復旧失敗を警告ログに残す
+                    logger.warning(
+                        f"Guild {guild_id}: Now Playing webhook token expired; "
+                        "cleared message reference to stop update errors."
+                    )
+            else:
+                # それ以外のHTTPエラーは通常どおり記録する
+                logger.error(f"Failed to update now playing message UI: {e}")
         # 編集処理中に例外が発生した場合のハンドリング
         except Exception as e:
             # エラーログを出力する
@@ -1513,6 +1567,41 @@ class MusicCog(commands.Cog, name="music_cog"):
         if not state.current_track:
             # メッセージの参照をクリアして、次の再生に備える
             state.last_now_playing_message = None
+
+    async def _recover_now_playing_message(
+        self,
+        state: "GuildState",
+        view: "MusicControllerView",
+    ) -> bool:
+        """期限切れwebhookのNow Playingメッセージをチャンネル再送で復旧する。"""
+        # 送信先チャンネルIDが無ければ復旧不可
+        if not state.last_text_channel_id:
+            # 復旧失敗
+            return False
+        # チャンネルオブジェクトを取得する
+        channel = self.bot.get_channel(state.last_text_channel_id)
+        # テキストチャンネル以外は復旧対象外
+        if not isinstance(channel, discord.TextChannel):
+            # 復旧失敗
+            return False
+        try:
+            # 古い期限切れメッセージは削除を試みる（失敗しても続行）
+            if state.last_now_playing_message:
+                try:
+                    # 期限切れメッセージを削除する
+                    await state.last_now_playing_message.delete()
+                except Exception:
+                    # 削除失敗は無視して再送へ進む
+                    pass
+            # チャンネル経由で新しい Now Playing を送信する（webhook非依存）
+            state.last_now_playing_message = await channel.send(view=view)
+            # 復旧成功
+            return True
+        except Exception as e:
+            # 再送失敗をログに残す
+            logger.error(f"Failed to recover now playing message: {e}")
+            # 復旧失敗
+            return False
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         # 総時間が無効な場合は空のバーを返す
@@ -1948,8 +2037,18 @@ class MusicControllerView(discord.ui.LayoutView):
 
         # 変更された再生状態に基づいてUIを再構築する
         self.rebuild_ui()
-        # メッセージ上の表示をクリア（embed=None）しつつ、最新 of V2レイアウトで更新する
-        await interaction.message.edit(embed=None, view=self)
+        # コンポーネントinteractionのトークンで編集し、webhook期限切れを避ける
+        try:
+            # defer後は edit_original_response がコンポーネント用の有効トークンを使う
+            await interaction.edit_original_response(embed=None, view=self)
+        except Exception:
+            # フォールバック: チャンネル経由Messageへ変換して編集する
+            durable = await self.cog._to_durable_message(interaction.message)
+            if durable is not None:
+                # 通常Messageとして編集する
+                await durable.edit(embed=None, view=self)
+                # 最新の参照を状態へ保存する
+                state.last_now_playing_message = durable
 
     async def skip_callback(self, interaction: discord.Interaction):
         # インタラクションへの遅延応答を開始する
@@ -2011,8 +2110,16 @@ class MusicControllerView(discord.ui.LayoutView):
 
         # 停止した状態に基づいてUIを再構築する
         self.rebuild_ui()
-        # メッセージ上の表示をクリアしつつ、停止状態のV2レイアウト（ボタン無効）に上書き更新する
-        await interaction.message.edit(embed=None, view=self)
+        # コンポーネントinteractionのトークンで編集し、webhook期限切れを避ける
+        try:
+            # defer後は edit_original_response がコンポーネント用の有効トークンを使う
+            await interaction.edit_original_response(embed=None, view=self)
+        except Exception:
+            # フォールバック: チャンネル経由Messageへ変換して編集する
+            durable = await self.cog._to_durable_message(interaction.message)
+            if durable is not None:
+                # 通常Messageとして編集する
+                await durable.edit(embed=None, view=self)
 
         # 直前の Now Playing メッセージへの参照が存在するか判定する
         if state.last_now_playing_message:
