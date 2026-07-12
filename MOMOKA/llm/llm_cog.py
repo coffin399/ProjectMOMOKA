@@ -54,6 +54,12 @@ IMAGE_URL_PATTERN = re.compile(
 )
 DISCORD_MESSAGE_MAX_LENGTH = 2000
 SAFE_MESSAGE_LENGTH = 1990  # 安全マージン
+# /chat 応答末尾に付ける案内（Discord の -# サブテキスト）
+CHAT_HISTORY_HINT = (
+    "\n-# 💡 会話履歴は @メンション と LLM 応答へのリプライでのみ保存されます。"
+    " 続きはメンションかリプライでどうぞ"
+    " / History is saved only via @mention or reply to LLM responses."
+)
 
 
 def _split_message_smartly(text: str, max_length: int) -> List[str]:
@@ -234,6 +240,27 @@ class LLMCog(commands.Cog, name="LLM"):
         view.add_item(discord.ui.Button(label="GitHub / 問題報告", style=discord.ButtonStyle.link,
                                         url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
         return view
+
+    async def _append_chat_history_hint(
+            self,
+            message: discord.Message,
+            channel: discord.abc.Messageable,
+    ) -> None:
+        """/chat 応答の末尾に会話履歴の注意書き（-# サブテキスト）を付ける。"""
+        # 編集対象メッセージの現在本文を取得する
+        base_content = message.content or ""
+        # 案内文言を結合した最終テキストを組み立てる
+        hinted_content = f"{base_content}{CHAT_HISTORY_HINT}"
+        try:
+            # 文字数制限内なら同一メッセージを編集して追記する
+            if len(hinted_content) <= DISCORD_MESSAGE_MAX_LENGTH:
+                await message.edit(content=hinted_content)
+                return
+            # 収まらない場合は案内だけ別メッセージで送る
+            await channel.send(CHAT_HISTORY_HINT.lstrip("\n"))
+        except discord.HTTPException as e:
+            # 案内付与失敗は応答本体を壊さないので警告のみ残す
+            logger.warning(f"Failed to append /chat history hint: {e}")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -1485,8 +1512,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.info(f"🤖 [LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
                 logger.debug(
                     f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
-
-
+                # /chat は履歴非保存のため、メンション/リプライへ誘導する案内を末尾に付与する
+                await self._append_chat_history_hint(sent_messages[-1], interaction.channel)
 
             elif not sent_messages:
                 logger.warning("LLM response for /chat was empty or an error occurred.")
