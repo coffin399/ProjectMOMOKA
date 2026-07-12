@@ -28,6 +28,7 @@ try:
         extract as extract_audio_data,
         ensure_stream,
         set_youtube_cookie_path,
+        UnsupportedMediaError,
     )
     from MOMOKA.music.error.errors import MusicCogExceptionHandler
     from MOMOKA.music.plugins.audio_mixer import AudioMixer, MusicAudioSource
@@ -38,6 +39,7 @@ except ImportError as e:
     extract_audio_data = None
     ensure_stream = None
     set_youtube_cookie_path = None
+    UnsupportedMediaError = None
     MusicCogExceptionHandler = None
     AudioMixer = None
     MusicAudioSource = None

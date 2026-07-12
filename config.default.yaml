@@ -368,6 +368,7 @@ music:
     # Errors
     error_playing: "❌ An error occurred: {error}"
     error_fetching_song: "❌ Error fetching song: {error}"
+    error_drm_protected: "❌ この URL は DRM 保護または非対応サイトのため再生できません。YouTube / ニコニコ動画の URL、または曲名で検索してください。"
     search_no_results: "🔍 No results found for **{query}**."
     error_message_wrapper: "❌ {error}"
 
