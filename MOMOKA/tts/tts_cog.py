@@ -264,17 +264,29 @@ class TTSCog(commands.Cog, name="tts_cog"):
         if member.id in guild_settings.get("auto_join_users", []) and not before.channel and after.channel:
             if not voice_client or not voice_client.is_connected():
                 try:
-                    await after.channel.connect()
+                    # 接続時は自己deafせず、直後にサーバー側スピーカーミュートへ
+                    await after.channel.connect(self_deaf=False)
+                    # MusicCog があればサーバー側 deafen 処理を再利用する
+                    music_cog = self.bot.get_cog("music_cog")
+                    # MusicCog のヘルパーが使える場合は緑アイコン deafen を適用
+                    if music_cog and hasattr(music_cog, "_apply_server_deafen"):
+                        # サーバー側スピーカーミュートを適用
+                        await music_cog._apply_server_deafen(guild)
                 except Exception as e:
                     logging.getLogger(__name__).error("[TTSCog] 自動参加エラー: %s", e)
 
         if not voice_client:
             return
 
-        # 自動退出: BotのいるVCに人間がいなくなったら切断
-        if before.channel == voice_client.channel and not any(m for m in voice_client.channel.members if not m.bot):
+        # 自動退出: BotのいるVCに人間がいなくなったら切断（Bot同士残留を防ぐ）
+        if before.channel == voice_client.channel and not any(
+            m for m in voice_client.channel.members if not m.bot
+        ):
+            # VCから切断する
             await voice_client.disconnect()
+            # 読み上げ対象チャンネル設定をクリアする
             guild_settings["speech_channel_id"] = None
+            # 設定を永続化する
             self._save_speech_settings()
             return
 
@@ -311,9 +323,17 @@ class TTSCog(commands.Cog, name="tts_cog"):
         vc = interaction.user.voice.channel
         try:
             if interaction.guild.voice_client:
+                # 既存接続をユーザーのVCへ移動する
                 await interaction.guild.voice_client.move_to(vc)
             else:
-                await vc.connect()
+                # 新規接続（自己deafはせずサーバー側 mute を後で適用）
+                await vc.connect(self_deaf=False)
+            # MusicCog のサーバー側スピーカーミュート処理を再利用する
+            music_cog = self.bot.get_cog("music_cog")
+            # ヘルパーが存在する場合のみ適用する
+            if music_cog and hasattr(music_cog, "_apply_server_deafen"):
+                # 緑アイコンのサーバー側スピーカーミュートを適用
+                await music_cog._apply_server_deafen(interaction.guild)
         except Exception as e:
             return await interaction.response.send_message(f"❌ 接続失敗: `{e}`", ephemeral=True)
 

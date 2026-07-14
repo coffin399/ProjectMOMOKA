@@ -312,12 +312,28 @@ class MusicCog(commands.Cog, name="music_cog"):
         try:
             current_time = datetime.now()
             inactive_threshold = timedelta(minutes=self.inactive_timeout_minutes)
-            guilds_to_cleanup = [
-                gid for gid, state in self.guild_states.items()
-                if (current_time - state.last_activity > inactive_threshold and
-                    not state.is_playing and
-                    (not state.voice_client or not state.voice_client.is_connected()))
-            ]
+            guilds_to_cleanup = []
+            for gid, state in list(self.guild_states.items()):
+                # 接続済みだが人間がいなくなっているギルドは自動退出（Bot残留の保険）
+                if (
+                    state.voice_client
+                    and state.voice_client.is_connected()
+                    and not self._vc_has_humans(state.voice_client.channel)
+                ):
+                    # タイマー無しでも取り残されないようスケジュールする
+                    if not state.auto_leave_task or state.auto_leave_task.done():
+                        # 無人なので自動退出を予約
+                        self._schedule_auto_leave(gid)
+                    # このギルドは disconnect 待ちなのでメモリ掃除リストには入れない
+                    continue
+                # 長時間非アクティブかつ未接続の状態を破棄対象にする
+                if (
+                    current_time - state.last_activity > inactive_threshold
+                    and not state.is_playing
+                    and (not state.voice_client or not state.voice_client.is_connected())
+                ):
+                    # 破棄リストへ追加
+                    guilds_to_cleanup.append(gid)
             for guild_id in guilds_to_cleanup:
                 guild = self.bot.get_guild(guild_id)
                 logger.info(f"Cleaning up inactive guild: {guild_id} ({guild.name if guild else ''})")
@@ -495,13 +511,24 @@ class MusicCog(commands.Cog, name="music_cog"):
 
             if not vc and connect_if_not_in:
                 try:
+                    # 接続前の短い待機で前回切断との競合を避ける
                     await asyncio.sleep(0.3)
+                    # 自己deafは使わず接続し、直後にサーバー側スピーカーミュートへ切り替え
                     state.voice_client = await asyncio.wait_for(
-                        user_voice.channel.connect(timeout=30.0, reconnect=True, self_deaf=True),
+                        user_voice.channel.connect(
+                            timeout=30.0, reconnect=True, self_deaf=False),
                         timeout=35.0
                     )
+                    # 緑アイコンのサーバー側スピーカーミュートを適用（権限不足時は自己deafへ）
+                    await self._apply_server_deafen(ctx.guild)
+                    # 接続成功をログに残す
                     logger.info(
                         f"Guild {ctx.guild.id} ({ctx.guild.name}): Connected to {user_voice.channel.name}")
+                    # 接続時点ですでに人間がいなければ自動退出を予約する
+                    if not self._vc_has_humans(state.voice_client.channel):
+                        # 無人VCに留まらないようタイマーを開始する
+                        self._schedule_auto_leave(ctx.guild.id)
+                    # 接続済み VoiceClient を返す
                     return state.voice_client
                 except Exception as e:
                     await self._handle_error(ctx, e)
@@ -862,23 +889,94 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.stop_progress_updater()
             asyncio.create_task(self._play_next_song(guild_id))
 
-    def _schedule_auto_leave(self, guild_id: int):
-        state = self._get_guild_state(guild_id)
-        if not state:
+    @staticmethod
+    def _vc_has_humans(channel: Optional[discord.abc.Connectable]) -> bool:
+        # チャンネル未取得時は人間なしとして扱う
+        if channel is None:
+            # 退出判定側で「無人」とみなす
+            return False
+        # members を持つチャンネルのみ人間有無を判定する
+        members = getattr(channel, "members", None)
+        # members が取れない場合も無人扱い（安全側に倒す）
+        if members is None:
+            # 退出してハング回避を優先する
+            return False
+        # Bot以外（人間）が1人でもいれば True
+        return any(not m.bot for m in members)
+
+    async def _apply_server_deafen(self, guild: discord.Guild) -> None:
+        """サーバー側スピーカーミュート（緑）を適用。権限が無ければ自己deafへフォールバック。"""
+        # 自Botの Member を取得する
+        me = guild.me
+        # Member が取れない場合は何もしない
+        if me is None:
+            # 早期リターン
             return
+        try:
+            # サーバー側 deafen（緑色アイコン）で自身をスピーカーミュートする
+            await me.edit(deafen=True, reason="Music bot: server deafen while connected")
+            # 成功時は自己deafが残っていても問題ないが、見た目をサーバー側に寄せる
+            logger.debug("Guild %s: Applied server deafen to bot", guild.id)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            # Mute/Deafen Members 権限不足などで失敗した場合は自己deafへフォールバック
+            logger.warning(
+                "Guild %s: Server deafen failed (%s); falling back to self_deaf",
+                guild.id,
+                e,
+            )
+            try:
+                # 接続中チャンネルに対して自己スピーカーミュートを立てる
+                if me.voice and me.voice.channel:
+                    # Voice Identify 相当の自己deafフラグを送る
+                    await guild.change_voice_state(
+                        channel=me.voice.channel, self_mute=False, self_deaf=True)
+            except Exception as fallback_error:
+                # フォールバック失敗もログのみ（再生自体は継続させる）
+                logger.warning(
+                    "Guild %s: self_deaf fallback also failed: %s",
+                    guild.id,
+                    fallback_error,
+                )
+
+    def _schedule_auto_leave(self, guild_id: int):
+        # 対象ギルドの再生状態を取得する
+        state = self._get_guild_state(guild_id)
+        # 状態が無ければスケジュールできない
+        if not state:
+            # 早期リターン
+            return
+        # 既存タイマーがあればキャンセルして差し替える（再スケジュール漏れ防止）
         if state.auto_leave_task and not state.auto_leave_task.done():
+            # 進行中の自動退出タスクを中断する
             state.auto_leave_task.cancel()
+        # まだVCに接続しているときだけ新しいタイマーを起動する
         if state.voice_client and state.voice_client.is_connected():
+            # 無人確認付きの自動退出コルーチンを起動する
             state.auto_leave_task = asyncio.create_task(self._auto_leave_coroutine(guild_id))
 
     async def _auto_leave_coroutine(self, guild_id: int):
-        await asyncio.sleep(self.auto_leave_timeout)
+        try:
+            # 設定された猶予秒だけ待機する（直後の再入室に対応）
+            await asyncio.sleep(self.auto_leave_timeout)
+        except asyncio.CancelledError:
+            # 人間が戻った等でキャンセルされた場合はそのまま終了
+            raise
+        # 待機後に最新のギルド状態を再取得する
         state = self._get_guild_state(guild_id)
-        if state and state.voice_client and state.voice_client.is_connected():
-            if not [m for m in state.voice_client.channel.members if not m.bot]:
-                if state.last_text_channel_id:
-                    await self._send_background_message(state.last_text_channel_id, "auto_left_empty_channel")
-                await state.voice_client.disconnect()
+        # 状態または接続が無い場合は何もしない
+        if not state or not state.voice_client or not state.voice_client.is_connected():
+            # 既に切断済み
+            return
+        # 人間がいまだ居ない場合のみ退出する（Bot同士だけの残留を防ぐ）
+        if self._vc_has_humans(state.voice_client.channel):
+            # 人間が戻っているので退出不要
+            return
+        # テキストチャンネルがあれば退出メッセージを送る
+        if state.last_text_channel_id:
+            # バックグラウンド通知を送る
+            await self._send_background_message(state.last_text_channel_id, "auto_left_empty_channel")
+        # disconnect単体ではなく状態ごとクリーンアップして再接続ハングを防ぐ
+        await self._cleanup_guild_state(guild_id)
 
     async def _cleanup_guild_state(self, guild_id: int):
         # 破棄前に状態を取得する（UI 更新に必要）
@@ -907,9 +1005,13 @@ class MusicCog(commands.Cog, name="music_cog"):
         if state:
             # ボイス接続とミキサーをクリーンアップする
             await state.cleanup_voice_client()
-            # 自動退出タスクが動いていればキャンセルする
-            if state.auto_leave_task and not state.auto_leave_task.done():
-                # 自動退出タスクをキャンセルする
+            # 自動退出タスクが動いていればキャンセルする（自分自身以外）
+            if (
+                state.auto_leave_task
+                and not state.auto_leave_task.done()
+                and state.auto_leave_task is not asyncio.current_task()
+            ):
+                # 他経路から呼ばれた場合のみタイマーを止める
                 state.auto_leave_task.cancel()
             # キューを空にする
             await state.clear_queue()
@@ -977,27 +1079,42 @@ class MusicCog(commands.Cog, name="music_cog"):
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState,
                                     after: discord.VoiceState):
+        # 自BotがVCから切断されたらギルド状態を破棄する
         if member.id == self.bot.user.id and before.channel and not after.channel:
+            # 再生状態・VoiceClient・自動退出タスクをまとめて掃除
             await self._cleanup_guild_state(member.guild.id)
+            # 以降の無人判定は不要
             return
 
+        # 対象ギルドIDを取得する
         guild_id = member.guild.id
+        # Music 状態が無いギルドは無視する
         if guild_id not in self.guild_states:
+            # 早期リターン
             return
 
+        # ギルド再生状態を取得する
         state = self._get_guild_state(guild_id)
+        # 未接続なら自動退出判定の対象外
         if not state or not state.voice_client or not state.voice_client.is_connected():
+            # 早期リターン
             return
 
+        # Botが現在いるVCを基準にする
         current_vc_channel = state.voice_client.channel
+        # 自BotのVCと無関係な移動は無視する
         if before.channel != current_vc_channel and after.channel != current_vc_channel:
+            # 早期リターン
             return
 
-        human_members_in_vc = [m for m in current_vc_channel.members if not m.bot]
-        if not human_members_in_vc:
-            if not state.auto_leave_task or state.auto_leave_task.done():
-                self._schedule_auto_leave(guild_id)
+        # 人間がいなければ自動退出を（再）スケジュールする
+        # NOTE: 以前は「タスク未完了なら再スケジュールしない」条件があり、
+        # cancel直後に done() が遅れるとBot同士残留バグになっていた
+        if not self._vc_has_humans(current_vc_channel):
+            # タイムアウト付きで退出コルーチンを起動／差し替え
+            self._schedule_auto_leave(guild_id)
         elif state.auto_leave_task and not state.auto_leave_task.done():
+            # 人間が戻ったので予定されていた自動退出を取り消す
             state.auto_leave_task.cancel()
 
     @commands.hybrid_command(name="play", description="曲を再生またはキューに追加します。")
