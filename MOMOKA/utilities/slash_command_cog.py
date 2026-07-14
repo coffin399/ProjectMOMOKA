@@ -25,14 +25,34 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         # 保存先を data/json/ に変更
         self.logging_channels_file = "data/logging_channels.json"
 
+        # slash_commands 配下とトップレベル両方から読む（後方互換）
+        slash_cfg = self.bot.config.get("slash_commands") or {}
+
+        def _cfg(key: str, default: Optional[str] = None) -> Optional[str]:
+            # ネスト設定を優先し、無ければトップレベル、それも無ければ default
+            if slash_cfg.get(key) is not None:
+                return slash_cfg.get(key)
+            if self.bot.config.get(key) is not None:
+                return self.bot.config.get(key)
+            return default
+
         # configから必要な値を取得
-        self.arona_repository = self.bot.config.get("arona_repository_url",
-                                                    "https://github.com/coffin399/music-bot-arona")
-        self.plana_repository = self.bot.config.get("plana_repository_url",
-                                                    "https://github.com/coffin399/llmcord-JP-plana")
-        self.support_x_url = self.bot.config.get("support_x_url", "https://x.com/coffin299")
-        self.support_discord_id = self.bot.config.get("support_discord_id", "coffin299")
-        self.bot_invite_url = self.bot.config.get("bot_invite_url")
+        self.arona_repository = _cfg(
+            "arona_repository_url",
+            "https://github.com/coffin399/music-bot-arona",
+        )
+        self.plana_repository = _cfg(
+            "plana_repository_url",
+            "https://github.com/coffin399/llmcord-JP-plana",
+        )
+        # /updates 用リポジトリ（MOMOKA本体のコミット履歴）
+        self.updates_repository = _cfg(
+            "updates_repository_url",
+            "https://github.com/coffin399/ProjectMOMOKA",
+        )
+        self.support_x_url = _cfg("support_x_url", "https://x.com/coffin299")
+        self.support_discord_id = _cfg("support_discord_id", "coffin299")
+        self.bot_invite_url = _cfg("bot_invite_url")
 
         if not self.bot_invite_url:
             logger.error(
@@ -41,8 +61,8 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
             logger.error(
                 "CRITICAL: 'bot_invite_url' がプレースホルダのままです。/invite コマンドは正しく機能しません。config.yamlを確認してください。")
 
-        self.generic_help_message_text_ja = self.bot.config.get("generic_help_message_ja", "ヘルプ")
-        self.generic_help_message_text_en = self.bot.config.get("generic_help_message_en", "Help")
+        self.generic_help_message_text_ja = _cfg("generic_help_message_ja", "ヘルプ")
+        self.generic_help_message_text_en = _cfg("generic_help_message_en", "Help")
 
     async def cog_unload(self) -> None:
         await self.session.close()
@@ -392,20 +412,20 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
     async def updates(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
 
-        if not self.plana_repository:
+        if not self.updates_repository:
             await interaction.followup.send(
                 "エラー: リポジトリのURLが設定されていません。\nError: The repository URL is not configured.",
                 ephemeral=False)
             logger.warning(f"/updates が実行されましたが、リポジトリURLが未設定です。 (User: {interaction.user.id})")
             return
 
-        repo_match = re.match(r"https://github\.com/([^/]+)/([^/]+)", self.plana_repository)
+        repo_match = re.match(r"https://github\.com/([^/]+)/([^/]+)", self.updates_repository)
         if not repo_match:
             await interaction.followup.send(
                 "エラー: 設定されているリポジトリURLの形式が正しくありません。\nError: The configured repository URL format is invalid.",
                 ephemeral=False)
             logger.warning(
-                f"/updates が実行されましたが、リポジトリURLの形式が不正です: {self.plana_repository} (User: {interaction.user.id})")
+                f"/updates が実行されましたが、リポジトリURLの形式が不正です: {self.updates_repository} (User: {interaction.user.id})")
             return
 
         owner, repo = repo_match.groups()
@@ -417,7 +437,7 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
                     commits: List[Dict[str, Any]] = await response.json()
                     embed = discord.Embed(
                         title="📜 アップデート履歴 / Update History",
-                        description=f"最新のコミット25件を表示しています。\nShowing the 25 most recent commits from the [{repo}]({self.plana_repository}) repository.",
+                        description=f"最新のコミット25件を表示しています。\nShowing the 25 most recent commits from the [{repo}]({self.updates_repository}) repository.",
                         color=discord.Color.blue()
                     )
 

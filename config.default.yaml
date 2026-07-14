@@ -300,6 +300,7 @@ llm:
 trn_api_key: "YOUR_TRN_API_KEY_HERE"
 
 slash_commands:
+  updates_repository_url: "https://github.com/coffin399/ProjectMOMOKA"
   plana_repository_url: "https://github.com/coffin399/llmcord-JP-plana/tree/advanced-bot-utilities"
   arona_repository_url: "https://github.com/coffin399/music-bot-arona"
   bot_invite_url: "https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID_HERE&permissions=277025467456&scope=bot"
