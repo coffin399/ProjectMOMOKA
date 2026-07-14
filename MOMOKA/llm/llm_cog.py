@@ -132,7 +132,10 @@ class ThreadCreationView(discord.ui.View):
                     
                     if current_msg.author != self.llm_cog.bot.user:
                         # ユーザーメッセージを処理
-                        image_contents, text_content = await self.llm_cog._prepare_multimodal_content(current_msg)
+                        # 履歴用なので当該メッセージ単体の画像のみ（チェーン遡及で重複させない）
+                        image_contents, text_content = await self.llm_cog._prepare_multimodal_content(
+                            current_msg, include_reply_chain=False
+                        )
                         text_content = text_content.replace(f'<@!{self.llm_cog.bot.user.id}>', '').replace(f'<@{self.llm_cog.bot.user.id}>', '').strip()
                         
                         if text_content or image_contents:
@@ -645,7 +648,10 @@ class LLMCog(commands.Cog, name="LLM"):
                     logger.debug(f"Encountered deleted referenced message in history collection.")
                     break
                 if parent_msg.author != self.bot.user:
-                    image_contents, text_content = await self._prepare_multimodal_content(parent_msg)
+                    # 履歴ターンは親メッセージ自体の画像のみ（チェーン二重取り込みを防ぐ）
+                    image_contents, text_content = await self._prepare_multimodal_content(
+                        parent_msg, include_reply_chain=False
+                    )
                     text_content = text_content.replace(f'<@!{self.bot.user.id}>', '').replace(f'<@{self.bot.user.id}>',
                                                                                                '').strip()
                     if text_content or image_contents:
@@ -727,16 +733,26 @@ class LLMCog(commands.Cog, name="LLM"):
             logger.error(f"Error processing image URL {url}: {e}", exc_info=True)
             return None
 
-    async def _prepare_multimodal_content(self, message: discord.Message) -> Tuple[List[Dict[str, Any]], str]:
-        """画像は返信チェーンから収集し、本文は対象メッセージのみ返す。
+    async def _prepare_multimodal_content(
+        self,
+        message: discord.Message,
+        include_reply_chain: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """画像を収集し、本文は対象メッセージのみ返す。
 
         文脈は `_collect_conversation_history` 側の role 履歴で維持する。
         本文を親メッセージと結合すると、最新入力に過去言語が混ざるため分離する。
+
+        include_reply_chain:
+            True  … 返信チェーンを遡って画像を集める（最新発話向け）
+            False … 当該メッセージ単体のみ（履歴向け。チェーン二重取り込み防止）
         """
         # 画像収集用の走査リストと訪問済み ID を初期化する
         image_inputs, processed_urls, messages_to_scan, visited_ids, current_msg = [], set(), [], set(), message
-        # 返信チェーンを最大5件まで遡って画像ソースを集める
-        for i in range(5):
+        # チェーン走査する深さ（履歴用は1件＝当該メッセージのみ）
+        scan_depth = 5 if include_reply_chain else 1
+        # 返信チェーンを最大 scan_depth 件まで遡って画像ソースを集める
+        for i in range(scan_depth):
             # 無効・循環参照なら走査を止める
             if not current_msg or current_msg.id in visited_ids: break
             # 削除済み参照はこれ以上辿れない
@@ -745,6 +761,9 @@ class LLMCog(commands.Cog, name="LLM"):
             messages_to_scan.append(current_msg)
             # 同一メッセージの再訪を防ぐ
             visited_ids.add(current_msg.id)
+            # チェーン走査しない場合は1メッセージで終了する
+            if not include_reply_chain:
+                break
             # 親メッセージがあれば続行する
             if current_msg.reference and current_msg.reference.message_id:
                 try:
@@ -783,8 +802,8 @@ class LLMCog(commands.Cog, name="LLM"):
         max_images = self.llm_config.get('max_images', 1)
         for url in source_urls[:max_images]:
             if image_data := await self._process_image_url(url): image_inputs.append(image_data)
-        # 上限超過時はチャンネルへ警告する
-        if len(source_urls) > max_images:
+        # 上限超過時はチャンネルへ警告する（最新発話のチェーン収集時のみ）
+        if include_reply_chain and len(source_urls) > max_images:
             try:
                 await message.channel.send(self.llm_config.get('error_msg', {}).get('msg_max_image_size',
                                                                                     "⚠️ Max images ({max_images}) reached.\n⚠️ 一度に処理できる画像の最大枚数({max_images}枚)を超えました。").format(
@@ -794,6 +813,82 @@ class LLMCog(commands.Cog, name="LLM"):
         # 画像リストと、対象メッセージ単独の本文を返す
         return image_inputs, text_content
 
+    def _dedupe_and_trim_images_in_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """リクエスト全体の画像を重複排除し、枚数上限に収める。
+
+        新しいメッセージ側の画像を優先して残す（古い履歴から削除）。
+        Mistral 等の vision API は合計枚数上限（既定8）があり超過で400になるため必須。
+        """
+        # プロバイダ全体の上限（未設定時は Mistral 互換の8）
+        max_total = int(self.llm_config.get('max_images_per_request', 8))
+        # 上限が0以下なら画像をすべて落とす意図とみなし早期処理する
+        if max_total <= 0:
+            max_total = 0
+
+        # (msg_idx, part_idx, image_fingerprint) を時系列で集める
+        image_refs: List[Tuple[int, int, str]] = []
+        for msg_idx, msg in enumerate(messages):
+            # content がパーツ配列でないメッセージは画像を持たない
+            content = msg.get('content')
+            if not isinstance(content, list):
+                continue
+            for part_idx, part in enumerate(content):
+                # image_url パーツだけを対象にする
+                if not isinstance(part, dict) or part.get('type') != 'image_url':
+                    continue
+                # URL（data URL含む）をフィンガープリントにする
+                image_url = (part.get('image_url') or {}).get('url', '')
+                # 指紋が空ならインデックスで一意化し誤削除を避ける
+                fingerprint = image_url or f"msg{msg_idx}-part{part_idx}"
+                image_refs.append((msg_idx, part_idx, fingerprint))
+
+        # 画像が無ければそのまま返す
+        if not image_refs:
+            return messages
+
+        # 新しい順に走査し、同一画像は最新1件だけ残す
+        keep_keys: set = set()
+        seen_fingerprints: set = set()
+        for msg_idx, part_idx, fingerprint in reversed(image_refs):
+            # 既に同じ画像を残しているなら古い方は破棄候補
+            if fingerprint in seen_fingerprints:
+                continue
+            # 上限に達したらこれ以上は残さない
+            if len(keep_keys) >= max_total:
+                continue
+            # このパーツを残す対象に登録する
+            seen_fingerprints.add(fingerprint)
+            keep_keys.add((msg_idx, part_idx))
+
+        # 削除対象が無ければコピー不要でそのまま返す
+        if len(keep_keys) == len(image_refs):
+            return messages
+
+        removed = len(image_refs) - len(keep_keys)
+        logger.info(
+            "🖼️ [IMAGE] Trimmed/deduped images for API request: kept=%d removed=%d limit=%d",
+            len(keep_keys), removed, max_total,
+        )
+
+        # 各メッセージの content から破棄対象パーツを除く
+        for msg_idx, msg in enumerate(messages):
+            content = msg.get('content')
+            if not isinstance(content, list):
+                continue
+            # 残すパーツだけ再構築する（テキストは常に残す）
+            filtered_parts = []
+            for part_idx, part in enumerate(content):
+                is_image = isinstance(part, dict) and part.get('type') == 'image_url'
+                # 画像でなければ無条件で残す
+                if not is_image:
+                    filtered_parts.append(part)
+                    continue
+                # 画像は keep 判定に通ったものだけ残す
+                if (msg_idx, part_idx) in keep_keys:
+                    filtered_parts.append(part)
+            msg['content'] = filtered_parts
+
+        return messages
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -1152,6 +1247,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 logger.debug(f"  - Message count changed: {len(original_messages_for_log)} -> {len(messages)}")
 
         current_messages = messages.copy()
+        # API送信前に履歴＋最新分の画像を重複排除し枚数上限に収める
+        current_messages = self._dedupe_and_trim_images_in_messages(current_messages)
         max_iterations = self.llm_config.get('max_tool_iterations', 5)
         extra_params = self.llm_config.get('extra_api_parameters', {})
 

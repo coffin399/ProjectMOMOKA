@@ -1313,7 +1313,7 @@ class MusicCog(commands.Cog, name="music_cog"):
             embed = discord.Embed(
                 title=self.exception_handler.get_message("queue_title",
                                                          count=total_items + (1 if state.current_track else 0)),
-                color=discord.Color.blue()
+                color=discord.Color.from_rgb(79, 194, 255)
             )
             lines = []
             if page_num == 1 and state.current_track:
@@ -1515,10 +1515,10 @@ class MusicCog(commands.Cog, name="music_cog"):
             # ユーザーIDをDiscordのメンション形式に変換して設定する
             requester_mention = f"<@{track.requester_id}>"
             
-        # Embedオブジェクトを作成し、タイトルとブランドカラー（インディゴ系）を設定する
+        # Embedオブジェクトを作成し、タイトルとブランドカラー（水色）を設定する
         embed = discord.Embed(
             title=f"{status_icon} Now {status_text}",
-            color=discord.Color.from_rgb(99, 102, 241)
+            color=discord.Color.from_rgb(79, 194, 255)
         )
         # Embedのメイン説明文として、再生中のトラックタイトルをリンク付きで設定する
         embed.description = f"**[{track.title}]({track.url})**"
@@ -1930,8 +1930,8 @@ class MusicControllerView(discord.ui.LayoutView):
         # ステータス文字列を設定する
         status_text = "Paused" if is_paused else "Playing"
 
-        # インディゴカラーのアクセント色でV2コンテナを初期化する
-        container = discord.ui.Container(accent_color=discord.Color.from_rgb(99, 102, 241))
+        # 水色のアクセント色でV2コンテナを初期化する
+        container = discord.ui.Container(accent_color=discord.Color.from_rgb(79, 194, 255))
 
         # タイトル本文を構築する
         title_text = f"### {status_icon} Now {status_text}\n**[{track.title}]({track.url})**"

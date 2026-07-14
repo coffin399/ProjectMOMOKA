@@ -220,7 +220,11 @@ llm:
     temperature: 0.4
 
   max_messages: 10
+  # 1メッセージあたりの画像枚数上限（添付・URL・embed）
   max_images: 5
+  # 1回のAPIリクエスト全体（会話履歴込み）の画像枚数上限
+  # Mistral vision 等は最大8枚のため、これを超えると400エラーになる
+  max_images_per_request: 8
 
   # --- システムプロンプト ---
   system_prompt: |
