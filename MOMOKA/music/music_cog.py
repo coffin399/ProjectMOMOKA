@@ -797,45 +797,54 @@ class MusicCog(commands.Cog, name="music_cog"):
             if is_seek_operation:
                 state.is_seeking = False
 
-            # 既に直前の Now Playing メッセージが存在するか判定する
-            # ただし、play_msg が渡されており、それを編集する場合は、古いメッセージの削除は行わない
-            if state.last_now_playing_message and not play_msg:
-                try:
-                    # 直前の Now Playing メッセージをチャンネルから削除する
-                    await state.last_now_playing_message.delete()
-                # 削除処理中に例外が発生した場合のハンドリング
-                except Exception:
-                    # 削除失敗時はパスする
-                    pass
-                # メッセージの参照を初期化する
-                state.last_now_playing_message = None
-
-            # 最後のアクティブなテキストチャンネルIDが存在し、かつシーク操作ではないか判定する
+            # シーク操作以外では Now Playing UI を更新する
+            # 次曲移行時も最初の /play 応答メッセージを編集して維持し、誰が再生開始したか分かるようにする
             if state.last_text_channel_id and not is_seek_operation:
-                # 再生コントロール用と一体型UIをアタッチした LayoutView オブジェクトを構築する
+                # 再生コントロール一体型UI（LayoutView）を構築する
                 view = MusicControllerView(self, guild_id)
-                # 送信先のチャンネルオブジェクトをボットのキャッシュ等から取得する
+                # 送信先チャンネルを取得する
                 channel = self.bot.get_channel(state.last_text_channel_id)
-                # チャンネルオブジェクトが正しく取得できたか判定する
+                # チャンネルが取れた場合のみ UI を更新する
                 if channel:
                     try:
-                        # 編集対象のメッセージ (play_msg) が渡されているか判定する
+                        # 初回 /play の応答メッセージが渡されているか判定する
                         if play_msg:
-                            # webhook期限切れ回避のため、先にチャンネル経由Messageへ変換する
+                            # webhook期限切れ回避のためチャンネル経由 Message へ変換する
                             play_msg = await self._to_durable_message(play_msg)
-                            # 既存の Embed をクリアし、V2レイアウト（LayoutView）に更新して編集する
+                            # /play 応答を Now Playing UI に編集する
                             await play_msg.edit(content=None, embed=None, view=view)
-                            # 編集したメッセージを最新の Now Playing メッセージとして保存する
+                            # 編集したメッセージを最新の Now Playing として保存する
                             state.last_now_playing_message = play_msg
+                        elif state.last_now_playing_message:
+                            # 次曲など: 既存の /play 起点メッセージを編集して返信関係を維持する
+                            target_message = await self._to_durable_message(
+                                state.last_now_playing_message
+                            )
+                            # 同じメッセージ上で次曲の UI に差し替える
+                            await target_message.edit(content=None, embed=None, view=view)
+                            # 参照を最新の Message オブジェクトへ更新する
+                            state.last_now_playing_message = target_message
                         else:
-                            # 新規メッセージとして V2レイアウトのみを送信し、保存する
+                            # 既存メッセージが無い場合のみ新規投稿する（フォールバック）
                             state.last_now_playing_message = await channel.send(view=view)
                         # Now Playing 表示後にプログレスバーの定期更新を開始する
                         self._start_progress_updater(guild_id)
                     # 送信または編集処理中に例外が発生した場合のハンドリング
                     except Exception as e:
-                        # 送信失敗エラーをログに記録する
-                        logger.error(f"Failed to send now playing message: {e}")
+                        # 編集失敗時は新規送信で復旧を試みる
+                        logger.error(f"Failed to update now playing message: {e}")
+                        try:
+                            # 壊れた参照を捨てる
+                            state.last_now_playing_message = None
+                            # チャンネルへ新規 Now Playing を投稿する
+                            state.last_now_playing_message = await channel.send(view=view)
+                            # 復旧後もプログレス更新を開始する
+                            self._start_progress_updater(guild_id)
+                        except Exception as send_error:
+                            # 復旧にも失敗した旨をログへ残す
+                            logger.error(
+                                f"Failed to recover now playing message: {send_error}"
+                            )
         except Exception as e:
             guild = self.bot.get_guild(guild_id)
             logger.error(f"Guild {guild_id} ({guild.name if guild else ''}): Playback error: {e}", exc_info=True)
