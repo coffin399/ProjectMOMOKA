@@ -270,11 +270,13 @@ llm:
     - "get_commands_info"
   max_tool_iterations: 3
 
-  # --- 検索エージェント設定 (DuckDuckGo Web Search) ---
-  # DuckDuckGoを使用するため、APIキーは不要です。
+  # --- 検索エージェント設定 (ddgs メタ検索) ---
+  # ddgs を使用するため API キーは不要です。
+  # backend: auto は bing / brave / wikipedia 等を自動試行します。
   agent:
     max_results: 10
     timeout: 30.0
+    backend: "auto"
     format_control_deep_research: |
       [DEEP RESEARCH REPORT FORMAT]
       1. **Executive Summary / 要約** — 研究対象の主要結論を3行以内で提示する。
