@@ -363,6 +363,15 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.guild_states[guild_id].update_activity()
         return self.guild_states[guild_id]
 
+    def get_active_vc_guild_count(self) -> int:
+        """VC に接続中のギルド数を返す（GUI 稼働モニタ用）。"""
+        # 接続済み voice_client を持つギルドだけを数える
+        return sum(
+            1
+            for s in self.guild_states.values()
+            if s.voice_client and s.voice_client.is_connected()
+        )
+
     @staticmethod
     async def _to_durable_message(
         message: Optional[discord.Message],

@@ -370,6 +370,17 @@ class LLMCog(commands.Cog, name="LLM"):
         # 辞書から該当 ID を取り除く（無ければ無視）
         self._active_response_messages.pop(message.id, None)
 
+    def get_active_llm_guild_count(self) -> int:
+        """応答生成中のユニークギルド数を返す（GUI 稼働モニタ用）。"""
+        # 生成中メッセージからギルド ID を集める（DM 等 guild 無しは除外）
+        guild_ids = {
+            m.guild.id
+            for m in self._active_response_messages.values()
+            if m.guild is not None
+        }
+        # ユニーク件数を返す
+        return len(guild_ids)
+
     async def notify_admin_restart(self) -> None:
         """再起動前に、生成中の LLM 応答メッセージを再起動文言で上書きする。"""
         # 以降のストリーム編集を抑止する

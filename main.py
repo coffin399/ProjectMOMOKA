@@ -10,12 +10,13 @@ import json
 import queue
 import threading
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import scrolledtext, ttk, messagebox
 from pathlib import Path
 import ctypes
 import platform
 from io import StringIO
 import aiohttp
+from typing import Optional
 
 from MOMOKA.utilities.restart_notice import SHUTDOWN_USER_ID
 
@@ -34,6 +35,8 @@ if sys.version_info < (3, 11):
 
 # --- グローバル変数 ---
 log_viewer_thread = None
+# GUI スレッドから参照する Bot インスタンス（起動前は None）
+bot_ref: Optional["Momoka"] = None
 
 
 # モバイルアプリとして識別するための関数
@@ -586,6 +589,8 @@ class LogViewerApp:
         
         # キューを定期的にチェック
         self.poll_log_queue()
+        # VC / LLM 稼働数を定期更新する
+        self.poll_status()
         
         # ウィンドウクローズ時の処理
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -901,6 +906,22 @@ class LogViewerApp:
         # ボタンフレーム
         button_frame = ttk.Frame(control_frame, style='TFrame')
         button_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+
+        # VC / LLM 稼働数表示（起動前はプレースホルダ）
+        self.vc_status_var = tk.StringVar(value="VC: -")
+        self.llm_status_var = tk.StringVar(value="LLM: -")
+        # VC 接続中ギルド数ラベル
+        ttk.Label(
+            button_frame,
+            textvariable=self.vc_status_var,
+            style='TLabel',
+        ).pack(side=tk.LEFT, padx=6)
+        # LLM 生成中ギルド数ラベル
+        ttk.Label(
+            button_frame,
+            textvariable=self.llm_status_var,
+            style='TLabel',
+        ).pack(side=tk.LEFT, padx=6)
         
         # クリアボタン
         clear_button = ttk.Button(
@@ -918,6 +939,17 @@ class LogViewerApp:
             command=self.toggle_auto_scroll
         )
         auto_scroll.pack(side=tk.LEFT, padx=2)
+
+        # シャットダウンボタン（二重押し防止のため参照を保持）
+        self.shutdown_button = ttk.Button(
+            button_frame,
+            text="シャットダウン",
+            command=self.request_shutdown,
+        )
+        # 危険操作なので右端に置く
+        self.shutdown_button.pack(side=tk.LEFT, padx=6)
+        # シャットダウン要求中フラグ
+        self._shutdown_requested = False
         
         # ログ表示エリアのフレーム
         log_frame = ttk.Frame(main_frame, style='TFrame')
@@ -1217,6 +1249,88 @@ class LogViewerApp:
         about_window.focus_set()
         about_window.wait_window()
     
+    def poll_status(self):
+        """VC / LLM 稼働ギルド数を約1秒ごとに更新する。"""
+        try:
+            # Bot 未生成ならプレースホルダを維持する
+            if bot_ref is None:
+                # 起動前表示
+                self.vc_status_var.set("VC: -")
+                # 起動前表示
+                self.llm_status_var.set("LLM: -")
+            else:
+                # MusicCog から接続中ギルド数を取得する
+                music_cog = bot_ref.get_cog("music_cog")
+                # ゲッターがあれば件数を表示し、無ければプレースホルダ
+                if music_cog is not None and hasattr(music_cog, "get_active_vc_guild_count"):
+                    # VC 接続数をラベルへ反映する
+                    self.vc_status_var.set(f"VC: {music_cog.get_active_vc_guild_count()}")
+                else:
+                    # Cog 未ロード時
+                    self.vc_status_var.set("VC: -")
+                # LLMCog から生成中ギルド数を取得する
+                llm_cog = bot_ref.get_cog("LLM")
+                # ゲッターがあれば件数を表示し、無ければプレースホルダ
+                if llm_cog is not None and hasattr(llm_cog, "get_active_llm_guild_count"):
+                    # LLM 稼働数をラベルへ反映する
+                    self.llm_status_var.set(f"LLM: {llm_cog.get_active_llm_guild_count()}")
+                else:
+                    # Cog 未ロード時
+                    self.llm_status_var.set("LLM: -")
+        except Exception:
+            # GUI スレッドを落とさないため表示はそのまま維持する
+            pass
+        finally:
+            # 1秒後に再スケジュールする
+            self.root.after(1000, self.poll_status)
+
+    def request_shutdown(self):
+        """確認後に Bot を /shutdown と同じ経路で閉じる。"""
+        # 二重押しを無視する
+        if self._shutdown_requested:
+            # 早期リターン
+            return
+        # 誤操作防止の確認ダイアログ
+        confirmed = messagebox.askyesno(
+            "シャットダウン確認",
+            "ボットをシャットダウンしますか？\n利用中ユーザーへ再起動通知が送られます。",
+            parent=self.root,
+        )
+        # キャンセルなら何もしない
+        if not confirmed:
+            # 早期リターン
+            return
+        # Bot 未生成なら実行できない
+        if bot_ref is None:
+            # ステータスバーへ理由を出す
+            self.status_var.set("ボット未起動のためシャットダウンできません")
+            # 早期リターン
+            return
+        try:
+            # discord.py のイベントループを取得する
+            loop = bot_ref.loop
+            # ループ未稼働なら安全に中断する
+            if loop is None or not loop.is_running():
+                # ステータスバーへ理由を出す
+                self.status_var.set("イベントループが利用できないためシャットダウンできません")
+                # 早期リターン
+                return
+            # 二重実行を防ぐ
+            self._shutdown_requested = True
+            # ボタンを無効化する
+            self.shutdown_button.config(state=tk.DISABLED)
+            # 進行状況をステータスバーへ出す
+            self.status_var.set("シャットダウン中...")
+            # GUI スレッドから asyncio へ close() を投げる
+            asyncio.run_coroutine_threadsafe(bot_ref.close(), loop)
+        except Exception as e:
+            # 失敗したら再試行できるように戻す
+            self._shutdown_requested = False
+            # ボタンを再び有効化する
+            self.shutdown_button.config(state=tk.NORMAL)
+            # 失敗理由をステータスバーへ出す
+            self.status_var.set(f"シャットダウン失敗: {e}")
+
     def on_closing(self):
         """ウィンドウを閉じる時の処理"""
         # 設定を保存
@@ -1291,6 +1405,8 @@ if __name__ == "__main__":
     discord.gateway.DiscordWebSocket.identify = mobile_identify
     bot_instance = Momoka(command_prefix=commands.when_mentioned, intents=intents, help_command=None,
                           allowed_mentions=allowed_mentions)
+    # GUI 稼働モニタ / シャットダウンボタンから参照できるように共有する
+    bot_ref = bot_instance
 
 
     # ===============================================================
