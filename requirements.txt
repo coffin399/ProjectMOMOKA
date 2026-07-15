@@ -41,7 +41,8 @@ pyworld>=0.3.0
 # pyannote 4.x requires torch>=2.8 — keep 3.x while pinned to torch 2.1.0
 pyannote.audio>=3.0.0,<4
 sentencepiece>=0.1.99
-onnxruntime>=1.15.0
+# 1.27+ は torch 2.1 とネイティブ衝突報告があるため上限を設ける
+onnxruntime>=1.15.0,<1.24
 # numba 0.56.x does NOT support Python 3.11
 numba>=0.57.0
 fastapi>=0.100.0

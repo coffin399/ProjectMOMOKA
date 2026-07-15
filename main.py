@@ -33,6 +33,40 @@ if sys.version_info < (3, 11):
     # 非ゼロ終了コードでプロセスを終了する
     sys.exit(1)
 
+
+def _preload_torch() -> None:
+    """venv の torch を最優先で読み込み、C10 二重登録を防ぐ。
+
+    PATH 上に別環境の ``torch\\lib``（例: グローバル Python 3.11 の torch 2.7）が
+    残っていると、c10.dll が二重ロードされ
+    ``Key already registered with the same priority: C10`` で即終了することがある。
+    Discord ログイン直後の Cog（TTS / 画像）読込より前に確定させる。
+    """
+    # 現在の PATH を分割する
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    # 他環境の torch\\lib を除外した PATH を組み立てる
+    filtered_parts = []
+    for part in path_parts:
+        # パス比較用に区切りを正規化する
+        norm = part.replace("/", "\\").lower()
+        # site-packages\\torch\\lib を含むエントリは衝突源なので捨てる
+        if "\\torch\\lib" in norm:
+            continue
+        # 残すパスを追加する
+        filtered_parts.append(part)
+    # 浄化した PATH を書き戻す
+    os.environ["PATH"] = os.pathsep.join(filtered_parts)
+    try:
+        # TTS / diffusers より先に torch 本体をロードする
+        import torch  # noqa: F401
+    except ImportError:
+        # 画像・TTS 無効構成でも起動できるよう欠落は無視する
+        return
+
+
+# Cog 読込より前に torch を確定する（C10 衝突回避）
+_preload_torch()
+
 # --- グローバル変数 ---
 log_viewer_thread = None
 # GUI スレッドから参照する Bot インスタンス（起動前は None）
