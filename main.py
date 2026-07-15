@@ -311,7 +311,7 @@ class Momoka(commands.Bot):
         # ステータスローテーションの設定
         self.status_templates = self.config.get('status_rotation', [
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-07-11",
+            "prjMOMOKA Ver.2026-07-16",
         ])
         self.rotate_status.start()
 
