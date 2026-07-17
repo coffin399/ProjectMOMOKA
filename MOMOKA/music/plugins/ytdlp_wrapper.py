@@ -144,10 +144,12 @@ _FORMAT_TRIES: tuple[str, ...] = (
     "best*",
 )
 # player_client 候補（None は yt-dlp デフォルトに任せる）
+# tv_embedded は現行 yt-dlp で unsupported（Skipping unsupported client）
+# tv/android は DRM・SABR 実験で https 形式が欠けることがあるため android_vr 等を優先
 _YOUTUBE_PLAYER_CLIENT_TRIES: tuple[Optional[list[str]], ...] = (
-    ["tv_embedded", "tv", "android"],
-    ["android", "ios"],
-    ["tv", "mweb"],
+    ["android_vr", "tv", "web_embedded"],
+    ["mweb", "ios", "web_creator"],
+    ["tv_downgraded", "android"],
     None,
 )
 
@@ -326,7 +328,7 @@ def build_ytdlp_pipe_command(webpage_url: str) -> list[str]:
         "--remote-components",
         "ejs:github",
         "--extractor-args",
-        "youtube:player_client=tv_embedded,tv,android",
+        "youtube:player_client=android_vr,tv,web_embedded,mweb",
     ]
     # 有効なクッキーがあれば付与する
     cookie_path = resolve_youtube_cookie_path()
@@ -532,11 +534,11 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # YouTube SABR 対策: web のみだと HTTPS 形式が無く format エラーになるため
-    # tv / android 系を優先して従来のストリーム URL を取得する
+    # YouTube SABR / DRM 実験対策:
+    # tv_embedded は unsupported。android_vr / tv / web_embedded を優先する
     "extractor_args": {
         "youtube": {
-            "player_client": ["tv_embedded", "tv", "android"],
+            "player_client": ["android_vr", "tv", "web_embedded", "mweb"],
         }
     },
     # YouTube JS チャレンジ解決用ランタイム（deno 優先、無ければ node）
