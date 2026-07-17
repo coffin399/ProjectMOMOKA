@@ -5,7 +5,7 @@ slash_commands:
 donation:
   enabled: true
   url: https://ko-fi.com/coffin299
-  subtle_label: Buy me a coffee...
+  subtle_label: ☕Buy me a coffee...
   help_button_label: Ko-fi / Support
   help_text_ja: このBotはボランティアで開発・運用されています。サーバー代の足しになるので、よければKo-fiで支援していただけると嬉しいです。
   help_text_en: This bot is developed and hosted as a volunteer project. If you'd like to help cover server costs, a small tip on Ko-fi is always appreciated.

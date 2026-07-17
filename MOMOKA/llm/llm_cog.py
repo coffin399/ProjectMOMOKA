@@ -33,7 +33,7 @@ from MOMOKA.llm.plugins import (
 from MOMOKA.llm.plugins.debate_tools import DebateTool, CrossCheckTool
 from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.llm.concurrency import chat_limiter
-from MOMOKA.utilities.donation import donation_from_bot, make_subtle_donation_view
+from MOMOKA.llm.utils.waiting_view import WaitingLayoutView
 from MOMOKA.utilities.restart_notice import RESTART_NOTICE_TEXT
 
 try:
@@ -249,10 +249,16 @@ class LLMCog(commands.Cog, name="LLM"):
                                         url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
         return view
 
-    def _create_donation_view(self) -> Optional[discord.ui.View]:
-        """LLM 応答用の控えめ Ko-fi ボタン View（無効時は None）。"""
-        # config から寄付設定を読む
-        return make_subtle_donation_view(donation_from_bot(self.bot))
+    def _create_waiting_view(self, model_name: str) -> WaitingLayoutView:
+        """応答待機中の Components V2（Tips + 控えめ Ko-fi）。"""
+        # Tips が無ければ簡易本文
+        if self.tips_manager:
+            body, accent = self.tips_manager.get_waiting_layout_parts(model_name)
+        else:
+            body = f"### ⏳ Waiting for '{model_name}' response..."
+            accent = discord.Color.orange()
+        # LayoutView を返す
+        return WaitingLayoutView(body=body, accent=accent, bot=self.bot)
 
     async def _append_chat_history_hint(
             self,
@@ -265,10 +271,9 @@ class LLMCog(commands.Cog, name="LLM"):
         # 案内文言を結合した最終テキストを組み立てる
         hinted_content = f"{base_content}{CHAT_HISTORY_HINT}"
         try:
-            # 文字数制限内なら同一メッセージを編集して追記する（寄付ボタンも維持）
+            # 文字数制限内なら同一メッセージを編集して追記する
             if len(hinted_content) <= DISCORD_MESSAGE_MAX_LENGTH:
-                donation_view = self._create_donation_view()
-                await message.edit(content=hinted_content, embed=None, view=donation_view)
+                await message.edit(content=hinted_content, embed=None, view=None)
                 return
             # 収まらない場合は案内だけ別メッセージで送る
             await channel.send(CHAT_HISTORY_HINT.lstrip("\n"))
@@ -1262,19 +1267,12 @@ class LLMCog(commands.Cog, name="LLM"):
         sent_message = None
         try:
             model_name = client.model_name_for_api_calls
-            if self.tips_manager:
-                # 予想応答時間付きの待機embedを生成
-                waiting_embed = self.tips_manager.get_waiting_embed(model_name)
-                try:
-                    sent_message = await message.reply(embed=waiting_embed, silent=True)
-                except discord.HTTPException:
-                    sent_message = await message.channel.send(embed=waiting_embed, silent=True)
-            else:
-                waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
-                try:
-                    sent_message = await message.reply(waiting_message, silent=True)
-                except discord.HTTPException:
-                    sent_message = await message.channel.send(waiting_message, silent=True)
+            # 待機は Components V2（Tips + 控えめ寄付ボタン）
+            waiting_view = self._create_waiting_view(model_name)
+            try:
+                sent_message = await message.reply(view=waiting_view, silent=True)
+            except discord.HTTPException:
+                sent_message = await message.channel.send(view=waiting_view, silent=True)
             # ストリーミング開始前に計測タイマーをスタート
             stream_start_time = time.time()
             result = await self._process_streaming_and_send_response(
@@ -1298,7 +1296,12 @@ class LLMCog(commands.Cog, name="LLM"):
             error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
             if sent_message and not self._shutting_down:
                 try:
-                    await sent_message.edit(content=error_msg, embed=None, view=self._create_support_view())
+                    await self._replace_waiting_with_content(
+                        sent_message,
+                        message.channel,
+                        error_msg,
+                        view=self._create_support_view(),
+                    )
                 except discord.HTTPException:
                     pass
             elif not sent_message:
@@ -1309,12 +1312,58 @@ class LLMCog(commands.Cog, name="LLM"):
             error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
             if sent_message and not self._shutting_down:
                 try:
-                    await sent_message.edit(content=error_msg, embed=None, view=self._create_support_view())
+                    await self._replace_waiting_with_content(
+                        sent_message,
+                        message.channel,
+                        error_msg,
+                        view=self._create_support_view(),
+                    )
                 except discord.HTTPException:
                     pass
             elif not sent_message:
                 await message.reply(content=error_msg, view=self._create_support_view(), silent=True)
             return None, "", None
+
+    async def _replace_waiting_with_content(
+        self,
+        sent_message: discord.Message,
+        channel: discord.abc.Messageable,
+        content: str,
+        *,
+        view: Optional[discord.ui.View] = None,
+    ) -> discord.Message:
+        """Components V2 待機メッセージを通常の content メッセージへ切り替える。
+
+        V2 は content と併用できないため、edit できなければ削除して送り直す。
+        """
+        # まず edit で V2 解除を試す
+        try:
+            await sent_message.edit(content=content, embed=None, view=view)
+            return sent_message
+        except discord.HTTPException as e:
+            logger.debug("Waiting V2 edit-to-content failed (%s); replacing message", e)
+        # 追跡から外す
+        self._unregister_active_response(sent_message)
+        # 元メッセージの返信先を可能な範囲で引き継ぐ
+        reference = getattr(sent_message, "reference", None)
+        try:
+            await sent_message.delete()
+        except discord.HTTPException:
+            pass
+        # 新規に content メッセージを送る
+        send_kwargs: Dict[str, Any] = {}
+        if view is not None:
+            send_kwargs["view"] = view
+        try:
+            if reference is not None:
+                new_msg = await channel.send(content, reference=reference, **send_kwargs)
+            else:
+                new_msg = await channel.send(content, **send_kwargs)
+        except discord.HTTPException:
+            new_msg = await channel.send(content, **send_kwargs)
+        # 再追跡する
+        self._register_active_response(new_msg)
+        return new_msg
 
     async def _process_streaming_and_send_response(self, sent_message: discord.Message,
                                                    channel: discord.abc.Messageable,
@@ -1331,6 +1380,8 @@ class LLMCog(commands.Cog, name="LLM"):
             emoji_prefix, emoji_suffix = ":incoming_envelope: ", " :incoming_envelope:"
             max_final_retries, final_retry_delay = 3, 2.0
             is_first_update = True
+            # 待機 V2 から通常 content へ切り替えたか
+            waiting_v2_cleared = False
             logger.debug(f"Starting LLM stream for message {sent_message.id}")
             stream_generator = self._llm_stream_and_tool_handler(messages_for_api, llm_client, channel.id, user.id)
             async for content_chunk in stream_generator:
@@ -1358,7 +1409,14 @@ class LLMCog(commands.Cog, name="LLM"):
                         display_text = f"{emoji_prefix}{full_response_text[:SAFE_MESSAGE_LENGTH - len(emoji_prefix) - len(emoji_suffix)]}{emoji_suffix}"
                     if display_text != sent_message.content:
                         try:
-                            await sent_message.edit(content=display_text)
+                            # 初回は V2 待機 UI を通常 content に切り替える（寄付ボタンも消える）
+                            if not waiting_v2_cleared:
+                                sent_message = await self._replace_waiting_with_content(
+                                    sent_message, channel, display_text
+                                )
+                                waiting_v2_cleared = True
+                            else:
+                                await sent_message.edit(content=display_text, view=None)
                             last_update, last_displayed_length = current_time, len(full_response_text)
                             logger.debug(f"Updated Discord message (displayed: {len(display_text)} chars)")
                         except discord.NotFound:
@@ -1382,13 +1440,19 @@ class LLMCog(commands.Cog, name="LLM"):
             logger.debug(f"Stream completed | Total chunks: {chunk_count} | Final length: {len(full_response_text)} chars")
             if full_response_text:
                 if len(full_response_text) <= SAFE_MESSAGE_LENGTH:
-                    # 成功応答に控えめな寄付ボタンを付ける（無効時は None）
-                    view = self._create_donation_view()
-                    
+                    # 最終本文のみ（寄付ボタンは付けない — 待機中のみ表示）
                     for attempt in range(max_final_retries):
                         try:
-                            if full_response_text != sent_message.content or view is not None:
-                                await sent_message.edit(content=full_response_text, embed=None, view=view)
+                            if not waiting_v2_cleared:
+                                # ストリーム更新が無かった場合も V2 待機を外す
+                                sent_message = await self._replace_waiting_with_content(
+                                    sent_message, channel, full_response_text
+                                )
+                                waiting_v2_cleared = True
+                            elif full_response_text != sent_message.content:
+                                await sent_message.edit(
+                                    content=full_response_text, embed=None, view=None
+                                )
                             logger.debug(f"Final message updated successfully (attempt {attempt + 1})")
                             break
                         except discord.NotFound:
@@ -1412,12 +1476,15 @@ class LLMCog(commands.Cog, name="LLM"):
                     all_messages = []
                     first_chunk = chunks[0]  # 最初のチャンクを取得
 
-                    # 分割時は先頭に view を付けない（最終チャンクへ）
-                    view = None
-
                     for attempt in range(max_final_retries):
                         try:
-                            await sent_message.edit(content=first_chunk, embed=None, view=view)
+                            if not waiting_v2_cleared:
+                                sent_message = await self._replace_waiting_with_content(
+                                    sent_message, channel, first_chunk
+                                )
+                                waiting_v2_cleared = True
+                            else:
+                                await sent_message.edit(content=first_chunk, embed=None, view=None)
                             all_messages.append(sent_message)
                             logger.debug(f"Updated first message (1/{len(chunks)})")
                             break
@@ -1432,13 +1499,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     for i, chunk in enumerate(chunks[1:], start=2):
                         for attempt in range(max_final_retries):
                             try:
-                                # 最終チャンクだけ控えめ寄付ボタンを付ける
-                                send_kwargs: Dict[str, Any] = {}
-                                if i == len(chunks):
-                                    donation_view = self._create_donation_view()
-                                    if donation_view is not None:
-                                        send_kwargs["view"] = donation_view
-                                continuation_msg = await channel.send(chunk, **send_kwargs)
+                                continuation_msg = await channel.send(chunk)
                                 all_messages.append(continuation_msg)
                                 logger.debug(f"Sent continuation message {i}/{len(chunks)}")
                                 break
@@ -1463,8 +1524,12 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                          "There was no response from the AI. Please try rephrasing your message.\nAIから応答がありませんでした。表現を変えてもう一度お試しください。");
                     logger.warning(
                         f"⚠️ Empty response from LLM (Finish reason: {finish_reason})")
-                await sent_message.edit(content=f"❌ **Error / エラー** ❌\n\n{error_msg}", embed=None,
-                                        view=self._create_support_view())
+                await self._replace_waiting_with_content(
+                    sent_message,
+                    channel,
+                    f"❌ **Error / エラー** ❌\n\n{error_msg}",
+                    view=self._create_support_view(),
+                )
                 return None, "", None
         finally:
             # 正常終了・中断・例外いずれでも追跡を解除する
@@ -1974,12 +2039,11 @@ class LLMCog(commands.Cog, name="LLM"):
                     return
             try:
                 model_name = llm_client.model_name_for_api_calls
-                if self.tips_manager:
-                    waiting_embed = self.tips_manager.get_waiting_embed(model_name)
-                    temp_message = await interaction.followup.send(embed=waiting_embed, ephemeral=False, wait=True)
-                else:
-                    waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
-                    temp_message = await interaction.followup.send(waiting_message, ephemeral=False, wait=True)
+                # 待機は Components V2（Tips + 控えめ寄付）
+                waiting_view = self._create_waiting_view(model_name)
+                temp_message = await interaction.followup.send(
+                    view=waiting_view, ephemeral=False, wait=True
+                )
                 # スレッド作成ボタンは削除（常にFalse）
                 sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
                     sent_message=temp_message, channel=interaction.channel, user=interaction.user,

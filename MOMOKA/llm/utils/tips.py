@@ -167,7 +167,7 @@ class TipsManager:
     SLOW_MODEL_THRESHOLD = 30
 
     def get_waiting_embed(self, model_name: str) -> discord.Embed:
-        """待機中のembedを取得する（予想時間 + 切替提案 + tips付き）"""
+        """待機中の embed（後方互換。新規は get_waiting_layout を使う）。"""
         tip_embed = self.get_random_tip()
         # タイトル: モデル名の応答待ち表示
         tip_embed.title = f"⏳ Waiting for '{model_name}' response..."
@@ -185,3 +185,30 @@ class TipsManager:
         # 「予想時間 → 切替提案 → 空行 → tips本文」の構成
         tip_embed.description = f"{time_estimate}{switch_hint}\n\n{original_desc}"
         return tip_embed
+
+    def get_waiting_layout_parts(self, model_name: str) -> tuple[str, discord.Color]:
+        """待機 LayoutView 用の本文とアクセント色を返す。"""
+        # ランダム tip を1つ選ぶ
+        tip_data = random.choice(self.tips)
+        # 予想時間文字列
+        time_estimate = self.response_tracker.format_estimate(model_name)
+        # 遅いモデルなら切替提案
+        estimate = self.response_tracker.get_estimate(model_name)
+        switch_hint = ""
+        if estimate is not None and estimate >= self.SLOW_MODEL_THRESHOLD:
+            switch_hint = (
+                "\n💡 応答が遅い場合は `/switch-models` で他のモデルへの切り替えもご検討ください。"
+                "\n💡 If response is slow, consider switching to another model with `/switch-models`."
+            )
+        # V2 TextDisplay 用本文（タイトル相当を先頭に）
+        body = (
+            f"### ⏳ Waiting for '{model_name}' response...\n"
+            f"{time_estimate}{switch_hint}\n\n"
+            f"**{tip_data['title']}**\n"
+            f"{tip_data['description']}\n\n"
+            f"-# we are experiencing technical difficulties with our main server.\n"
+            f"-# full documentation : https://coffin299.net"
+        )
+        # tip の色をアクセントに使う
+        accent = tip_data.get("color") or discord.Color.orange()
+        return body, accent
