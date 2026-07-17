@@ -240,26 +240,37 @@ class Momoka(commands.Bot):
     # /shutdown を実行できるユーザー ID（ハードコード定数）
     SHUTDOWN_USER_ID = SHUTDOWN_USER_ID
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        config: dict,
+        bot_id: str,
+        bot_role: str,
+        persona_key: str,
+        display_name: str,
+        cogs_to_load: list,
+        enable_discord_logging: bool = True,
+        **kwargs
+    ):
         super().__init__(*args, **kwargs)
-        self.config = None
+        # マージ済み設定辞書を保持する
+        self.config = config
+        # ボット識別子（例: "plana", "arona"）
+        self.bot_id = bot_id
+        # ボット役割（"primary" or "companion"）
+        self.bot_role = bot_role
+        # ペルソナキー（例: "plana", "arona"）
+        self.persona_key = persona_key
+        # 表示名（例: "[PLANA]", "[ARONA]"）
+        self.display_name = display_name
+        # Discord ログ出力を有効化するか（primary のみ True）
+        self.enable_discord_logging = enable_discord_logging
+        # ステータスローテーション用テンプレートリスト
         self.status_templates = []
+        # ステータスローテーション用インデックス
         self.status_index = 0
-        # ロードするCogのリスト
-        self.cogs_to_load = [
-            'MOMOKA.images.image_commands_cog',
-            'MOMOKA.llm.llm_cog',
-            'MOMOKA.media_downloader.ytdlp_downloader_cog',
-            'MOMOKA.music.music_cog',
-            'MOMOKA.notifications.earthquake_notification_cog',
-            'MOMOKA.notifications.twitch_notification_cog',
-            'MOMOKA.scheduler.match_time_cog',
-            'MOMOKA.timer.timer_cog',
-            'MOMOKA.tracker.r6s_tracker_cog',
-            'MOMOKA.tracker.valorant_tracker_cog',
-            'MOMOKA.tts.tts_cog',
-            'MOMOKA.utilities.slash_command_cog',
-        ]
+        # ロードする Cog のリスト（primary / companion で異なる）
+        self.cogs_to_load = cogs_to_load
 
     def is_admin(self, user_id: int) -> bool:
         """ユーザーが管理者かどうかをチェック"""
@@ -302,7 +313,11 @@ class Momoka(commands.Bot):
             await self.notify_active_users_of_restart()
         except Exception as e:
             # 通知失敗でもシャットダウン自体は継続する
-            logging.warning("notify_active_users_of_restart failed during close: %s", e)
+            logging.warning(
+                "%s notify_active_users_of_restart failed during close: %s",
+                self.display_name,
+                e
+            )
         # discord.py 本来のクローズ処理へ進む
         await super().close()
 
@@ -310,123 +325,162 @@ class Momoka(commands.Bot):
         """Botの初期セットアップ（ログイン後、接続準備完了前）"""
         # 実行中の Python バージョンを起動ログへ残す（3.11 前提の切り分け用）
         logging.info(
-            "Runtime Python %s.%s.%s (MOMOKA requires 3.11.x)",
+            "%s Runtime Python %s.%s.%s (MOMOKA requires 3.11.x)",
+            self.display_name,
             sys.version_info.major,
             sys.version_info.minor,
             sys.version_info.micro,
         )
-        # 設定ファイルの読み込み
-        if not os.path.exists(CONFIG_FILE):
-            if os.path.exists(DEFAULT_CONFIG_FILE):
-                try:
-                    shutil.copyfile(DEFAULT_CONFIG_FILE, CONFIG_FILE)
-                    logging.info(
-                        f"{CONFIG_FILE} が見つからなかったため、{DEFAULT_CONFIG_FILE} からコピーして生成しました。")
-                    logging.warning(f"生成された {CONFIG_FILE} を確認し、ボットトークンやAPIキーを設定してください。")
-                except Exception as e_copy:
-                    print(
-                        f"CRITICAL: {DEFAULT_CONFIG_FILE} から {CONFIG_FILE} のコピー中にエラーが発生しました: {e_copy}")
-                    raise RuntimeError(f"{CONFIG_FILE} の生成に失敗しました。")
-            else:
-                print(f"CRITICAL: {CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。設定ファイルがありません。")
-                raise FileNotFoundError(f"{CONFIG_FILE} も {DEFAULT_CONFIG_FILE} も見つかりません。")
 
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                self.config = yaml.safe_load(f)
-                if not self.config:
-                    print(f"CRITICAL: {CONFIG_FILE} が空または無効です。ボットを起動できません。")
-                    raise RuntimeError(f"{CONFIG_FILE} が空または無効です。")
-            logging.info(f"{CONFIG_FILE} を正常に読み込みました。")
-        except Exception as e:
-            print(f"CRITICAL: {CONFIG_FILE} の読み込みまたは解析中にエラーが発生しました: {e}")
-            raise
+        # self.config は __init__ で渡されているため、ファイル読み込みは不要
+        logging.info("%s マージ済み設定を使用して起動します。", self.display_name)
 
-        # ステータスローテーションの設定
+        # ステータスローテーションの設定を取得する
         self.status_templates = self.config.get('status_rotation', [
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-07-16",
+            "prjMOMOKA Ver.2026-07-17",
         ])
+        # ステータスローテーションタスクを開始する
         self.rotate_status.start()
 
-        # ロギング設定
-        logging_json_path = "data/logging_channels.json"
-        log_channel_ids_from_config = self.config.get('log_channel_ids', [])
-        if not isinstance(log_channel_ids_from_config, list):
-            log_channel_ids_from_config = []
-            logging.warning("config.yaml の 'log_channel_ids' はリスト形式である必要があります。")
+        # Discord ログ出力は primary のみ有効化する
+        if self.enable_discord_logging:
+            # ロギング設定用の JSON ファイルパス
+            logging_json_path = "data/logging_channels.json"
+            # 設定辞書からログチャンネル ID リストを取得する
+            log_channel_ids_from_config = self.config.get('log_channel_ids', [])
+            # リスト形式でなければ空リストに戻す
+            if not isinstance(log_channel_ids_from_config, list):
+                log_channel_ids_from_config = []
+                logging.warning(
+                    "%s configs/core_config.yaml の 'log_channel_ids' はリスト形式である必要があります。",
+                    self.display_name
+                )
 
-        log_channel_ids_from_file = []
-        try:
-            dir_path = os.path.dirname(logging_json_path)
-            os.makedirs(dir_path, exist_ok=True)
-            if not os.path.exists(logging_json_path):
-                with open(logging_json_path, 'w') as f:
-                    json.dump([], f)
-                logging.info(f"{logging_json_path} が見つからなかったため、新規作成しました。")
-
-            with open(logging_json_path, 'r') as f:
-                data = json.load(f)
-                if isinstance(data, list) and all(isinstance(i, int) for i in data):
-                    log_channel_ids_from_file = data
-        except (json.JSONDecodeError, IOError) as e:
-            logging.error(f"{logging_json_path} の処理中にエラーが発生しました: {e}")
-
-        all_log_channel_ids = list(set(log_channel_ids_from_config + log_channel_ids_from_file))
-
-        if all_log_channel_ids:
+            # JSON ファイルから追加のチャンネル ID を読み込む
+            log_channel_ids_from_file = []
             try:
-                # DiscordLogHandlerを追加（GUIログビューアと並行して動作）
-                # 両方のハンドラが同じroot_loggerに追加されているため、
-                # すべてのログがGUIとDiscordの両方に送信されます
-                discord_handler = DiscordLogHandler(bot=self, channel_ids=all_log_channel_ids, interval=6.0)
-                discord_handler.setLevel(logging.INFO)
-                discord_formatter = DiscordLogFormatter('%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
-                discord_handler.setFormatter(discord_formatter)
-                root_logger.addHandler(discord_handler)
-                logging.info(f"DiscordへのロギングをチャンネルID {all_log_channel_ids} で有効化しました。")
-            except Exception as e:
-                logging.error(f"DiscordLogHandler の初期化中にエラーが発生しました: {e}")
-        else:
-            logging.warning("ログ送信先のDiscordチャンネルが設定されていません。")
+                # JSON ファイルのディレクトリを作成する
+                dir_path = os.path.dirname(logging_json_path)
+                os.makedirs(dir_path, exist_ok=True)
+                # JSON ファイルが無ければ空リストで生成する
+                if not os.path.exists(logging_json_path):
+                    with open(logging_json_path, 'w') as f:
+                        json.dump([], f)
+                    logging.info("%s %s が見つからなかったため、新規作成しました。", self.display_name, logging_json_path)
 
-        # Cogのロード
-        logging.info("Cogのロードを開始します...")
+                # JSON ファイルからチャンネル ID を読み込む
+                with open(logging_json_path, 'r') as f:
+                    data = json.load(f)
+                    # リスト形式かつ全要素が int であれば採用する
+                    if isinstance(data, list) and all(isinstance(i, int) for i in data):
+                        log_channel_ids_from_file = data
+            except (json.JSONDecodeError, IOError) as e:
+                logging.error("%s %s の処理中にエラーが発生しました: %s", self.display_name, logging_json_path, e)
+
+            # 設定ファイルと JSON ファイルのチャンネル ID を統合する
+            all_log_channel_ids = list(set(log_channel_ids_from_config + log_channel_ids_from_file))
+
+            # チャンネル ID が設定されていれば Discord ログハンドラを追加する
+            if all_log_channel_ids:
+                try:
+                    # Discord ログハンドラを作成する
+                    discord_handler = DiscordLogHandler(bot=self, channel_ids=all_log_channel_ids, interval=6.0)
+                    # ログレベルを INFO に設定する
+                    discord_handler.setLevel(logging.INFO)
+                    # フォーマッタを設定する
+                    discord_formatter = DiscordLogFormatter('%(asctime)s - %(levelname)s - [%(funcName)s] %(message)s')
+                    discord_handler.setFormatter(discord_formatter)
+                    # ルートロガーへハンドラを追加する
+                    root_logger.addHandler(discord_handler)
+                    logging.info(
+                        "%s Discord へのロギングをチャンネル ID %s で有効化しました。",
+                        self.display_name,
+                        all_log_channel_ids
+                    )
+                except Exception as e:
+                    logging.error("%s DiscordLogHandler の初期化中にエラーが発生しました: %s", self.display_name, e)
+            else:
+                logging.warning("%s ログ送信先の Discord チャンネルが設定されていません。", self.display_name)
+
+        # Cog のロードを開始する
+        logging.info("%s Cog のロードを開始します...", self.display_name)
         loaded_cogs_count = 0
+        # Cog リストを順番にロードする
         for module_path in self.cogs_to_load:
             try:
+                # Cog をロードする
                 await self.load_extension(module_path)
-                logging.info(f"  > Cog '{module_path}' のロードに成功しました。")
+                logging.info("%s   > Cog '%s' のロードに成功しました。", self.display_name, module_path)
+                # ロード成功数を加算する
                 loaded_cogs_count += 1
             except commands.ExtensionAlreadyLoaded:
-                logging.debug(f"Cog '{module_path}' は既にロードされています。")
+                logging.debug("%s Cog '%s' は既にロードされています。", self.display_name, module_path)
             except commands.ExtensionNotFound:
-                logging.error(f"  > Cog '{module_path}' が見つかりません。ファイルパスを確認してください。")
+                logging.error(
+                    "%s   > Cog '%s' が見つかりません。ファイルパスを確認してください。",
+                    self.display_name,
+                    module_path
+                )
             except commands.NoEntryPointError:
                 logging.error(
-                    f"  > Cog '{module_path}' に setup 関数が見つかりません。Cogとして正しく実装されていますか？")
+                    "%s   > Cog '%s' に setup 関数が見つかりません。Cog として正しく実装されていますか？",
+                    self.display_name,
+                    module_path
+                )
             except Exception as e:
-                logging.error(f"  > Cog '{module_path}' のロード中に予期しないエラーが発生しました: {e}", exc_info=True)
-        logging.info(f"Cogのロードが完了しました。合計 {loaded_cogs_count} 個のCogをロードしました。")
+                logging.error(
+                    "%s   > Cog '%s' のロード中に予期しないエラーが発生しました: %s",
+                    self.display_name,
+                    module_path,
+                    e,
+                    exc_info=True
+                )
+        logging.info(
+            "%s Cog のロードが完了しました。合計 %d 個の Cog をロードしました。",
+            self.display_name,
+            loaded_cogs_count
+        )
 
-        # スラッシュコマンドの同期
+        # companion ボットは同期タイミングをずらす（rate limit 回避）
+        if self.bot_role == "companion":
+            # 2秒待機して primary の同期を先に行わせる
+            await asyncio.sleep(2)
+
+        # スラッシュコマンドの同期を行う
         if self.config.get('sync_slash_commands', True):
             try:
+                # テストギルド ID が設定されているか確認する
                 test_guild_id = self.config.get('test_guild_id')
                 if test_guild_id:
+                    # テストギルドへ同期する
                     guild_obj = discord.Object(id=int(test_guild_id))
                     synced_commands = await self.tree.sync(guild=guild_obj)
                     logging.info(
-                        f"{len(synced_commands)}個のスラッシュコマンドをテストギルド {test_guild_id} に同期しました。")
+                        "%s %d 個のスラッシュコマンドをテストギルド %s に同期しました。",
+                        self.display_name,
+                        len(synced_commands),
+                        test_guild_id
+                    )
                 else:
+                    # グローバルに同期する
                     synced_commands = await self.tree.sync()
-                    logging.info(f"{len(synced_commands)}個のグローバルスラッシュコマンドを同期しました。")
+                    logging.info(
+                        "%s %d 個のグローバルスラッシュコマンドを同期しました。",
+                        self.display_name,
+                        len(synced_commands)
+                    )
             except Exception as e:
-                logging.error(f"スラッシュコマンドの同期中にエラーが発生しました: {e}", exc_info=True)
+                logging.error(
+                    "%s スラッシュコマンドの同期中にエラーが発生しました: %s",
+                    self.display_name,
+                    e,
+                    exc_info=True
+                )
         else:
-            logging.info("スラッシュコマンドの同期は設定で無効化されています。")
+            logging.info("%s スラッシュコマンドの同期は設定で無効化されています。", self.display_name)
 
-        # エラーハンドラの設定
+        # エラーハンドラを設定する
         self.tree.on_error = self.on_app_command_error
 
     @tasks.loop(seconds=15)
@@ -491,9 +545,33 @@ class Momoka(commands.Bot):
                 await interaction.response.send_message("❌ コマンドの実行中にエラーが発生しました。", ephemeral=True)
 
 
-CONFIG_FILE = 'config.yaml'
-DEFAULT_CONFIG_FILE = 'config.default.yaml'
+# CONFIG_FILE / DEFAULT_CONFIG_FILE は削除済み — configs/*.yaml を使用
 
+# ===============================================================
+# ===== Cog ロードリスト ========================================
+# ===============================================================
+# プライマリボット（PLANA）が読み込む全 Cog
+PRIMARY_COGS = [
+    'MOMOKA.images.image_commands_cog',
+    'MOMOKA.llm.llm_cog',
+    'MOMOKA.media_downloader.ytdlp_downloader_cog',
+    'MOMOKA.music.music_cog',
+    'MOMOKA.notifications.earthquake_notification_cog',
+    'MOMOKA.notifications.twitch_notification_cog',
+    'MOMOKA.scheduler.match_time_cog',
+    'MOMOKA.timer.timer_cog',
+    'MOMOKA.tracker.r6s_tracker_cog',
+    'MOMOKA.tracker.valorant_tracker_cog',
+    'MOMOKA.tts.tts_cog',
+    'MOMOKA.utilities.slash_command_cog',
+]
+
+# コンパニオンボット（ARONA）が読み込む軽量 Cog（LLM / 音楽 / スラッシュコマンド）
+COMPANION_COGS = [
+    'MOMOKA.llm.llm_cog',
+    'MOMOKA.music.music_cog',
+    'MOMOKA.utilities.slash_command_cog',
+]
 
 # ===============================================================
 # ===== ログビューアGUI関連の関数とクラス ======================
@@ -1215,28 +1293,67 @@ class LogViewerApp:
         """ログをテキストウィジェットに追加"""
         text_widget.config(state='normal')
         
-        # 行数制限
+        # 行数制限を適用する
         lines = int(text_widget.index('end-1c').split('.')[0])
         if lines > self.config["max_lines"]:
+            # 古いログを削除する
             text_widget.delete(1.0, f"{lines - self.config['max_lines']}.0")
         
-        # レベルに応じた色付け
+        # ボット識別タグ（[PLANA] / [ARONA]）の色付けを設定する
+        text_widget.tag_config("plana_tag", foreground="#4dabf7", font=("Meiryo UI", 9, "bold"))
+        text_widget.tag_config("arona_tag", foreground="#ff6b9d", font=("Meiryo UI", 9, "bold"))
+        
+        # レベルに応じた色付けを設定する
         if level == "ERROR" or level == "CRITICAL":
             text_widget.tag_config("error", foreground=self.theme['error'])
-            text_widget.insert(tk.END, message + "\n", "error")
+            tag = "error"
         elif level == "WARNING":
             text_widget.tag_config("warning", foreground=self.theme['warning'])
-            text_widget.insert(tk.END, message + "\n", "warning")
+            tag = "warning"
         elif level == "INFO":
             text_widget.tag_config("info", foreground=self.theme['info'])
-            text_widget.insert(tk.END, message + "\n", "info")
+            tag = "info"
         elif level == "DEBUG":
             text_widget.tag_config("debug", foreground=self.theme['debug'])
-            text_widget.insert(tk.END, message + "\n", "debug")
+            tag = "debug"
         else:
-            text_widget.insert(tk.END, message + "\n")
+            tag = None
         
-        # 自動スクロール
+        # メッセージ内に [PLANA] または [ARONA] タグがあるか検出する
+        if "[PLANA]" in message or "[LLM_RESPONSE][PLANA]" in message:
+            # [PLANA] タグ部分を色付けして挿入する
+            parts = message.split("[PLANA]")
+            for i, part in enumerate(parts):
+                if i > 0:
+                    # タグを色付けして挿入する
+                    text_widget.insert(tk.END, "[PLANA]", "plana_tag")
+                # 残りのテキストを通常タグで挿入する
+                if tag:
+                    text_widget.insert(tk.END, part, tag)
+                else:
+                    text_widget.insert(tk.END, part)
+            text_widget.insert(tk.END, "\n")
+        elif "[ARONA]" in message or "[LLM_RESPONSE][ARONA]" in message:
+            # [ARONA] タグ部分を色付けして挿入する
+            parts = message.split("[ARONA]")
+            for i, part in enumerate(parts):
+                if i > 0:
+                    # タグを色付けして挿入する
+                    text_widget.insert(tk.END, "[ARONA]", "arona_tag")
+                # 残りのテキストを通常タグで挿入する
+                if tag:
+                    text_widget.insert(tk.END, part, tag)
+                else:
+                    text_widget.insert(tk.END, part)
+            text_widget.insert(tk.END, "\n")
+        else:
+            # タグ無しの場合は通常通り挿入する
+            if tag:
+                text_widget.insert(tk.END, message + "\n", tag)
+            else:
+                text_widget.insert(tk.END, message + "\n")
+        
+        # 自動スクロールが有効なら末尾へスクロールする
         if self.config["auto_scroll"]:
             text_widget.see(tk.END)
         
@@ -1355,7 +1472,9 @@ class LogViewerApp:
             # 進行状況をステータスバーへ出す
             self.status_var.set("シャットダウン中...")
             # GUI スレッドから asyncio へ close() を投げる
-            asyncio.run_coroutine_threadsafe(bot_ref.close(), loop)
+            # 両 Bot をレジストリ経由で閉じる（GUI シャットダウン）
+            from MOMOKA.bots.registry import registry
+            asyncio.run_coroutine_threadsafe(registry.close_all(), loop)
         except Exception as e:
             # 失敗したら再試行できるように戻す
             self._shutdown_requested = False
@@ -1400,54 +1519,124 @@ if __name__ == "__main__":
     """
     print(momoka_art)
     
-    # ログビューアをスレッドで起動
+    # ログビューアをスレッドで起動する
     log_viewer_thread = run_log_viewer_thread(log_queue)
     print("ログビューアを起動しました。")
 
-    initial_config = {}
+    # --- 設定の読み込みとバリデーション ---
+    from MOMOKA.config.loader import load_merged_config, validate_bot_tokens
+    from MOMOKA.bots.registry import registry
+    from MOMOKA.llm.debate.orchestrator import init_orchestrator
+
+    # configs/*.yaml を統合した設定辞書を読み込む
     try:
-        if not os.path.exists(CONFIG_FILE) and os.path.exists(DEFAULT_CONFIG_FILE):
-            try:
-                shutil.copyfile(DEFAULT_CONFIG_FILE, CONFIG_FILE)
-                print(f"INFO: メイン実行: {CONFIG_FILE} が見つからず、{DEFAULT_CONFIG_FILE} からコピー生成しました。")
-            except Exception as e_copy_main:
-                print(
-                    f"CRITICAL: メイン実行: {DEFAULT_CONFIG_FILE} から {CONFIG_FILE} のコピー中にエラー: {e_copy_main}")
-                sys.exit(1)
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f_main_init:
-            initial_config = yaml.safe_load(f_main_init)
-            if not initial_config or not isinstance(initial_config, dict):
-                print(f"CRITICAL: メイン実行: {CONFIG_FILE} が空または無効な形式です。")
-                sys.exit(1)
-    except Exception as e_main:
-        print(f"CRITICAL: メイン実行: {CONFIG_FILE} の読み込みまたは解析中にエラー: {e_main}。")
+        # マージ済み設定辞書を取得する
+        merged_config = load_merged_config()
+        print("INFO: configs/bots_config.yaml などの設定を統合しました。")
+    except Exception as e_load:
+        print(f"CRITICAL: 設定ファイルの読み込み中にエラーが発生しました: {e_load}")
         sys.exit(1)
-    bot_token_val = initial_config.get('bot_token')
-    if not bot_token_val or bot_token_val == "YOUR_BOT_TOKEN_HERE":
-        print(f"CRITICAL: {CONFIG_FILE}にbot_tokenが未設定か無効、またはプレースホルダのままです。")
+
+    # ボットトークンの存在確認を行う
+    try:
+        # PLANA / ARONA のトークンをバリデーションする
+        validate_bot_tokens(merged_config)
+        print("INFO: ボットトークンのバリデーションに成功しました。")
+    except ValueError as e_token:
+        print(f"CRITICAL: {e_token}")
         sys.exit(1)
+
+    # Debate オーケストレータを初期化する
+    try:
+        # グローバルオーケストレータを初期化する
+        init_orchestrator(merged_config)
+        print("INFO: Debate オーケストレータを初期化しました。")
+    except Exception as e_orch:
+        print(f"CRITICAL: Debate オーケストレータの初期化中にエラーが発生しました: {e_orch}")
+        sys.exit(1)
+
+    # --- Discord Intents / AllowedMentions の設定 ---
+    # 両ボット共通の Intents を作成する
     intents = discord.Intents.default()
     intents.guilds = True
     intents.guild_messages = True
     intents.dm_messages = True
     intents.voice_states = True
-    intents.message_content = True  # 特権インテントの申請が受理されたらTrueに変更
+    intents.message_content = True  # 特権インテント（申請済み前提）
     intents.members = False
     intents.presences = False
+
+    # メンション設定を作成する
     allowed_mentions = discord.AllowedMentions(everyone=False, users=True, roles=False, replied_user=True)
+
+    # モバイル識別関数をパッチする
     discord.gateway.DiscordWebSocket.identify = mobile_identify
-    bot_instance = Momoka(command_prefix=commands.when_mentioned, intents=intents, help_command=None,
-                          allowed_mentions=allowed_mentions)
-    # GUI 稼働モニタ / シャットダウンボタンから参照できるように共有する
-    bot_ref = bot_instance
 
+    # --- PLANA（プライマリボット）の作成 ---
+    # PLANA の設定ブロックを取得する
+    plana_bot_config = merged_config['bots']['plana']
+    # PLANA のトークンを取得する
+    plana_token = plana_bot_config['token']
+    # PLANA のペルソナキーを取得する
+    plana_persona = plana_bot_config.get('persona', 'plana')
+    # PLANA の表示名を取得する
+    plana_display = plana_bot_config.get('display_name', 'PLANA')
+
+    # PLANA ボットインスタンスを作成する
+    plana_bot = Momoka(
+        command_prefix=commands.when_mentioned,
+        intents=intents,
+        help_command=None,
+        allowed_mentions=allowed_mentions,
+        config=merged_config,
+        bot_id='plana',
+        bot_role='primary',
+        persona_key=plana_persona,
+        display_name=plana_display,
+        cogs_to_load=PRIMARY_COGS,
+        enable_discord_logging=True,  # primary のみ Discord へログ出力
+    )
+    # レジストリへ PLANA を登録する
+    registry.register('plana', plana_bot, plana_display)
+    print(f"INFO: PLANA ボットを作成し、レジストリへ登録しました。")
+
+    # --- ARONA（コンパニオンボット）の作成 ---
+    # ARONA の設定ブロックを取得する
+    arona_bot_config = merged_config['bots']['arona']
+    # ARONA のトークンを取得する
+    arona_token = arona_bot_config['token']
+    # ARONA のペルソナキーを取得する
+    arona_persona = arona_bot_config.get('persona', 'arona')
+    # ARONA の表示名を取得する
+    arona_display = arona_bot_config.get('display_name', 'ARONA')
+
+    # ARONA ボットインスタンスを作成する
+    arona_bot = Momoka(
+        command_prefix=commands.when_mentioned,
+        intents=intents,
+        help_command=None,
+        allowed_mentions=allowed_mentions,
+        config=merged_config,
+        bot_id='arona',
+        bot_role='companion',
+        persona_key=arona_persona,
+        display_name=arona_display,
+        cogs_to_load=COMPANION_COGS,
+        enable_discord_logging=False,  # companion は Discord ログ出力しない
+    )
+    # レジストリへ ARONA を登録する
+    registry.register('arona', arona_bot, arona_display)
+    print(f"INFO: ARONA ボットを作成し、レジストリへ登録しました。")
+
+    # GUI 稼働モニタ / シャットダウンボタンから参照できるように PLANA を共有する
+    bot_ref = plana_bot
 
     # ===============================================================
-    # ===== シャットダウン / Cogリロードコマンド =====================
+    # ===== シャットダウン / Cogリロードコマンド（PLANA のみ） =======
     # ===============================================================
-    @bot_instance.tree.command(
+    @plana_bot.tree.command(
         name="shutdown",
-        description="Shut down the bot after notifying active users (owner only).",
+        description="Shut down both bots after notifying active users (owner only).",
     )
     async def shutdown_command(interaction: discord.Interaction):
         # ハードコード UID 以外は拒否する
@@ -1461,7 +1650,7 @@ if __name__ == "__main__":
             return
         # シャットダウン開始を応答する
         await interaction.response.send_message(
-            "Shutting down... Active users will be notified.",
+            "Shutting down both bots... Active users will be notified.",
             ephemeral=False,
         )
         # 実行者をログに残す
@@ -1470,29 +1659,34 @@ if __name__ == "__main__":
             interaction.user,
             interaction.user.id,
         )
-        # close() 内で再起動通知してからプロセスを終了する
-        await bot_instance.close()
+        # レジストリの全ボットをクローズする（再起動通知を含む）
+        await registry.close_all()
 
-    @bot_instance.tree.command(name="reload_plana", description="🔄 Cogをリロードします（管理者専用）")
-    async def reload_cog(interaction: discord.Interaction, cog_name: str = None):
-        if not bot_instance.is_admin(interaction.user.id):
+    @plana_bot.tree.command(name="reload_plana", description="🔄 PLANAのCogをリロードします（管理者専用）")
+    async def reload_plana_cog(interaction: discord.Interaction, cog_name: str = None):
+        # 管理者でなければ拒否する
+        if not plana_bot.is_admin(interaction.user.id):
             await interaction.response.send_message("❌ このコマンドは管理者のみ実行できます。", ephemeral=False)
             return
 
+        # リロード処理を開始する
         await interaction.response.defer(ephemeral=False)
 
         if cog_name:
-            # 特定のCogをリロード
+            # 特定の Cog をリロードする
             if not cog_name.startswith('MOMOKA.'):
+                # プレフィックスを補完する
                 cog_name = f'MOMOKA.{cog_name}'
 
             try:
-                await bot_instance.reload_extension(cog_name)
+                # Cog をリロードする
+                await plana_bot.reload_extension(cog_name)
                 await interaction.followup.send(f"✅ Cog `{cog_name}` をリロードしました。", ephemeral=False)
                 logging.info(f"Cog '{cog_name}' がユーザー {interaction.user} によってリロードされました。")
             except commands.ExtensionNotLoaded:
+                # 未ロードの場合は新規ロードする
                 try:
-                    await bot_instance.load_extension(cog_name)
+                    await plana_bot.load_extension(cog_name)
                     await interaction.followup.send(f"✅ Cog `{cog_name}` をロードしました（未ロードでした）。",
                                                     ephemeral=False)
                     logging.info(f"Cog '{cog_name}' がユーザー {interaction.user} によってロードされました。")
@@ -1503,46 +1697,80 @@ if __name__ == "__main__":
                 await interaction.followup.send(f"❌ Cog `{cog_name}` のリロードに失敗しました: {e}", ephemeral=False)
                 logging.error(f"Cog '{cog_name}' のリロードに失敗しました: {e}")
         else:
+            # 全 Cog をリロードする
             reloaded = []
             failed = []
 
-            for module_path in bot_instance.cogs_to_load:
+            # Cog リストをループする
+            for module_path in plana_bot.cogs_to_load:
                 try:
-                    await bot_instance.reload_extension(module_path)
+                    # Cog をリロードする
+                    await plana_bot.reload_extension(module_path)
                     reloaded.append(module_path)
                 except commands.ExtensionNotLoaded:
+                    # 未ロードの場合は新規ロードする
                     try:
-                        await bot_instance.load_extension(module_path)
+                        await plana_bot.load_extension(module_path)
                         reloaded.append(f"{module_path} (新規ロード)")
                     except Exception as e:
                         failed.append(f"{module_path}: {e}")
                 except Exception as e:
                     failed.append(f"{module_path}: {e}")
 
+            # 結果メッセージを作成する
             result_msg = f"✅ {len(reloaded)}個のCogをリロード/ロードしました。"
             if failed:
                 result_msg += f"\n❌ {len(failed)}個のCogでエラーが発生しました。"
 
             await interaction.followup.send(result_msg, ephemeral=False)
             logging.info(
-                f"全Cogリロードがユーザー {interaction.user} によって実行されました。成功: {len(reloaded)}, 失敗: {len(failed)}")
+                f"全Cogリロードがユーザー {interaction.user} によって実行されました。成功: {len(reloaded)}, 失敗: {len(failed)}"
+            )
 
-
-    @bot_instance.tree.command(name="list_plana_cogs", description="📋 ロード済みのCog一覧を表示します")
-    async def list_cogs(interaction: discord.Interaction):
-        loaded_extensions = list(bot_instance.extensions.keys())
+    @plana_bot.tree.command(name="list_plana_cogs", description="📋 PLANAのロード済みCog一覧を表示します")
+    async def list_plana_cogs(interaction: discord.Interaction):
+        # ロード済み拡張機能のリストを取得する
+        loaded_extensions = list(plana_bot.extensions.keys())
         if not loaded_extensions:
             await interaction.response.send_message("現在ロードされているCogはありません。", ephemeral=False)
             return
 
+        # Cog リストを整形する
         cog_list = "\n".join([f"• `{ext}`" for ext in sorted(loaded_extensions)])
-        await interaction.response.send_message(f"**ロード済みCog一覧** ({len(loaded_extensions)}個):\n{cog_list}",
-                                                ephemeral=False)
+        await interaction.response.send_message(
+            f"**PLANA ロード済みCog一覧** ({len(loaded_extensions)}個):\n{cog_list}",
+            ephemeral=False
+        )
 
+    # --- 両ボットの起動 ---
+    async def run_bots():
+        """PLANA と ARONA の両方を並行起動する。"""
+        try:
+            # 両ボットを並行起動する
+            await asyncio.gather(
+                plana_bot.start(plana_token),
+                arona_bot.start(arona_token),
+            )
+        except KeyboardInterrupt:
+            # Ctrl+C でシャットダウンする
+            print("\nINFO: KeyboardInterrupt を検出しました。シャットダウンを開始します...")
+            # レジストリの全ボットをクローズする
+            await registry.close_all()
+        except Exception as e_run:
+            # 実行中のエラーをログに残す
+            logging.critical(f"ボットの実行中に致命的なエラーが発生しました: {e_run}", exc_info=True)
+            print(f"CRITICAL: ボットの実行中に致命的なエラーが発生しました: {e_run}")
+            # レジストリの全ボットをクローズする
+            await registry.close_all()
+            sys.exit(1)
 
+    # asyncio イベントループで両ボットを起動する
     try:
-        bot_instance.run(bot_token_val)
-    except Exception as e:
-        logging.critical(f"ボットの実行中に致命的なエラーが発生しました: {e}", exc_info=True)
-        print(f"CRITICAL: ボットの実行中に致命的なエラーが発生しました: {e}")
+        asyncio.run(run_bots())
+    except KeyboardInterrupt:
+        # 既に run_bots 内で処理済み
+        print("INFO: シャットダウン完了。")
+    except Exception as e_main:
+        logging.critical(f"メインループで致命的なエラーが発生しました: {e_main}", exc_info=True)
+        print(f"CRITICAL: メインループで致命的なエラーが発生しました: {e_main}")
         sys.exit(1)

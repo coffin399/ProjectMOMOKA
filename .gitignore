@@ -1,4 +1,6 @@
 /config.yaml
+configs/*_config.yaml
+!configs/*_config.default.yaml
 /models/image-models/modelA/
 
 # 仮想環境・キャッシュ
@@ -20,6 +22,7 @@ nico_cookies.txt
 # ローカル設定・秘密情報
 .env
 *.log
+.cursor/
 
 # ビルド成果物
 /dist/

@@ -1,0 +1,21 @@
+bots:
+  plana:
+    role: primary
+    display_name: PLANA
+    application_id: 1031673203774464160
+    client_id: 1031673203774464160
+    token: YOUR_PLANA_BOT_TOKEN
+    invite_url: https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot
+    persona: plana
+  arona:
+    role: companion
+    display_name: ARONA
+    application_id: 1364917551024308255
+    client_id: 1364917551024308255
+    token: YOUR_ARONA_BOT_TOKEN
+    invite_url: https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot
+    persona: arona
+debate_partner: arona
+redirect_to_plana:
+  ja: その機能は PLANA 側で使えます。サーバーに PLANA を追加して、そちらでお試しください。
+  en: That feature is available on PLANA. Please invite PLANA to this server and try there.

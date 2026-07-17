@@ -1,0 +1,18 @@
+tts:
+  enabled: true
+  model_root: models/tts-models
+  default_model_dir: null
+  pyopenjtalk_dict_dir: null
+  sample_rate: 48000
+  noise_scale: 0.667
+  noise_w: 0.8
+  length_scale: 1.0
+  default_model_id: 0
+  default_style: Neutral
+  default_style_weight: 5.0
+  default_speed: 1.0
+  default_volume: 1.0
+  enable_say_command: true
+  enable_join_leave_notice: true
+  join_message_template: '{member_name}さんが参加しました。'
+  leave_message_template: '{member_name}さんが退出しました。'

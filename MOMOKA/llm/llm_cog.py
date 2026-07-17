@@ -30,6 +30,8 @@ from MOMOKA.llm.plugins import (
     CommandInfoManager,
     ImageGenerator
 )
+from MOMOKA.llm.plugins.debate_tools import DebateTool, CrossCheckTool
+from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.utilities.restart_notice import RESTART_NOTICE_TEXT
 
 try:
@@ -274,6 +276,14 @@ class LLMCog(commands.Cog, name="LLM"):
         self.llm_config = self.config.get('llm')
         if not isinstance(self.llm_config, dict): raise commands.ExtensionFailed(self.qualified_name,
                                                                                  "The 'llm' section in config is missing or invalid.")
+        # Bot 識別子（dual-bot）
+        self.bot_id = getattr(self.bot, "bot_id", "plana")
+        # persona キー（plana / arona）
+        self.persona_key = getattr(self.bot, "persona_key", self.bot_id)
+        # role: primary | companion
+        self.bot_role = getattr(self.bot, "bot_role", "primary")
+        # 表示名（ログタグ）
+        self.display_name = getattr(self.bot, "display_name", self.bot_id.upper())
         self.language_prompt = self.llm_config.get('language_prompt')
         if self.language_prompt: logger.info("Language prompt loaded from config for fallback.")
         self.http_session, self.bot.cfg = aiohttp.ClientSession(), self.llm_config
@@ -285,64 +295,142 @@ class LLMCog(commands.Cog, name="LLM"):
         self.model_reset_tasks: Dict[int, asyncio.Task] = {}
         self.exception_handler = LLMExceptionHandler(self.llm_config)
         self.channel_settings_path = "data/channel_llm_models.json"
-        self.channel_models: Dict[str, str] = self._load_json_data(self.channel_settings_path)
+        # {bot_id: {channel_id: model}} 形式
+        self.channel_models: Dict[str, Any] = self._load_channel_models_nested()
         logger.info(
-            f"Loaded {len(self.channel_models)} channel-specific model settings from '{self.channel_settings_path}'.")
+            f"[{self.display_name}] Loaded channel model settings from '{self.channel_settings_path}'.")
         self.jst = timezone(timedelta(hours=+9))
         # 応答生成中メッセージ（message_id → Message）の追跡用辞書
         self._active_response_messages: Dict[int, discord.Message] = {}
         # シャットダウン通知済みならストリーム編集を止めるためのフラグ
         self._shutting_down = False
         # プラグインの初期化（BioManager/MemoryManagerは削除済み）
-        self.search_agent, self.command_manager, self.image_generator, self.tips_manager = self._initialize_plugins()
-        default_model_string = self.llm_config.get('model')
+        (
+            self.search_agent,
+            self.command_manager,
+            self.image_generator,
+            self.tips_manager,
+            self.debate_tool,
+            self.cross_check_tool,
+        ) = self._initialize_plugins()
+        # persona / llm デフォルト model を初期化
+        default_model_string = self._persona_default_model()
         if default_model_string:
             main_llm_client = self._initialize_llm_client(default_model_string)
             if main_llm_client:
                 self.llm_clients[default_model_string] = main_llm_client
-                logger.info(f"Default LLM client '{default_model_string}' initialized and cached.")
+                logger.info(f"[{self.display_name}] Default LLM client '{default_model_string}' initialized.")
             else:
-                logger.error("Failed to initialize main LLM client. Core functionality may be disabled.")
+                logger.error(f"[{self.display_name}] Failed to initialize main LLM client.")
         else:
-            logger.error("Default LLM model is not configured in config.yaml.")
+            logger.error(f"[{self.display_name}] Default LLM model is not configured.")
 
-    def _initialize_plugins(self) -> Tuple[Optional[SearchAgent], Optional[CommandInfoManager], Optional[ImageGenerator], Optional[TipsManager]]:
-        """プラグインの初期化と返却（BioManager/MemoryManagerは削除済み）"""
+    def _bot_tag(self) -> str:
+        """ログ用 Bot タグ。"""
+        # 表示名を返す
+        return self.display_name
+
+    def _persona_default_model(self) -> Optional[str]:
+        """personas.<id>.model → llm.model の順でデフォルトを返す。"""
+        # personas 辞書を取る
+        personas = self.llm_config.get("personas") or {}
+        # 自 persona エントリ
+        entry = personas.get(self.persona_key) or {}
+        # persona.model があれば優先
+        if entry.get("model"):
+            return entry["model"]
+        # 共通 llm.model
+        return self.llm_config.get("model")
+
+    def _active_tools_list(self) -> List[str]:
+        """role に応じた active_tools。"""
+        # companion は専用リストがあればそれを使う
+        if self.bot_role == "companion":
+            companion = self.llm_config.get("active_tools_companion")
+            if isinstance(companion, list):
+                return companion
+        # それ以外は通常リスト
+        return list(self.llm_config.get("active_tools") or [])
+
+    def _bot_channel_map(self) -> Dict[str, str]:
+        """自 Bot 用の channel_id→model マップを返す。"""
+        # bot_id キーが無ければ作る
+        if self.bot_id not in self.channel_models or not isinstance(
+            self.channel_models.get(self.bot_id), dict
+        ):
+            self.channel_models[self.bot_id] = {}
+        # マップを返す
+        return self.channel_models[self.bot_id]
+
+    def _load_channel_models_nested(self) -> Dict[str, Any]:
+        """channel_llm_models.json を {bot_id:{channel:model}} として読む。"""
+        # 生データを読む
+        raw = self._load_json_data(self.channel_settings_path)
+        # 空なら自 Bot 用空 dict
+        if not raw:
+            return {self.bot_id: {}}
+        # 値がすべて str なら旧フラット形式 → plana 配下へ移行
+        if all(isinstance(v, str) for v in raw.values()):
+            # 旧データは plana に紐づける
+            return {"plana": dict(raw), "arona": {}}
+        # 既にネストされていればそのまま
+        return raw
+
+    def _initialize_plugins(self) -> Tuple[
+        Optional[SearchAgent],
+        Optional[CommandInfoManager],
+        Optional[ImageGenerator],
+        Optional[TipsManager],
+        Optional[DebateTool],
+        Optional[CrossCheckTool],
+    ]:
+        """プラグインの初期化と返却。"""
         plugins = {
             "SearchAgent": None,
             "CommandInfoManager": None,
             "ImageGenerator": None,
-            "TipsManager": None
+            "TipsManager": None,
+            "DebateTool": None,
+            "CrossCheckTool": None,
         }
 
         # TipsManagerの初期化
         if TipsManager: plugins["TipsManager"] = TipsManager()
 
-        # configに基づくプラグイン初期化
-        active_tools = self.llm_config.get('active_tools', [])
+        # role 別ツール一覧
+        active_tools = self._active_tools_list()
         if 'search' in active_tools:
-            logger.info(f"Initializing SearchAgent. LLM Config Keys: {list(self.llm_config.keys())}")
+            logger.info(f"[{self.display_name}] Initializing SearchAgent.")
             if SearchAgent:
                 plugins["SearchAgent"] = SearchAgent(self.bot, self.llm_config)
         
         if self.llm_config.get('commands_manager', True) and CommandInfoManager:
             plugins["CommandInfoManager"] = CommandInfoManager(self.bot)
 
-        if 'image_generator' in active_tools and ImageGenerator:
+        # companion には image_generator を載せない
+        if 'image_generator' in active_tools and ImageGenerator and self.bot_role != "companion":
             plugins["ImageGenerator"] = ImageGenerator(self.bot)
+
+        # debate / cross_check
+        if 'debate' in active_tools:
+            plugins["DebateTool"] = DebateTool(self.bot)
+        if 'cross_check' in active_tools:
+            plugins["CrossCheckTool"] = CrossCheckTool(self.bot)
 
         # 初期化状態のログ出力
         for name, instance in plugins.items():
             if instance:
-                logger.info(f"{name} initialized successfully.")
+                logger.info(f"[{self.display_name}] {name} initialized successfully.")
             else:
-                logger.info(f"{name} is not active or failed to initialize.")
+                logger.info(f"[{self.display_name}] {name} is not active or failed to initialize.")
 
         return (
             plugins["SearchAgent"],
             plugins["CommandInfoManager"],
             plugins["ImageGenerator"],
-            plugins["TipsManager"]
+            plugins["TipsManager"],
+            plugins["DebateTool"],
+            plugins["CrossCheckTool"],
         )
 
     async def cog_unload(self):
@@ -490,19 +578,29 @@ class LLMCog(commands.Cog, name="LLM"):
                 client.supports_tools = True  # 他のプロバイダーはデフォルトでTrue
             
             logger.info(
-                f"Initialized LLM client for provider '{provider_name}' with model '{model_name}' using key index {current_key_index}.")
+                f"[{self._bot_tag()}] Initialized LLM client for provider '{provider_name}' with model '{model_name}'.")
             return client
         except Exception as e:
             logger.error(f"Error initializing LLM client for '{model_string}': {e}", exc_info=True)
             return None
 
+    def _resolve_model_string(self, channel_id: int) -> Optional[str]:
+        """チャンネル上書き ＞ persona.model ＞ llm.model。"""
+        # チャンネル上書きを確認する
+        override = self._bot_channel_map().get(str(channel_id))
+        # 上書きがあればそれを返す
+        if override:
+            return override
+        # persona / 共通デフォルト
+        return self._persona_default_model()
+
     async def _get_llm_client_for_channel(self, channel_id: int) -> Optional[openai.AsyncOpenAI]:
-        model_string = self.channel_models.get(str(channel_id)) or self.llm_config.get('model')
+        model_string = self._resolve_model_string(channel_id)
         if not model_string:
-            logger.error("No default model is configured.")
+            logger.error("[%s] No default model is configured.", self._bot_tag())
             return None
         if model_string in self.llm_clients: return self.llm_clients[model_string]
-        logger.info(f"Initializing a new LLM client for model '{model_string}' for channel {channel_id}")
+        logger.info(f"[{self._bot_tag()}] Initializing LLM client '{model_string}' for channel {channel_id}")
         client = self._initialize_llm_client(model_string)
         if client: self.llm_clients[model_string] = client
         return client
@@ -517,13 +615,11 @@ class LLMCog(commands.Cog, name="LLM"):
     )
 
     async def _prepare_system_prompt(self, channel_id: int, user_id: int, user_display_name: str) -> str:
-        """system_prompt と language_prompt を1本の system メッセージへ結合して返す。
-
-        Mistral 等は複数 system を弱い扱い／無視しやすいため、
-        language_prompt は別 role ではなく同一 content へ統合する。
-        """
-        # config からシステムプロンプトテンプレートを取得する
-        system_prompt_template = self.llm_config.get('system_prompt', '')
+        """persona system_prompt + tools_prompt + language を1本に結合する。"""
+        # personas から自人格テンプレートを取る
+        personas = self.llm_config.get("personas") or {}
+        persona_entry = personas.get(self.persona_key) or {}
+        system_prompt_template = persona_entry.get("system_prompt") or self.llm_config.get("system_prompt", "")
 
         # 日付は ISO 形式にし、システム側の日本語文字混入を避ける
         current_date_str = datetime.now(self.jst).strftime('%Y-%m-%d')
@@ -547,6 +643,14 @@ class LLMCog(commands.Cog, name="LLM"):
                 .replace('{available_commands}', '')
             )
 
+        # role に応じた tools_prompt を末尾へ連結する
+        if self.bot_role == "companion":
+            tools_prompt = self.llm_config.get("tools_prompt_arona") or ""
+        else:
+            tools_prompt = self.llm_config.get("tools_prompt") or ""
+        if tools_prompt and tools_prompt.strip():
+            system_prompt = f"{system_prompt.rstrip()}\n\n{tools_prompt.strip()}"
+
         # 先頭に言語固定を置き、日本語例より先に制約を効かせる
         system_prompt = f"{self._LANGUAGE_ENFORCEMENT_BLOCK}\n\n{system_prompt.lstrip()}"
 
@@ -555,15 +659,91 @@ class LLMCog(commands.Cog, name="LLM"):
             # config の言語指示を同一 system 末尾へ付ける
             system_prompt = f"{system_prompt.rstrip()}\n\n{self.language_prompt.strip()}"
             # 結合済みであることをログに残す
-            logger.info("🌐 [LANG] Merged language_prompt into single system message")
+            logger.info("[%s] 🌐 [LANG] Merged language_prompt into single system message", self._bot_tag())
 
         # 末尾にもコード側の言語固定を重ね、最終指示として残す
         system_prompt = f"{system_prompt.rstrip()}\n\n{self._LANGUAGE_ENFORCEMENT_BLOCK}"
 
         # 最終プロンプト長をログに出す
-        logger.info(f"🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
+        logger.info(f"[{self._bot_tag()}] 🔧 [SYSTEM] System prompt prepared ({len(system_prompt)} chars)")
         # 結合済みの単一システムプロンプトを返す
         return system_prompt
+
+    def _redirect_to_plana_message(self, guild: Optional[discord.Guild] = None) -> str:
+        """ARONA→PLANA 誘導文（在籍時メンション / 不在時 invite）。"""
+        # 文言を config から取る
+        redirect = self.config.get("redirect_to_plana") or {}
+        ja = redirect.get("ja") or "その機能は PLANA 側で使えます。"
+        en = redirect.get("en") or "That feature is available on PLANA."
+        # PLANA invite
+        bots = self.config.get("bots") or {}
+        plana = bots.get("plana") or {}
+        invite = plana.get("invite_url") or ""
+        # 在籍確認
+        mention = "PLANA"
+        try:
+            from MOMOKA.bots.registry import registry
+            plana_uid = registry.user_id("plana")
+            if guild is not None and plana_uid is not None:
+                # 同期的にキャッシュを見る（詳細確認は呼び出し側で可）
+                member = guild.get_member(plana_uid)
+                if member is not None:
+                    mention = f"<@{plana_uid}>"
+                else:
+                    mention = f"PLANA ({invite})" if invite else "PLANA"
+            elif invite:
+                mention = f"PLANA ({invite})"
+        except Exception:
+            pass
+        return f"{ja}\n{en}\n→ {mention}"
+
+    async def generate_plain(
+        self,
+        *,
+        system: str,
+        user_content: str,
+        max_chars: int = 800,
+    ) -> str:
+        """tools なしの一括生成（討論・cross_check 用）。"""
+        # モデル解決（チャンネル無し → persona デフォルト）
+        model_string = self._persona_default_model()
+        if not model_string:
+            return ""
+        # クライアント取得
+        if model_string in self.llm_clients:
+            client = self.llm_clients[model_string]
+        else:
+            client = self._initialize_llm_client(model_string)
+            if client:
+                self.llm_clients[model_string] = client
+        if not client:
+            return ""
+        # メッセージ組み立て
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ]
+        # extra パラメータ
+        extra = dict(self.llm_config.get("extra_api_parameters") or {})
+        # max_tokens を控えめに
+        extra.setdefault("max_tokens", min(1024, max_chars * 2))
+        try:
+            # 非ストリーム完了
+            resp = await client.chat.completions.create(
+                model=client.model_name_for_api_calls,
+                messages=messages,
+                stream=False,
+                **{k: v for k, v in extra.items() if k != "stream"},
+            )
+            # 本文取り出し
+            text = (resp.choices[0].message.content or "").strip()
+            # 文字数制限
+            if len(text) > max_chars:
+                text = text[: max_chars - 1] + "…"
+            return text
+        except Exception as e:
+            logger.error("[%s] generate_plain failed: %s", self._bot_tag(), e, exc_info=True)
+            return f"(generation error: {e})"
 
     def _format_user_text_for_api(self, timestamp: str, text: str, *, mirror_language: bool = False) -> str:
         """API 送信用のユーザー本文を組み立てる。
@@ -586,12 +766,9 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def get_tools_definition(self) -> Optional[List[Dict[str, Any]]]:
         definitions = []
-        active_tools = self.llm_config.get('active_tools', [])
+        active_tools = self._active_tools_list()
 
-        logger.info(f"🔍 [TOOLS] Active tools from config: {active_tools}")
-        logger.debug(f"🔍 [TOOLS] Plugin status: search_agent={self.search_agent is not None}, "
-                     f"image_generator={self.image_generator is not None}, "
-                     f"command_manager={self.command_manager is not None}")
+        logger.info(f"[{self._bot_tag()}] 🔍 [TOOLS] Active tools: {active_tools}")
 
         if 'search' in active_tools:
             if self.search_agent:
@@ -612,7 +789,13 @@ class LLMCog(commands.Cog, name="LLM"):
             else:
                 logger.warning(f"⚠️ [TOOLS] 'get_commands_info' is in active_tools but command_manager is None")
 
-        logger.info(f"🔧 [TOOLS] Total tools to return: {len(definitions)}")
+        # debate / cross_check
+        if 'debate' in active_tools and self.debate_tool:
+            definitions.append(self.debate_tool.tool_spec)
+        if 'cross_check' in active_tools and self.cross_check_tool:
+            definitions.append(self.cross_check_tool.tool_spec)
+
+        logger.info(f"[{self._bot_tag()}] 🔧 [TOOLS] Total tools: {len(definitions)}")
 
         return definitions or None
 
@@ -904,6 +1087,9 @@ class LLMCog(commands.Cog, name="LLM"):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot: return
+        # 討論中チャンネルは通常 LLM 応答を抑止する（履歴汚染防止）
+        if channel_lock.is_debate_active(message.channel.id):
+            return
         
         # スレッド内ではBotのメッセージへのリプライのみに反応
         is_thread = isinstance(message.channel, discord.Thread)
@@ -949,7 +1135,7 @@ class LLMCog(commands.Cog, name="LLM"):
         logger.info(
             f"📨 Received LLM request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(text_content)} chars | images={len(image_contents)}")
         if text_content: logger.info(
-            f"[on_message] {message.guild.name if message.guild else 'DM'}({message.guild.id if message.guild else 0}),{message.author.name}({message.author.id})💬 [USER_INPUT] {((text_content[:200] + '...') if len(text_content) > 203 else text_content).replace(chr(10), ' ')}")
+            f"[{self._bot_tag()}] [on_message] {message.guild.name if message.guild else 'DM'}({message.guild.id if message.guild else 0}),{message.author.name}({message.author.id})💬 [USER_INPUT] {((text_content[:200] + '...') if len(text_content) > 203 else text_content).replace(chr(10), ' ')}")
         thread_id = await self._get_conversation_thread_id(message)
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
@@ -991,7 +1177,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     f"✅ LLM response completed | model='{model_in_use}' | response_length={len(llm_response)} chars")
                 log_response = (llm_response[:200] + '...') if len(llm_response) > 203 else llm_response
                 key_log_str = f" [key{used_key_index + 1}]" if used_key_index is not None else ""
-                logger.info(f"🤖 [LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
+                logger.info(f"🤖 [LLM_RESPONSE][{self._bot_tag()}]{key_log_str} {log_response.replace(chr(10), ' ')}")
                 logger.debug(f"LLM full response (length: {len(llm_response)} chars):\n{llm_response}")
                 guild_id = message.guild.id if message.guild else 0  # DMの場合は0
                 
@@ -1245,7 +1431,7 @@ class LLMCog(commands.Cog, name="LLM"):
 
     async def _llm_stream_and_tool_handler(self, messages: List[Dict[str, Any]], client: openai.AsyncOpenAI,
                                            channel_id: int, user_id: int) -> AsyncGenerator[str, None]:
-        model_string = self.channel_models.get(str(channel_id)) or self.llm_config.get('model')
+        model_string = self._resolve_model_string(channel_id)
         is_gemini = model_string and 'gemini' in model_string.lower()
 
         if is_gemini:
@@ -1552,6 +1738,27 @@ class LLMCog(commands.Cog, name="LLM"):
                     tool_response_content = await self.command_manager.run(arguments=function_args)
                     logger.debug(
                         f"🔧 [TOOL] CommandInfo result (length: {len(tool_response_content)} chars)")
+                elif self.debate_tool and function_name == self.debate_tool.name:
+                    # 討論開始（バックグラウンド完走・即返し）
+                    tool_response_content = await self.debate_tool.run(
+                        arguments=function_args,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    logger.info("[%s] debate tool started", self._bot_tag())
+                elif self.cross_check_tool and function_name == self.cross_check_tool.name:
+                    # Step1/2 投稿後、検証全文を返す（Step3 は LLM 最終応答）
+                    tool_response_content = await self.cross_check_tool.run(
+                        arguments=function_args,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    logger.info("[%s] cross_check completed", self._bot_tag())
+                elif function_name == "image_generator" and self.bot_role == "companion":
+                    # ARONA に画像ツールが誤って来た場合の PLANA 誘導
+                    ch = self.bot.get_channel(channel_id)
+                    guild = getattr(ch, "guild", None) if ch else None
+                    tool_response_content = self._redirect_to_plana_message(guild)
                 else:
                     logger.warning(f"⚠️ Unsupported tool called: {raw_function_name} (normalized: {function_name})")
                     error_content = f"Error: Tool '{function_name}' is not available."
@@ -1581,12 +1788,13 @@ class LLMCog(commands.Cog, name="LLM"):
             await asyncio.sleep(3 * 60 * 60)
             logger.info(f"Executing scheduled model reset for channel {channel_id}.")
             channel_id_str = str(channel_id)
-            if channel_id_str in self.channel_models:
-                default_model, current_model = self.llm_config.get('model'), self.channel_models.get(channel_id_str)
+            bot_map = self._bot_channel_map()
+            if channel_id_str in bot_map:
+                default_model, current_model = self._persona_default_model(), bot_map.get(channel_id_str)
                 if current_model and current_model != default_model:
-                    del self.channel_models[channel_id_str]
+                    del bot_map[channel_id_str]
                     await self._save_channel_models()
-                    logger.info(f"Model for channel {channel_id} automatically reset to default '{default_model}'.")
+                    logger.info(f"[{self._bot_tag()}] Model for channel {channel_id} auto-reset to '{default_model}'.")
                     channel = self.bot.get_channel(channel_id)
                     if channel and isinstance(channel, discord.TextChannel):
                         try:
@@ -1675,7 +1883,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
                 log_response, key_log_str = (full_response_text[:200] + '...') if len(
                     full_response_text) > 203 else full_response_text, f" [key{used_key_index + 1}]" if used_key_index is not None else ""
-                logger.info(f"🤖 [LLM_RESPONSE]{key_log_str} {log_response.replace(chr(10), ' ')}")
+                logger.info(f"🤖 [LLM_RESPONSE][{self._bot_tag()}]{key_log_str} {log_response.replace(chr(10), ' ')}")
                 logger.debug(
                     f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
                 # /chat は履歴非保存のため、メンション/リプライへ誘導する案内を末尾に付与する
@@ -1726,12 +1934,12 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=self._create_support_view())
             return
         channel_id, channel_id_str, default_model = interaction.channel_id, str(
-            interaction.channel_id), self.llm_config.get('model')
+            interaction.channel_id), self._persona_default_model()
         if channel_id in self.model_reset_tasks:
             self.model_reset_tasks[channel_id].cancel()
             self.model_reset_tasks.pop(channel_id, None)
             logger.info(f"Cancelled previous model reset task for channel {channel_id}.")
-        self.channel_models[channel_id_str] = model
+        self._bot_channel_map()[channel_id_str] = model
         try:
             await self._save_channel_models()
             await self._get_llm_client_for_channel(interaction.channel_id)
@@ -1744,14 +1952,14 @@ class LLMCog(commands.Cog, name="LLM"):
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
                 logger.info(
-                    f"Model for channel {channel_id} switched to '{model}' by {interaction.user.name}. Reset scheduled in 3 hours.")
+                    f"[{self._bot_tag()}] Model for channel {channel_id} switched to '{model}' by {interaction.user.name}.")
             else:
                 embed = discord.Embed(title="✅ Model Reset to Default / モデルをデフォルトに戻しました",
                                       description=f"The AI model for this channel has been reset to the default `{model}`.\nこのチャンネルのAIモデルがデフォルトの `{model}` に戻されました。",
                                       color=discord.Color.green())
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
-                logger.info(f"Model for channel {channel_id} switched to default '{model}' by {interaction.user.name}.")
+                logger.info(f"[{self._bot_tag()}] Model for channel {channel_id} switched to default '{model}'.")
         except Exception as e:
             logger.error(f"Failed to save channel model settings: {e}", exc_info=True)
             embed = discord.Embed(title="❌ Save Error / 保存エラー",
@@ -1769,11 +1977,11 @@ class LLMCog(commands.Cog, name="LLM"):
             self.model_reset_tasks[channel_id].cancel()
             self.model_reset_tasks.pop(channel_id, None)
             logger.info(f"Cancelled scheduled model reset for channel {channel_id} due to manual reset.")
-        if channel_id_str in self.channel_models:
-            del self.channel_models[channel_id_str]
+        if channel_id_str in self._bot_channel_map():
+            del self._bot_channel_map()[channel_id_str]
             try:
                 await self._save_channel_models()
-                default_model = self.llm_config.get('model', 'Not set / 未設定')
+                default_model = self._persona_default_model() or 'Not set / 未設定'
                 embed = discord.Embed(title="✅ Model Reset to Default / モデルをデフォルトに戻しました",
                                       description=f"The AI model for this channel has been reset to the default (`{default_model}`).\nこのチャンネルのAIモデルをデフォルト (`{default_model}`) に戻しました。",
                                       color=discord.Color.green())
@@ -1830,6 +2038,13 @@ class LLMCog(commands.Cog, name="LLM"):
     @app_commands.autocomplete(model=image_model_autocomplete)
     async def switch_image_model_slash(self, interaction: discord.Interaction, model: str):
         await interaction.response.defer(ephemeral=False)
+        # companion (ARONA) では画像機能を拒否して PLANA へ誘導する
+        if self.bot_role == "companion":
+            await interaction.followup.send(
+                self._redirect_to_plana_message(interaction.guild),
+                ephemeral=True,
+            )
+            return
         if not self.image_generator:
             embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
                                   description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
@@ -1886,6 +2101,13 @@ class LLMCog(commands.Cog, name="LLM"):
                           description="Show the current image generation model for this channel. / このチャンネルの現在の画像生成モデルを表示します。")
     async def show_image_model_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
+        # companion では PLANA へ誘導する
+        if self.bot_role == "companion":
+            await interaction.followup.send(
+                self._redirect_to_plana_message(interaction.guild),
+                ephemeral=True,
+            )
+            return
         if not self.image_generator:
             embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
                                   description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
@@ -1923,6 +2145,13 @@ class LLMCog(commands.Cog, name="LLM"):
     @app_commands.describe(provider="Filter by provider (optional). / プロバイダーで絞り込み（オプション）")
     async def list_image_models_slash(self, interaction: discord.Interaction, provider: str = None):
         await interaction.response.defer(ephemeral=False)
+        # companion では PLANA へ誘導する
+        if self.bot_role == "companion":
+            await interaction.followup.send(
+                self._redirect_to_plana_message(interaction.guild),
+                ephemeral=True,
+            )
+            return
         if not self.image_generator:
             embed = discord.Embed(title="❌ Plugin Error / プラグインエラー",
                                   description="ImageGenerator is not available.\nImageGeneratorが利用できません。",
@@ -1973,58 +2202,6 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
         else:
             await interaction.followup.send(embed=embed, view=view, ephemeral=False)
-
-    @app_commands.command(name="llm_help",
-                          description="Displays help and usage guidelines for LLM (AI Chat) features.\nLLM (AI対話) 機能のヘルプと利用ガイドラインを表示します。")
-    async def llm_help_slash(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        bot_user = self.bot.user or interaction.client.user
-        bot_name = bot_user.name if bot_user else "This Bot / 当Bot"
-        embed = discord.Embed(title=f"💡 {bot_name} AI Chat Help & Guidelines / AI対話機能ヘルプ＆ガイドライン",
-                              description=f"Explanation and terms of use for the AI chat features.\n{bot_name}のAI対話機能についての説明と利用規約です。",
-                              color=discord.Color.purple())
-        if bot_user and bot_user.avatar: embed.set_thumbnail(url=bot_user.avatar.url)
-        embed.add_field(name="Basic Usage / 基本的な使い方",
-                        value=f"• Mention the bot (`@{bot_name}`) to get a response from the AI.\n  Botにメンション (`@{bot_name}`) して話しかけると、AIが応答します。\n• **You can also continue the conversation by replying to the bot's messages (no mention needed).**\n  **Botのメッセージに返信することでも会話を続けられます（メンション不要）。**\n• If you ask the AI to remember something, it will try to store that information.\n  「私の名前は〇〇です。覚えておいて」のように話しかけると、AIがあなたの情報を記憶しようとします。\n• Attach images or paste image URLs with your message, and the AI will try to understand them.\n  画像と一緒に話しかけると、AIが画像の内容も理解しようとします。",
-                        inline=False)
-
-        # Split "Useful Commands" into multiple fields to avoid character limits
-        embed.add_field(name="Commands - AI/Channel Settings / コマンド - AI/チャンネル設定",
-                        value="• `/switch-models`: Change the AI model used in this channel. / このチャンネルで使うAIモデルを変更します。",
-                        inline=False)
-
-        embed.add_field(name="Commands - Image Generation / コマンド - 画像生成",
-                        value="• `/switch-image-model`: Switch the image generation model for this channel. / このチャンネルの画像生成モデルを切り替えます。\n"
-                              "• `/reset-image-model`: Reset the image generation model to default. / 画像生成モデルをデフォルトに戻します。\n"
-                              "• `/show-image-model`: Show the current image generation model. / 現在の画像生成モデルを表示します。\n"
-                              "• `/list-image-models`: List all available image generation models. / 利用可能な全画像生成モデルを一覧表示します。",
-                        inline=False)
-
-        embed.add_field(name="Commands - Other / コマンド - その他",
-                        value="• `/chat`: Chat with the AI without needing to mention. / AIとメンションなしで対話します。\n"
-                              "• `/clear_history`: Reset the conversation history. / 会話履歴をリセットします。",
-                        inline=False)
-                        
-        channel_model_str = self.channel_models.get(str(interaction.channel_id))
-        model_display = f"`{channel_model_str}` (Channel-specific / このチャンネル専用)" if channel_model_str else f"`{self.llm_config.get('model', 'Not set / 未設定')}` (Default / デフォルト)"
-        active_tools = self.llm_config.get('active_tools', [])
-        tools_info = "• None / なし" if not active_tools else "• " + ", ".join(active_tools)
-        embed.add_field(name="Current AI Settings / 現在のAI設定",
-                        value=f"• **Model in Use / 使用モデル:** {model_display}\n• **Max Conversation History / 会話履歴の最大保持数:** {self.llm_config.get('max_messages', 'Not set / 未設定')} pairs\n• **Max Images at Once / 一度に処理できる最大画像枚数:** {self.llm_config.get('max_images', 'Not set / 未設定')} image(s)\n• **Available Tools / 利用可能なツール:** {tools_info}",
-                        inline=False)
-        embed.add_field(name="--- 📜 AI Usage Guidelines / AI利用ガイドライン ---",
-                        value="Please review the following to ensure safe use of the AI features.\nAI機能を安全にご利用いただくため、以下の内容を必ずご確認ください。",
-                        inline=False)
-        embed.add_field(name="⚠️ 1. Data Input Precautions / データ入力時の注意",
-                        value="**NEVER include personal or confidential information** such as your name, contact details, or passwords.\nAIに記憶させる情報には、氏名、連絡先、パスワードなどの**個人情報や秘密情報を絶対に含めないでください。**",
-                        inline=False)
-        embed.add_field(name="✅ 2. Precautions for Using Generated Output / 生成物利用時の注意",
-                        value="The AI's responses may contain inaccuracies or biases. **Always fact-check and use them at your own risk.**\nAIの応答には虚偽や偏見が含まれる可能性があります。**必ずファクトチェックを行い、自己の責任で利用してください。**",
-                        inline=False)
-        embed.set_footer(
-            text="These guidelines are subject to change without notice.\nガイドラインは予告なく変更される場合があります。")
-        self._add_support_footer(embed)
-        await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
 
     @app_commands.command(name="clear_history",
                           description="Clears the history of the current conversation thread.\n現在の会話スレッドの履歴をクリアします。")

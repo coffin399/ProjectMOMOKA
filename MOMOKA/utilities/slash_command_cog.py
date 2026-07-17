@@ -14,6 +14,8 @@ from discord.ext import commands
 
 # ユーザー指定のエラークラスをインポート
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
+# /help /invite 用 Components V2 LayoutView
+from MOMOKA.utilities.help_view import HelpLayoutView, InviteLayoutView, resolve_invite_urls
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +38,6 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
                 return self.bot.config.get(key)
             return default
 
-        # configから必要な値を取得
-        self.arona_repository = _cfg(
-            "arona_repository_url",
-            "https://github.com/coffin399/music-bot-arona",
-        )
-        self.plana_repository = _cfg(
-            "plana_repository_url",
-            "https://github.com/coffin399/llmcord-JP-plana",
-        )
         # /updates 用リポジトリ（MOMOKA本体のコミット履歴）
         self.updates_repository = _cfg(
             "updates_repository_url",
@@ -52,17 +45,14 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         )
         self.support_x_url = _cfg("support_x_url", "https://x.com/coffin299")
         self.support_discord_id = _cfg("support_discord_id", "coffin299")
-        self.bot_invite_url = _cfg("bot_invite_url")
 
-        if not self.bot_invite_url:
+        # bots.*.invite_url の有無を起動時に確認する（単一 bot_invite_url は廃止）
+        plana_invite, arona_invite = resolve_invite_urls(bot)
+        if not plana_invite and not arona_invite:
             logger.error(
-                "CRITICAL: config.yaml に 'bot_invite_url' が設定されていません。/invite コマンドは機能しません。")
-        elif self.bot_invite_url in ["YOUR_BOT_INVITE_LINK_HERE", "HOGE_FUGA_PIYO"]:
-            logger.error(
-                "CRITICAL: 'bot_invite_url' がプレースホルダのままです。/invite コマンドは正しく機能しません。config.yamlを確認してください。")
-
-        self.generic_help_message_text_ja = _cfg("generic_help_message_ja", "ヘルプ")
-        self.generic_help_message_text_en = _cfg("generic_help_message_en", "Help")
+                "CRITICAL: bots.plana.invite_url / bots.arona.invite_url が未設定です。"
+                "/invite コマンドは機能しません。"
+            )
 
     async def cog_unload(self) -> None:
         await self.session.close()
@@ -295,34 +285,6 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         await interaction.response.send_message(embed=embed, view=self._create_support_view(), ephemeral=False)
         logger.info(f"/avatar が実行されました。 (TargetUser: {target_user.id}, Requester: {interaction.user.id})")
 
-    @app_commands.command(name="arona",
-                          description="Arona Music Botのリポジトリを表示します / Shows the Arona Music Bot repository")
-    async def arona_repo_slash(self, interaction: discord.Interaction) -> None:
-        if self.arona_repository:
-            await interaction.response.send_message(
-                f"アロナ (Arona Music Bot) のリポジトリはこちらです！\n{self.arona_repository}\n\nHere is the repository for Arona (Arona Music Bot)!\n{self.arona_repository}",
-                ephemeral=False)
-            logger.info(f"/arona が実行されました。 (User: {interaction.user.id})")
-        else:
-            await interaction.response.send_message(
-                "Arona Music BotのリポジトリURLが設定されていません。\nThe repository URL for Arona Music Bot is not set.",
-                ephemeral=False)
-            logger.warning(f"/arona が実行されましたが、リポジトリURL未設定。 (User: {interaction.user.id})")
-
-    @app_commands.command(name="plana",
-                          description="llmcord-JP-planaのリポジトリを表示します / Shows the llmcord-JP-plana repository")
-    async def plana_repo_slash(self, interaction: discord.Interaction) -> None:
-        if self.plana_repository:
-            await interaction.response.send_message(
-                f"プラナ (llmcord-JP-plana) のリポジトリはこちらです！\n{self.plana_repository}\n\nHere is the repository for Plana (llmcord-JP-plana)!\n{self.plana_repository}",
-                ephemeral=False)
-            logger.info(f"/plana が実行されました。 (User: {interaction.user.id})")
-        else:
-            await interaction.response.send_message(
-                "llmcord-JP-planaのリポジトリURLが設定されていません。\nThe repository URL for llmcord-JP-plana is not set.",
-                ephemeral=False)
-            logger.warning(f"/plana が実行されましたが、リポジトリURL未設定。 (User: {interaction.user.id})")
-
     @app_commands.command(name="support",
                           description="開発者へのお問い合わせ方法を表示します / Shows how to contact the developer")
     async def support_contact_slash(self, interaction: discord.Interaction) -> None:
@@ -385,27 +347,14 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         logger.info(f"/support が実行されました。 (User: {interaction.user.id})")
 
     @app_commands.command(name="invite",
-                          description="このBotをあなたのサーバーに招待します。/ Invites this bot to your server.")
+                          description="PLANA / ARONA の招待リンクを表示します。/ Shows invite links for PLANA and ARONA.")
     async def invite_bot_slash(self, interaction: discord.Interaction) -> None:
-        invite_url_to_display = self.bot_invite_url
-        bot_name = self.bot.user.name if self.bot.user else "This Bot"
-        if invite_url_to_display and invite_url_to_display not in ["YOUR_BOT_INVITE_LINK_HERE", "HOGE_FUGA_PIYO"]:
-            embed = discord.Embed(title=f"{bot_name} をサーバーに招待 / Invite {bot_name} to Your Server",
-                                  description=f"下のボタンからPLANAをあなたのサーバーに招待できます！\n\nYou can invite PLANA to your server using the button below!",
-                                  color=discord.Color.og_blurple())
-            if self.bot.user and self.bot.user.avatar: embed.set_thumbnail(url=self.bot.user.avatar.url)
-            embed.set_footer(text=f"{bot_name} をご利用いただきありがとうございます！\nThank you for using {bot_name}!")
-            view = discord.ui.View()
-            view.add_item(discord.ui.Button(label="サーバーに招待 / Invite to Server", style=discord.ButtonStyle.link,
-                                            url=invite_url_to_display, emoji="💌"))
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=False)
-            logger.info(f"/invite が実行されました。 (User: {interaction.user.id})")
-        else:
-            await interaction.response.send_message(
-                "エラー: Botの招待URLが `config.yaml` に正しく設定されていません。\nBotの管理者にご連絡ください。\n\nError: The bot's invitation URL is not set correctly in `config.yaml`.\nPlease contact the bot administrator.",
-                ephemeral=False)
-            logger.error(
-                f"/invite が実行されましたが、招待URLがconfig.yamlに未設定またはプレースホルダです。 (User: {interaction.user.id})")
+        # Components V2 は embed 併用不可のため view のみ送信する
+        view = InviteLayoutView(self.bot)
+        # LayoutView メッセージを返す
+        await interaction.response.send_message(view=view)
+        # 実行ログ
+        logger.info(f"/invite が実行されました。 (User: {interaction.user.id})")
 
     @app_commands.command(name="updates",
                           description="Botの最新のアップデート履歴（コミットログ）を表示します。/ Shows the bot's latest update history (commit log).")
@@ -483,108 +432,11 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
     @app_commands.command(name="help",
                           description="Botのヘルプ情報を表示します。/ Displays help information for the bot.")
     async def help_slash_command(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
-        bot_name_ja = self.bot.user.name if self.bot.user else "当Bot"
-        bot_name_en = self.bot.user.name if self.bot.user else "This Bot"
-        bot_avatar_url = self.bot.user.avatar.url if self.bot.user and self.bot.user.avatar else None
-        prefix = await self.get_prefix_from_config()
-        embed = discord.Embed(
-            title=f"📜 {bot_name_ja} ヘルプ / {bot_name_en} Help",
-            description=f"{self.generic_help_message_text_ja}\n\n{self.generic_help_message_text_en}",
-            color=discord.Color.teal()
-        )
-        if bot_avatar_url:
-            embed.set_thumbnail(url=bot_avatar_url)
-        desc_ja_detail = "より詳細な情報は、以下のコマンドで確認できます。"
-        desc_en_detail = "For more detailed information, please check the following commands:"
-        llm_help_cmd_ja = "• **AI対話機能:** `/llm_help` (または `/llm_help_en`)"
-        llm_help_cmd_en = "• **AI Chat (LLM):** `/llm_help` (or `/llm_help_en`)"
-        music_help_cmd_ja = "• **音楽再生機能:** `/music_help`"
-        music_help_cmd_en = "• **Music Playback:** `/music_help` (or `/music_help_en`)"
-        prefix_info_ja = f"プレフィックスコマンドも利用可能です (現在のプレフィックス: `none` )。"
-        prefix_info_en = f"(Prefix commands are also available. Current prefix: `none` )"
-        embed.add_field(
-            name="基本情報 / Basic Information",
-            value=f"{desc_ja_detail}\n{llm_help_cmd_ja}\n{music_help_cmd_ja}\n{prefix_info_ja}\n\n"
-                  f"{desc_en_detail}\n{llm_help_cmd_en}\n{music_help_cmd_en}\n{prefix_info_en}",
-            inline=False
-        )
-        main_features_title_ja = "主な機能"
-        main_features_ja_val = (
-            "- **AIとの対話 (LLM):** メンションで話しかけるとAIが応答します。画像も認識可能です。\n"
-            "- **音楽再生:** ボイスチャンネルで音楽を再生、キュー管理、各種操作ができます。\n"
-            "- **画像検索:** 猫の画像を表示できます。\n"
-            "- **情報表示:** サーバー情報、ユーザー情報、Botのレイテンシなどを表示します。"
-        )
-        main_features_en_val = (
-            "- **AI Chat (LLM):** Mention the bot to talk with AI. It can also recognize images (if model supports).\n"
-            "- **Music Playback:** Play music in voice channels, manage queues, and perform various operations.\n"
-            "- **Image Search:** Display cat pictures.\n"
-            "- **Information Display:** Show server info, user info, bot latency, etc."
-        )
-        embed.add_field(
-            name=f"{main_features_title_ja} / Main Features",
-            value=f"{main_features_ja_val}\n\n{main_features_en_val}",
-            inline=False
-        )
-        utility_cmds_ja = [
-            f"`/check <表記> [条件] [目標値]` - ダイスロールと任意での条件判定",
-            f"`/roll <表記>` - nDn形式でダイスロール (例: 2d6+3)",
-            f"`/diceroll <最小値> <最大値>` - 指定範囲でダイスロール",
-            f"`/gacha` - ブルーアーカイブ風ガチャ",
-            f"`/earthquake <チャンネル>` - 緊急地震速報の通知チャンネルを設定",
-            f"`/test_earthquake` - 地震速報のテスト通知を送信",
-            f"`/ping` - Botの応答速度を確認",
-            f"`/serverinfo` - サーバー情報を表示",
-            f"`/userinfo [ユーザー]` - ユーザー情報を表示",
-            f"`/avatar [ユーザー]` - アバター画像を表示",
-            f"`/invite` - Botの招待リンクを表示",
-            f"`/updates` - Botのアップデート履歴を表示",
-            f"`/meow` - ランダムな猫の画像を表示",
-            f"`/support` - 開発者への連絡方法を表示"
-        ]
-        utility_cmds_en = [
-            f"`/check <notation> [cond] [target]` - Rolls dice and optionally performs a check",
-            f"`/roll <notation>` - Rolls dice in nDn format (e.g., 2d6+3)",
-            f"`/diceroll <min> <max>` - Rolls a dice in a specified range",
-            f"`/gacha` - Simulates Blue Archive gacha",
-            f"`/earthquake <channel>` - Sets channel for Earthquake Early Warnings(JapanOnly)",
-            f"`/test_earthquake` - Sends a test Earthquake Early Warning",
-            f"`/ping` - Check bot's latency",
-            f"`/serverinfo` - Display server info",
-            f"`/userinfo [user]` - Display user info",
-            f"`/avatar [user]` - Display avatar",
-            f"`/invite` - Display bot invite link",
-            f"`/updates` - Shows the bot's update history",
-            f"`/meow` - Displays a random cat picture",
-            f"`/support` - Shows how to contact the developer"
-        ]
-        if self.plana_repository:
-            utility_cmds_ja.append(f"`/plana` - Plana (Bot)リポジトリ")
-            utility_cmds_en.append(f"`/plana` - Plana (Bot) repository")
-        if self.arona_repository:
-            utility_cmds_ja.append(f"`/arona` - Arona (Music)リポジトリ")
-            utility_cmds_en.append(f"`/arona` - Arona (Music) repository")
-        embed.add_field(name="便利なコマンド (Japanese)", value="\n".join(utility_cmds_ja), inline=False)
-        embed.add_field(name="Useful Commands (English)", value="\n".join(utility_cmds_en), inline=False)
-        footer_ja = "<> は必須引数、[] は任意引数を表します。"
-        footer_en = "<> denotes a required argument, [] denotes an optional argument."
-        embed.set_footer(text=f"{footer_ja}\n{footer_en}")
-        self._add_support_footer(embed)
-        view_items = []
-        if self.bot_invite_url and self.bot_invite_url not in ["YOUR_BOT_INVITE_LINK_HERE", "HOGE_FUGA_PIYO"]:
-            view_items.append(discord.ui.Button(label="Botを招待 / Invite Bot", style=discord.ButtonStyle.link,
-                                                url=self.bot_invite_url))
-        if view_items:
-            view = discord.ui.View()
-            for item in view_items:
-                view.add_item(item)
-            support_view = self._create_support_view()
-            for item in support_view.children:
-                view.add_item(item)
-            await interaction.followup.send(embed=embed, view=view, ephemeral=False)
-        else:
-            await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
+        # Components V2 LayoutView のみ送信（embed 非併用）
+        view = HelpLayoutView(self.bot, page=0)
+        # ヘルプパネルを返す
+        await interaction.response.send_message(view=view)
+        # 実行ログ
         logger.info(f"/help が実行されました。 (User: {interaction.user.id})")
 
 

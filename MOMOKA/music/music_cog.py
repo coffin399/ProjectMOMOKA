@@ -1916,52 +1916,6 @@ class MusicCog(commands.Cog, name="music_cog"):
                 ephemeral=True,
             )
 
-    @commands.hybrid_command(name="music_help", description="音楽機能のコマンド一覧と使い方を表示します。")
-    async def music_help(self, ctx: commands.Context):
-        await ctx.defer(ephemeral=False)
-        prefix = str(self.bot.command_prefix).strip('"'+"'")
-        embed = discord.Embed(
-            title="🎵 音楽機能 ヘルプ / Music Feature Help",
-            description=f"音楽再生に関するコマンドの一覧です。\nコマンドはスラッシュ (`/`) またはプレフィックス (`{prefix}`) で始まります。",
-            color=discord.Color.from_rgb(79, 194, 255)
-        )
-        command_info = {
-            "▶️ 再生コントロール / Playback Control": [
-                {"name": "play", "args": "<song name or URL>", "desc_ja": "曲を再生/キュー追加",
-                 "desc_en": "Play/add a song"},
-                {"name": "pause", "args": "", "desc_ja": "一時停止", "desc_en": "Pause"},
-                {"name": "resume", "args": "", "desc_ja": "再生再開", "desc_en": "Resume"},
-                {"name": "stop", "args": "", "desc_ja": "再生停止＆キュークリア", "desc_en": "Stop & clear queue"},
-                {"name": "skip", "args": "", "desc_ja": "現在の曲をスキップ", "desc_en": "Skip song"},
-                {"name": "seek", "args": "<time>", "desc_ja": "指定時刻に移動", "desc_en": "Seek to time"},
-                {"name": "volume", "args": "<level 0-200>", "desc_ja": "音量変更", "desc_en": "Change volume"}
-            ],
-            "💿 キュー管理 / Queue Management": [
-                {"name": "queue", "args": "", "desc_ja": "キュー表示", "desc_en": "Display queue"},
-                {"name": "nowplaying", "args": "", "desc_ja": "現在再生中の曲", "desc_en": "Show current song"},
-                {"name": "shuffle", "args": "", "desc_ja": "キューをシャッフル", "desc_en": "Shuffle queue"},
-                {"name": "clear", "args": "", "desc_ja": "キューをクリア", "desc_en": "Clear queue"},
-                {"name": "remove", "args": "<queue number>", "desc_ja": "指定番号の曲を削除", "desc_en": "Remove song"},
-                {"name": "loop", "args": "<off|one|all>", "desc_ja": "ループモード設定", "desc_en": "Set loop mode"}
-            ],
-            "🔊 ボイスチャンネル / Voice Channel": [
-                {"name": "join", "args": "", "desc_ja": "VCに接続", "desc_en": "Join VC"},
-                {"name": "leave", "args": "", "desc_en": "Leave VC", "desc_ja": "VCから切断"}
-            ]
-        }
-        cog_command_names = {cmd.name for cmd in self.get_commands()}
-        for category, commands_in_category in command_info.items():
-            field_value = "".join(
-                f"`{prefix}{c['name']}{' ' + c['args'] if c['args'] else ''}`\n{c['desc_ja']} / {c['desc_en']}\n"
-                for c in commands_in_category if c['name'] in cog_command_names
-            )
-            if field_value:
-                embed.add_field(name=f"**{category}**", value=field_value, inline=False)
-
-        active_guilds = len(self.guild_states)
-        embed.set_footer(text=f"<> は引数を表します | Active: {active_guilds}/{self.max_guilds} servers")
-        await self._send_ctx_message(ctx, embed=embed)
-
     @commands.hybrid_group(name="reload", description="各種機能を再読み込みします。 / Reloads various features.")
     async def reload(self, ctx: commands.Context):
         if ctx.invoked_subcommand is None:

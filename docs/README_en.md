@@ -14,216 +14,79 @@
 
 ## Overview
 
-**MOMOKA** is a feature-rich Discord bot designed for Discord servers. It integrates various functions including AI chat, music playback, image generation, and notification features into a single bot.
+**MOMOKA** runs **two Discord bots in one process**: **PLANA** (primary) and **ARONA** (companion). Each bot works standalone for LLM chat and music. Debate and cross-check require both bots in the same guild.
+
+### Dual Bot
+
+| Bot | Role | Invite |
+|-----|------|--------|
+| **PLANA** | Primary — LLM, music, TTS, images, notifications, trackers, utilities | [Invite](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot) |
+| **ARONA** | Companion — LLM, music, utilities. TTS/images/notifications/trackers redirect to PLANA | [Invite](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot) |
+
+- Create **two Discord Applications** and enable **Message Content Intent** on both
+- The old root `config.yaml` / `config.default.yaml` are **not used** (no compatibility)
 
 ### Features
 
-- 🤖 **Multi-Model AI Chat** - Supports multiple AI providers including OpenAI, Google Gemini, NVIDIA NIM, and KoboldCPP
-- 🎵 **Advanced Music Playback** - Play music from YouTube, Spotify, Google Drive, and more
-- 🎨 **Image Generation** - Generate images using Stable Diffusion
-- 🗣️ **Text-to-Speech** - Convert text to speech using Style-Bert-VITS2
-- 📊 **Game Statistics Tracking** - Display stats for Rainbow Six Siege and VALORANT
-- 🔔 **Real-time Notifications** - Earthquake alerts and Twitch stream notifications
-- 🎲 **Useful Utilities** - Dice rolls, timers, media downloads, and more
+- 🤖 **Multi-model AI chat** — OpenAI, Google Gemini, NVIDIA NIM, KoboldCPP, and more
+- 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with a judge turn, or a light 3-step verification
+- 🎵 **Music playback** — YouTube, Spotify, Google Drive, and more (both bots)
+- 🎨 **Image generation / TTS / notifications / trackers** — **PLANA only**
+- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, and more
 
 ---
 
 ## Main Features
 
-### 1. AI Chat Feature (LLM)
+### 1. AI Chat (LLM)
 
-Simply mention the bot with `@<bot名>` to start chatting with AI! Supports multiple AI models and can recognize images.
+Mention `@PLANA` or `@ARONA` to chat.
 
 #### Supported Models
 
 - **OpenAI**: GPT-4o, GPT-4 Turbo
-- **Google**: Gemini 2.5 Flash, Gemini 2.5 Pro
+- **Google**: Gemini family
 - **NVIDIA NIM**: Kimi, Llama, DeepSeek R1, and more
-- **KoboldCPP**: Supports local LLM servers
+- **KoboldCPP**: Local LLM servers
 
-#### Main Features
+#### Highlights
 
-- Image recognition (for supported models)
-- Conversation history management
-- User information memory (`/set-user-bio`)
-- Global memory feature (`/memory-save`)
-- Image generation tool integration
-- Web search functionality
-- **🔄 Automatic API Key Rotation** - Configure multiple API keys to automatically switch to the next key when rate limit or server errors occur. Ensures stable operation even under high load
+- Image recognition (supported models)
+- History, user bio (`/set-user-bio`), global memory (`/memory-save`)
+- Web search
+- **debate** — Multi-round PLANA↔ARONA discussion, then a judge turn
+- **cross_check** — PLANA draft → ARONA review → PLANA conclusion (3 posts, no stop panel)
+- **Automatic API key rotation** on rate limits / server errors
 
-### 2. Music Playback Feature
+### 2. Music Playback
 
-Play music in voice channels. Provides queue management, loop, shuffle, and other features.
+Both bots can play in voice channels (queue, loop, shuffle, etc.).
 
-#### Supported Sources
+#### Sources
 
-- YouTube
-- Spotify
-- Google Drive
-- NicoNico Video
-- Other media supported by yt-dlp
+- YouTube / Spotify / Google Drive / NicoNico / other yt-dlp media
 
-#### Main Features
+### 3. Image Generation (PLANA only)
 
-- Queue management (up to 10,000 songs)
-- Loop playback (one song/all)
-- Shuffle
-- Volume adjustment (0-200%)
-- Seek (jump to specified time)
-- Playlist support
+Built-in **diffusers** engine (no external service required). Models under `models/image-models/`. Optional Stable Diffusion WebUI Forge API.
 
-### 3. Image Generation Feature
+Requests on ARONA are redirected to PLANA.
 
-Generate images using Stable Diffusion with the **built-in diffusers-based engine**. No external services required!
+### 4. Text-to-Speech (PLANA only)
 
-- **Built-in Diffusers Pipeline (Default)** – Fully integrated image generation engine using diffusers. Place models under `models/image-models/`
-- **Stable Diffusion WebUI Forge API (Optional)** – Alternative option to use your existing Forge instance via HTTP
+Integrated [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2). Models under `models/tts-models/`. See `NOTICE`.
 
-#### Built-in Diffusers Pipeline (Recommended)
+### 5. Game Trackers (PLANA only)
 
-1. Place your image models at:
-   
-   **Directory Structure:**
-   ```
-   models/
-   ├── image-models/
-   │   └── <image model name>/
-   │       └── <image model name>.safetensors
-   │       └── (optional) VAE, LoRA, model.json
-   └── tts-models/
-       └── <tts model name>/
-           └── <tts model name>.safetensors
-           └── (optional) config.json, style_vectors.npy
-   ```
-   
-   **Example:**
-   ```
-   models/
-   ├── image-models/
-   │   └── my-model/
-   │       └── my-model.safetensors
-   └── tts-models/
-       └── my-voice/
-           └── my-voice.safetensors
-   ```
-   
-   Supported extensions: `.safetensors`, `.ckpt`, `.pt`, `.bin` (VAE: `.vae`, `.safetensors`; LoRA: `.safetensors`, `.ckpt`, `.pt`)
-   Optional: VAE, LoRA, and `model.json` can be placed in the same directory
-2. Update `config.yaml`:
-   ```yaml
-   llm:
-     image_generator:
-       provider: "local"
-       # Optional: restrict visible models
-       available_models:
-         - "my_model.safetensors"
-   ```
-3. Install GPU-friendly dependencies (already listed in `requirements.txt`): `torch`, `diffusers`, `accelerate`, `safetensors`
-4. Optional memory optimizations:
-   - Enable xFormers (`pip install xformers`) for reduced VRAM usage
-   - Adjust `default_size`, `steps`, and `cfg_scale` to fit an 8GB GPU
+Rainbow Six Siege / VALORANT stats.
 
-#### Stable Diffusion WebUI Forge (Optional)
+### 6. Notifications (PLANA only)
 
-If you prefer to use an existing WebUI Forge instance instead of the built-in engine:
+Earthquake alerts and Twitch stream notifications.
 
-1. Set `provider: "forge"` in `config.yaml`
-2. Ensure Forge is running with the API enabled:
-   ```bash
-   python webui.py --api
-   ```
-3. Configure the Forge endpoint and models:
-   ```yaml
-   llm:
-     image_generator:
-       provider: "forge"
-       forge:
-         base_url: "http://127.0.0.1:7860"
-         txt2img_path: "/sdapi/v1/txt2img"
-       available_models:
-         - "sd_xl_base_1.0.safetensors"
-         - "v1-5-pruned-emaonly.safetensors"
-   ```
+### 7. Utilities
 
-#### Main Features
-
-- Image generation based on prompts
-- Multiple model switching (per-channel overrides supported)
-- Custom parameter settings
-- Negative prompt support
-
-### 4. Text-to-Speech Feature (TTS)
-
-Convert text to speech using the **fully integrated Style-Bert-VITS2 engine**. The complete [Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2) source code is built into this project. **No external API server needed!**
-
-**Setup:**
-
-**Directory Structure:**
-```
-models/
-└── tts-models/
-    └── <tts model name>/
-        └── <tts model name>.safetensors
-        └── (optional) config.json, style_vectors.npy
-```
-
-**Example:**
-```
-models/
-└── tts-models/
-    └── my-voice/
-        └── my-voice.safetensors
-        └── config.json
-```
-
-- Place TTS models at: `models/tts-models/<tts model name>/<tts model name>.safetensors`
-  - Alternative: `G_*.pth` with matching `config.json` in the same directory
-- Optional: `pyopenjtalk` dictionary and `style_vectors.npy` are supported
-- See `NOTICE` for integration details
-
-#### Main Features
-
-- Multiple model support
-- Style settings
-- Speech rate and volume adjustment
-- Auto announcement for join/leave events
-
-### 5. Game Statistics Tracking
-
-#### Rainbow Six Siege
-
-- Display player statistics
-- Rank information
-- Match history
-
-#### VALORANT
-
-- Display player statistics
-- Rank information
-- Match history
-
-### 6. Notification Features
-
-#### Earthquake Alerts
-
-- Real-time notifications of earthquake early warnings from Japan Meteorological Agency
-- Fast notifications via WebSocket connection
-- Map display of earthquake information
-- History display
-
-#### Twitch Notifications
-
-- Notify when specified channels start streaming
-- Display stream information
-
-### 7. Utility Features
-
-- Dice rolls (nDn format, range specification)
-- Conditional dice rolls
-- Timer feature
-- Media download
-- Server/user information display
-- Gacha simulation (Blue Archive style)
+Dice, timers, media download, server/user info, gacha, etc. `/help` and `/invite` use Components V2 and cover both bot invites.
 
 ---
 
@@ -231,386 +94,183 @@ models/
 
 ### Requirements
 
-- **Python 3.11.x** (required; 3.10 / 3.12+ are not supported)
-- Discord Bot Token
-- Various API keys (depending on features used)
-- (Optional) Netscape-format `youtube_cookie.txt` in the project root for YouTube music
+- **Python 3.11.x** (required; 3.10 / 3.12+ not supported)
+- Discord bot tokens for PLANA and ARONA
+- **Message Content Intent** enabled on both applications
+- API keys as needed
+- (Optional) Netscape-format `youtube_cookie.txt` in the project root
 
-### Installation Steps
+### Installation
 
-1. **Clone the repository**
+1. **Clone**
    ```bash
    git clone https://github.com/coffin399/ProjectMOMOKA.git
    cd ProjectMOMOKA
    ```
 
-2. **Prepare configuration file**
-   ```bash
-   copy config.default.yaml config.yaml  # Windows
-   cp config.default.yaml config.yaml  # Linux/Mac
-   ```
+2. **Configuration**
+   - On first run, each missing `configs/<category>_config.yaml` is copied from the matching `*_config.default.yaml`
+   - Manual copy example:
+     ```bash
+     copy configs\bots_config.default.yaml configs\bots_config.yaml   # Windows
+     cp configs/bots_config.default.yaml configs/bots_config.yaml     # Linux/Mac
+     ```
+   - **Root `config.yaml` is not read**
 
-3. **Edit configuration file**
-   - Open `config.yaml` and set the required API keys
+3. **Required edits**
+   - `configs/bots_config.yaml` — `bots.plana.token` and `bots.arona.token`
+   - `configs/llm_config.yaml` — API keys
 
-4. **Start the bot**
+4. **Invite bots**
+   - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
+   - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot)
+   - Invite **both** to any guild where you want debate / cross_check
 
-   **Windows (Recommended):** Use the all-in-one batch file that automatically handles virtual environment setup, package installation, and bot startup:
+5. **Start**
+
+   **Windows (recommended):**
    ```bash
    startMOMOKA.bat
    ```
-   
-   **Manual start (Linux/Mac or if you prefer manual setup):**
+
+   **Manual:**
    ```bash
-   # Create a Python 3.11 virtual environment (required)
-   py -3.11 -m venv .venv   # or: python3.11 -m venv .venv
-   .venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # Linux/Mac
-   
-   # Install dependencies
+   py -3.11 -m venv .venv
+   .venv\Scripts\activate  # Windows / source .venv/bin/activate  # Linux/Mac
    pip install -r requirements.txt
-   
-   # Start the bot
    python main.py
    ```
-   
-   If you still have an old `.venv` (e.g. Python 3.10), delete it and recreate. On Windows, `startMOMOKA.bat` recreates it automatically.
 
 ---
 
 ## Configuration
 
-### Basic Settings
+Settings live under `configs/` as category YAML files. See each `*_config.default.yaml` for full keys.
 
-You can configure the following in `config.yaml`:
+| File | Purpose |
+|------|---------|
+| `bots_config.yaml` | PLANA/ARONA tokens, invites, roles |
+| `llm_config.yaml` | Models, provider API keys, personas |
+| `music_config.yaml` | Volume, queue, cookie path, etc. |
+| `tts_config.yaml` | TTS models (PLANA) |
+| `images_config.yaml` | Image generation (PLANA) |
+| `notifications_config.yaml` | Earthquake / Twitch (PLANA) |
+| `tracker_config.yaml` | Game stats (PLANA) |
+| `debate_config.yaml` | debate / cross_check |
+| `utilities_config.yaml` | Utilities |
+| `core_config.yaml` | Shared core settings |
 
-#### Bot Settings
+#### Bot tokens (`bots_config.yaml`)
 
 ```yaml
-bot_token: YOUR_BOT_TOKEN_HERE
-client_id: YOUR_CLIENT_ID_HERE
-admin_user_ids:
-  - 123456789012345678
+bots:
+  plana:
+    token: YOUR_PLANA_BOT_TOKEN
+  arona:
+    token: YOUR_ARONA_BOT_TOKEN
 ```
 
-#### LLM Settings
+#### LLM (`llm_config.yaml`)
 
 ```yaml
 llm:
   model: "google/gemini-2.5-pro"
-  available_models:
-    - "openai/gpt-4o"
-    - "google/gemini-2.5-pro"
   providers:
-    openai:
-      base_url: https://api.openai.com/v1
-      api_key1: YOUR_KEY
-      api_key2: YOUR_KEY_2  # Multiple API keys can be configured
-      api_key3: YOUR_KEY_3  # Automatically switches to next key on rate limit
     google:
-      base_url: https://generativelanguage.googleapis.com/v1beta/
       api_key1: YOUR_KEY
-      api_key2: YOUR_KEY_2
-      api_key3: YOUR_KEY_3
-      api_key4: YOUR_KEY_4
-      api_key5: YOUR_KEY_5  # Up to 5 keys can be set (more can be added if needed)
+      api_key2: YOUR_KEY_2  # rotates on rate limit
 ```
 
-**💡 API Key Rotation Feature:**
-- You can configure multiple API keys as `api_key1`, `api_key2`, `api_key3`, etc.
-- When rate limit or server errors occur, it automatically switches to the next API key
-- Automatically retries until all keys are exhausted
-- Ensures stable operation even under high load
+#### Images / TTS / Music
 
-#### Image Generation Settings
-
-**Built-in Engine (Default):**
-```yaml
-llm:
-  image_generator:
-    provider: "local"  # Built-in diffusers pipeline (default)
-    model: "sd_xl_base_1.0.safetensors"
-    default_size: "1024x1024"
-    # Place models at: models/image-models/<image model name>/<image model name>.safetensors
-```
-
-**Optional: WebUI Forge (Alternative):**
-If you prefer to use an existing WebUI Forge instance:
-- Installation and setup of [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is required
-- You **must start WebUI Forge with the `--api` flag**:
-  ```bash
-  python webui.py --api
-  ```
-```yaml
-llm:
-  image_generator:
-    provider: "forge"  # Use external Forge instance
-    forge_url: "http://127.0.0.1:7860"
-    model: "sd_xl_base_1.0.safetensors"
-    default_size: "1024x1024"
-```
-
-#### Music Settings
-
-```yaml
-music:
-  default_volume: 20
-  max_queue_size: 10000
-  auto_leave_timeout: 3
-```
-
-#### TTS Settings
-
-**Built-in Engine (No external server required):**
-The Style-Bert-VITS2 engine is fully integrated into this project. Just place your models and configure:
-
-```yaml
-tts:
-  model_root: "models/tts-models"  # Place models here
-  model_name: "your-model-name"    # Model directory name
-  default_style: "Neutral"
-  sample_rate: 48000  # Discord standard
-  # Place models at: models/tts-models/<tts model name>/<tts model name>.safetensors
-  # Optional: custom pyopenjtalk dictionary
-  pyopenjtalk_dict_dir: "path/to/custom/dict"
-```
-
-For detailed configuration options, refer to `config.default.yaml`.
+- Images: place models at `models/image-models/<name>/<name>.safetensors`; configure via images/LLM image settings (`local` or `forge`)
+- TTS: `models/tts-models/` + `tts_config.yaml`
+- Music: `music_config.yaml` (`default_volume`, `max_queue_size`, cookie path, etc.)
 
 ---
 
 ## Command List
 
-### AI Chat Feature (LLM)
+### AI Chat (LLM)
 
 | Command | Description |
-|---------|------------|
-| `@MOMOKA <message>` | Mention the bot to chat with AI |
-| `/chat <message>` | Chat with AI without mentioning |
-| `/llm_help` | Display LLM feature help |
-| `/set-user-bio <info>` | Set user information |
-| `/show-user-bio` | Display saved user information |
-| `/reset-user-bio` | Delete user information |
-| `/memory-save <info>` | Save to global memory |
-| `/memory-list` | List global memory |
-| `/memory-delete <ID>` | Delete from global memory |
-| `/clear_history` | Reset conversation history |
-| `/switch-models` | Switch channel-specific model |
+|---------|-------------|
+| `@PLANA` / `@ARONA` `<message>` | Chat via mention |
+| `/chat <message>` | Chat without mention |
+| `/set-user-bio` / `/show-user-bio` / `/reset-user-bio` | User bio |
+| `/memory-save` / `/memory-list` / `/memory-delete` | Global memory |
+| `/clear_history` | Reset history |
+| `/switch-models` | Per-channel model |
 
-### Music Playback Feature
+\* `debate` / `cross_check` are LLM tools (multi-round debate + judge / light 3-step check).
+
+### Music
 
 | Command | Description |
-|---------|------------|
-| `/play <song name or URL>` | Play/add song to queue |
-| `/pause` | Pause playback |
-| `/resume` | Resume playback |
-| `/stop` | Stop playback and clear queue |
-| `/skip` | Skip current song |
-| `/seek <time>` | Seek to specified time (e.g., `1:30`) |
-| `/volume <0-200>` | Change volume |
-| `/queue` | Display queue |
-| `/shuffle` | Shuffle queue |
-| `/clear` | Clear queue |
-| `/remove <number>` | Remove song from queue |
-| `/nowplaying` | Display currently playing song |
-| `/music_help` | Display music feature help |
+|---------|-------------|
+| `/play` `/pause` `/resume` `/stop` `/skip` | Playback |
+| `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` | Queue & volume |
 
-### Image Generation Feature
+### Image Generation (PLANA)
 
 | Command | Description |
-|---------|------------|
-| `@MOMOKA generate an image` | Request image generation from AI |
-| `/image-generate` | Direct image generation (if implemented) |
+|---------|-------------|
+| Ask `@PLANA` to generate an image | Via AI tools |
 
-### TTS Feature
-
-| Command | Description |
-|---------|------------|
-| `/say <text>` | Convert text to speech |
-| `/tts-help` | Display TTS feature help |
-
-### Game Statistics Tracking
-
-#### Rainbow Six Siege
+### TTS (PLANA)
 
 | Command | Description |
-|---------|------------|
-| `/r6s <username>` | Display player statistics |
+|---------|-------------|
+| `/say <text>` | Speak text |
+| `/tts-help` | TTS help |
 
-#### VALORANT
-
-| Command | Description |
-|---------|------------|
-| `/valorant <username>` | Display player statistics |
-
-### Notification Features
-
-#### Earthquake Alerts
+### Game Trackers (PLANA)
 
 | Command | Description |
-|---------|------------|
-| `/earthquake_channel <channel>` | Set notification channel |
-| `/earthquake_remove <type>` | Remove notification settings |
-| `/earthquake_test` | Send test notification |
-| `/earthquake_status` | Check system status |
-| `/earthquake_history` | Display recent earthquake history |
-| `/earthquake_map` | Display earthquakes on map |
-| `/earthquake_help` | Display help |
+|---------|-------------|
+| `/r6s` / `/valorant` | Player stats |
 
-#### Twitch Notifications
+### Notifications (PLANA)
 
 | Command | Description |
-|---------|------------|
-| `/twitch_add <username>` | Add notification target channel |
-| `/twitch_remove <username>` | Remove notification target channel |
-| `/twitch_list` | Display notification targets |
+|---------|-------------|
+| `/earthquake_*` | Earthquake alerts |
+| `/twitch_add` `/twitch_remove` `/twitch_list` | Twitch alerts |
 
-### Utility Commands
+### Utilities
 
 | Command | Description |
-|---------|------------|
-| `/help` | Display bot help information |
-| `/ping` | Check bot latency |
-| `/serverinfo` | Display server information |
-| `/userinfo [user]` | Display user information |
-| `/avatar [user]` | Display avatar image |
-| `/invite` | Display bot invite link |
-| `/meow` | Display random cat picture |
-| `/roll <notation>` | Roll dice in nDn format (e.g., `2d6+3`) |
-| `/diceroll <min> <max>` | Roll dice in specified range |
-| `/check <notation> [condition] [target]` | Roll dice and check condition |
-| `/gacha` | Blue Archive style gacha |
-| `/timer <time> <message>` | Set timer |
-| `/support` | Display contact information for developer |
+|---------|-------------|
+| `/help` | Help (Components V2) |
+| `/invite` | PLANA / ARONA invites (Components V2) |
+| `/ping` `/serverinfo` `/userinfo` `/avatar` | Info |
+| `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` | Misc |
 
 ---
 
 ## Feature Details
 
-### AI Chat Feature Details
+### debate / cross_check
 
-#### Mention Method
+- **debate**: Alternating PLANA↔ARONA turns, then a judge turn with summary and recommendation. Both bots must be in the guild
+- **cross_check**: PLANA draft → ARONA review → PLANA conclusion; all three steps are posted. Lighter than debate; no stop panel
+- Each message is prefixed with a mention of the partner bot
 
-Simply mention the bot with `@<bot名>` (e.g., `@MOMOKA`) and send a message, and the AI will respond.
+### API key rotation
 
-#### Image Recognition
+Set `api_key1`, `api_key2`, … per provider in `llm_config.yaml`. On rate limit / server error, the next key is tried automatically.
 
-For supported models, images attached to messages can be recognized.
+### Music
 
-#### Conversation History
+Up to 10,000 queued tracks, loop modes, volume 0–200%, auto-leave when the VC is empty.
 
-Conversation history is maintained per channel. Reset with `/clear_history`.
+### Image generation (PLANA)
 
-#### User Information
+Place models under `models/image-models/`, use `provider: "local"` (default). For Forge, start with `--api` and set `provider: "forge"`.
 
-Information set with `/set-user-bio` is referenced in conversations with that user.
+### Earthquake alerts (PLANA)
 
-#### Global Memory
-
-Information can be saved to server-wide memory. Useful for storing bot settings and common information.
-
-#### API Key Rotation
-
-MOMOKA provides robust handling of rate limits and server errors by configuring multiple API keys.
-
-**How it works:**
-1. Configure multiple API keys in the config file (`config.yaml`) as `api_key1`, `api_key2`, `api_key3`, etc.
-2. By default, the first API key (`api_key1`) is used
-3. When a rate limit error (`RateLimitError`) or server error (`InternalServerError`) occurs, it automatically switches to the next API key
-4. Automatically retries until all API keys are exhausted
-5. Only returns an error if all keys fail
-
-**Benefits:**
-- **High Availability**: Service continues with other keys even if one API key hits rate limits
-- **Load Distribution**: Distributes load across multiple keys instead of a single key
-- **Automatic Recovery**: Automatically switches without manual intervention when errors occur
-- **Flexible Configuration**: Can set different numbers of API keys for each provider
-
-**Example:**
-```yaml
-providers:
-  google:
-    api_key1: "key1"
-    api_key2: "key2"
-    api_key3: "key3"
-    api_key4: "key4"
-    api_key5: "key5"
-```
-
-With this configuration, 5 API keys will automatically rotate when using the Google Gemini API.
-
-### Music Playback Feature Details
-
-#### Queue Management
-
-Up to 10,000 songs can be added to the queue.
-
-#### Loop Mode
-
-- **OFF**: No loop
-- **ONE**: Loop current song
-- **ALL**: Loop entire queue
-
-#### Volume Adjustment
-
-Volume can be adjusted from 0-200%. Default is 20%.
-
-#### Auto Leave
-
-When the voice channel becomes empty, the bot automatically leaves after the configured time (default 3 minutes).
-
-### Image Generation Feature Details
-
-#### Built-in Diffusers Pipeline
-
-The built-in image generation engine uses diffusers and runs entirely within the bot. No external services are required.
-
-**Setup:**
-
-**Directory Structure:**
-```
-models/
-├── image-models/
-│   └── <image model name>/
-│       └── <image model name>.safetensors
-│       └── (optional) VAE, LoRA, model.json
-└── tts-models/
-    └── <tts model name>/
-        └── <tts model name>.safetensors
-        └── (optional) config.json, style_vectors.npy
-```
-
-1. Place your image models at: `models/image-models/<image model name>/<image model name>.safetensors`
-   - Example: `models/image-models/my-model/my-model.safetensors`
-2. Configure `provider: "local"` in `config.yaml` (this is the default)
-3. The engine will automatically discover and load available models
-
-#### Optional: WebUI Forge Integration
-
-If you prefer to use an existing [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) instance, you can configure it as an alternative:
-
-**Important:** When starting WebUI Forge, you **must** specify the `--api` flag:
-```bash
-python webui.py --api
-```
-
-Set `provider: "forge"` in `config.yaml` to use this option.
-
-#### Prompts
-
-When you request image generation in AI chat (e.g., "generate an image"), the AI generates a prompt and creates the image.
-
-### Earthquake Alert Feature Details
-
-#### WebSocket Connection
-
-Connects to Japan Meteorological Agency's WebSocket server to receive earthquake information in real-time.
-
-#### Notification Types
-
-- **Earthquake Early Warning**: When maximum seismic intensity of 5 Lower or higher is expected
-- **Earthquake Information**: When earthquakes of intensity 1 or higher occur
-- **Tsunami Forecast**: When tsunamis are expected
+Real-time JMA WebSocket alerts (early warning, quake info, tsunami forecast).
 
 ---
 
@@ -618,54 +278,49 @@ Connects to Japan Meteorological Agency's WebSocket server to receive earthquake
 
 ### Bot won't start
 
-1. Check if `bot_token` is correctly set in `config.yaml`
-2. Check if Python version is 3.11 or higher
-3. Check if required packages are installed
+1. Check `bots.plana.token` / `bots.arona.token` in `configs/bots_config.yaml`
+2. Confirm Python 3.11.x
+3. Confirm dependencies are installed
+4. A root `config.yaml` alone will not work — use `configs/`
 
 ### AI doesn't respond
 
-1. Check LLM settings in `config.yaml`
-2. Check if API keys are correctly set
-3. Check if the model being used is available
+1. Check API keys in `configs/llm_config.yaml`
+2. Enable **Message Content Intent** on both applications
+3. Confirm the selected model is available
+
+### debate / cross_check fail
+
+1. Ensure both PLANA and ARONA are in the same server
+2. Use `/invite` to add the missing bot
 
 ### Music won't play
 
-1. Check if the bot is connected to a voice channel
-2. Check audio file permissions
-3. Check if FFmpeg is installed (if yt-dlp uses it)
-4. Place a Netscape-format cookie file as `youtube_cookie.txt` in the project root (or set `music.youtube_cookie_file` in `config.yaml`). Age-restricted / bot-check videos need this; FFmpeg also receives Cookie headers from yt-dlp.
-5. **YouTube EJS (required):** Install **Deno (recommended)** or **Node.js 22+** on PATH so yt-dlp can solve JS challenges. Also run `pip install -U "yt-dlp[default]"` for `yt-dlp-ejs`. Without these you get `Signature solving failed` / `Only images are available`. See https://github.com/yt-dlp/yt-dlp/wiki/EJS
+1. Check VC connection, FFmpeg, and `youtube_cookie.txt`
+2. **YouTube EJS**: install Deno (recommended) or Node.js 22+ on PATH; run `pip install -U "yt-dlp[default]"`
 
-### Image generation doesn't work
+### Image generation fails
 
-**For built-in engine (default):**
-1. Check if models are placed at `models/image-models/<image model name>/<image model name>.safetensors`
-2. Check if `provider: "local"` is set in `config.yaml` (or not set, as it's the default)
-3. Check if the model files (`.safetensors` or `.ckpt`) are present with correct naming
-4. Check GPU/CPU availability and memory (check logs for errors)
+1. Use PLANA (ARONA only redirects)
+2. Check model paths and images/LLM image settings
 
-**For WebUI Forge (optional):**
-1. Check if [Stable Diffusion WebUI Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) is running
-2. Check if WebUI Forge was started with the `--api` flag (required)
-3. Check if `provider: "forge"` and `forge_url` in `config.yaml` are correct
-4. Check if the model is correctly loaded in Forge
+### Earthquake alerts missing
 
-### Earthquake alerts don't arrive
-
-1. Check system status with `/earthquake_status`
-2. Check if notification channel is correctly set
-3. Check if WebSocket connection is established
+1. `/earthquake_status` on PLANA
+2. Check notification channel and WebSocket connection
 
 ---
 
 ## Support
 
-If you encounter issues, you can get support through:
+- Discord: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
+- `/support` command
 
-- Discord Support Server: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
-- Contact Developer: Displayed with `/support` command
+### License
+
+- This project: **AGPL-3.0**
+- Style-Bert-VITS2 integration: AGPL-3.0 / LGPL-3.0 (see `NOTICE`)
 
 ---
 
 **Made with ❤️ by the MOMOKA development team**
-

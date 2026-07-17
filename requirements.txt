@@ -70,9 +70,6 @@ safetensors==0.4.1
 huggingface-hub==0.19.4
 omegaconf>=2.2.0
 
-# --- Release builds (pin matches .github/workflows/build_and_release.yml) ---
-nuitka==1.9.7
-
 # --- GUI log viewer (tkinter is stdlib) ---
 ttkthemes
 darkdetect>=0.8.0
