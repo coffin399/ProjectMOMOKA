@@ -33,6 +33,7 @@ from MOMOKA.llm.plugins import (
 from MOMOKA.llm.plugins.debate_tools import DebateTool, CrossCheckTool
 from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.llm.concurrency import chat_limiter
+from MOMOKA.utilities.donation import donation_from_bot, make_subtle_donation_view
 from MOMOKA.utilities.restart_notice import RESTART_NOTICE_TEXT
 
 try:
@@ -248,6 +249,11 @@ class LLMCog(commands.Cog, name="LLM"):
                                         url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
         return view
 
+    def _create_donation_view(self) -> Optional[discord.ui.View]:
+        """LLM 応答用の控えめ Ko-fi ボタン View（無効時は None）。"""
+        # config から寄付設定を読む
+        return make_subtle_donation_view(donation_from_bot(self.bot))
+
     async def _append_chat_history_hint(
             self,
             message: discord.Message,
@@ -259,9 +265,10 @@ class LLMCog(commands.Cog, name="LLM"):
         # 案内文言を結合した最終テキストを組み立てる
         hinted_content = f"{base_content}{CHAT_HISTORY_HINT}"
         try:
-            # 文字数制限内なら同一メッセージを編集して追記する
+            # 文字数制限内なら同一メッセージを編集して追記する（寄付ボタンも維持）
             if len(hinted_content) <= DISCORD_MESSAGE_MAX_LENGTH:
-                await message.edit(content=hinted_content, embed=None)
+                donation_view = self._create_donation_view()
+                await message.edit(content=hinted_content, embed=None, view=donation_view)
                 return
             # 収まらない場合は案内だけ別メッセージで送る
             await channel.send(CHAT_HISTORY_HINT.lstrip("\n"))
@@ -1375,12 +1382,12 @@ class LLMCog(commands.Cog, name="LLM"):
             logger.debug(f"Stream completed | Total chunks: {chunk_count} | Final length: {len(full_response_text)} chars")
             if full_response_text:
                 if len(full_response_text) <= SAFE_MESSAGE_LENGTH:
-                    # スレッド作成ボタンは削除
-                    view = None
+                    # 成功応答に控えめな寄付ボタンを付ける（無効時は None）
+                    view = self._create_donation_view()
                     
                     for attempt in range(max_final_retries):
                         try:
-                            if full_response_text != sent_message.content:
+                            if full_response_text != sent_message.content or view is not None:
                                 await sent_message.edit(content=full_response_text, embed=None, view=view)
                             logger.debug(f"Final message updated successfully (attempt {attempt + 1})")
                             break
@@ -1405,7 +1412,7 @@ class LLMCog(commands.Cog, name="LLM"):
                     all_messages = []
                     first_chunk = chunks[0]  # 最初のチャンクを取得
 
-                    # スレッド作成ボタンは削除
+                    # 分割時は先頭に view を付けない（最終チャンクへ）
                     view = None
 
                     for attempt in range(max_final_retries):
@@ -1425,7 +1432,13 @@ class LLMCog(commands.Cog, name="LLM"):
                     for i, chunk in enumerate(chunks[1:], start=2):
                         for attempt in range(max_final_retries):
                             try:
-                                continuation_msg = await channel.send(chunk)
+                                # 最終チャンクだけ控えめ寄付ボタンを付ける
+                                send_kwargs: Dict[str, Any] = {}
+                                if i == len(chunks):
+                                    donation_view = self._create_donation_view()
+                                    if donation_view is not None:
+                                        send_kwargs["view"] = donation_view
+                                continuation_msg = await channel.send(chunk, **send_kwargs)
                                 all_messages.append(continuation_msg)
                                 logger.debug(f"Sent continuation message {i}/{len(chunks)}")
                                 break

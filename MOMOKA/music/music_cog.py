@@ -22,6 +22,8 @@ import yaml
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from MOMOKA.utilities.donation import donation_from_bot, make_subtle_link_button
+
 try:
     from MOMOKA.music.plugins.ytdlp_wrapper import (
         Track,
@@ -2101,6 +2103,10 @@ class MusicControllerView(discord.ui.LayoutView):
         action_row.add_item(self.skip_btn)
         # ボタンを追加する
         action_row.add_item(self.stop_btn)
+        # 控えめな寄付リンク（enabled 時のみ）
+        donation_btn = make_subtle_link_button(donation_from_bot(self.cog.bot))
+        if donation_btn is not None:
+            action_row.add_item(donation_btn)
         # コンテナにボタンを格納したアクション行を追加する
         container.add_item(action_row)
 

@@ -8,6 +8,12 @@ from typing import Any, Dict, Optional, Tuple
 import discord
 from discord.ext import commands
 
+from MOMOKA.utilities.donation import (
+    donation_from_bot,
+    help_donation_body,
+    make_help_link_button,
+)
+
 logger = logging.getLogger(__name__)
 
 # ページ総数（0..4）
@@ -128,6 +134,17 @@ class HelpLayoutView(discord.ui.LayoutView):
             # ボタンが1つ以上あれば行を載せる
             if has_invite_btn:
                 container.add_item(invite_row)
+            # 寄付（enabled 時は堂々と本文＋ボタン）
+            donation = donation_from_bot(self.bot)
+            if donation.enabled:
+                # 日英の支援文を載せる
+                container.add_item(discord.ui.TextDisplay(help_donation_body(donation)))
+                # Ko-fi リンクボタン行
+                donation_row = discord.ui.ActionRow()
+                help_btn = make_help_link_button(donation)
+                if help_btn is not None:
+                    donation_row.add_item(help_btn)
+                    container.add_item(donation_row)
         # Prev / Next 用 ActionRow
         nav_row = discord.ui.ActionRow()
         # 前へボタン（先頭ページでは無効）
@@ -285,7 +302,8 @@ class HelpLayoutView(discord.ui.LayoutView):
             "**招待・更新・サポート / Invite & Support**\n"
             "• `/invite` — PLANA / ARONA の招待リンク\n"
             "• `/updates` — GitHub コミット履歴\n"
-            "• `/support` — 開発者への連絡方法\n\n"
+            "• `/support` — 開発者への連絡方法\n"
+            "• Overview ページの Ko-fi — サーバー代の支援 / Server-cost support\n\n"
             "**その他 / Other**\n"
             "• `/ping` `/serverinfo` `/userinfo` `/avatar` `/gacha` `/meow`"
         )
