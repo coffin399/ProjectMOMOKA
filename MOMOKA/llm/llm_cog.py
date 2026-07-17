@@ -32,6 +32,7 @@ from MOMOKA.llm.plugins import (
 )
 from MOMOKA.llm.plugins.debate_tools import DebateTool, CrossCheckTool
 from MOMOKA.llm.debate.channel_lock import channel_lock
+from MOMOKA.llm.concurrency import chat_limiter
 from MOMOKA.utilities.restart_notice import RESTART_NOTICE_TEXT
 
 try:
@@ -1087,10 +1088,7 @@ class LLMCog(commands.Cog, name="LLM"):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot: return
-        # 討論中チャンネルは通常 LLM 応答を抑止する（履歴汚染防止）
-        if channel_lock.is_debate_active(message.channel.id):
-            return
-        
+
         # スレッド内ではBotのメッセージへのリプライのみに反応
         is_thread = isinstance(message.channel, discord.Thread)
         is_mentioned = self.bot.user.mentioned_in(message) and not message.mention_everyone
@@ -1139,6 +1137,21 @@ class LLMCog(commands.Cog, name="LLM"):
         thread_id = await self._get_conversation_thread_id(message)
         system_prompt = await self._prepare_system_prompt(message.channel.id, message.author.id,
                                                           message.author.display_name)
+        # 討論進行中でもメンション／リプライには通常どおり応える（別セッションとして扱う）
+        if channel_lock.is_debate_active(message.channel.id):
+            system_prompt = (
+                f"{system_prompt.rstrip()}\n\n"
+                "# Parallel request during debate\n"
+                "- A PLANA↔ARONA debate is running in this channel in the background.\n"
+                "- Answer THIS user's request independently and helpfully.\n"
+                "- Do NOT call the `debate` tool again unless they clearly ask to start a new debate.\n"
+                "- Do NOT continue or narrate the ongoing debate turns unless they ask about it.\n"
+            )
+            logger.info(
+                "[%s] Debate active on channel %s; allowing parallel user response",
+                self._bot_tag(),
+                message.channel.id,
+            )
         # language_prompt は _prepare_system_prompt 内で既に結合済み
         messages_for_api: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         # Discord 返信チェーンから会話履歴を収集する
@@ -1165,6 +1178,22 @@ class LLMCog(commands.Cog, name="LLM"):
             f"Messages structure: system={len(messages_for_api[0]['content'])} chars, "
             f"lang_enforced={'present' if 'Language Control' in messages_for_api[0]['content'] else 'absent'}"
         )
+        # 通常応答の並列枠を確保する（討論枠とは独立）
+        slot_held = False
+        if chat_limiter is not None:
+            slot_held = await chat_limiter.try_acquire(message.channel.id, self.bot_id)
+            if not slot_held:
+                busy = self.llm_config.get("error_msg", {}).get(
+                    "busy_error",
+                    "⚠️ 現在混雑しています。しばらくしてからもう一度お試しください。\n"
+                    "⚠️ The bot is busy right now. Please try again shortly.",
+                )
+                await message.reply(
+                    content=busy,
+                    view=self._create_support_view(),
+                    silent=True,
+                )
+                return
         try:
             # スレッド作成ボタンは削除（常にFalse）
             is_first_response = False
@@ -1202,6 +1231,10 @@ class LLMCog(commands.Cog, name="LLM"):
         except Exception as e:
             await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
                                 view=self._create_support_view(), silent=True)
+        finally:
+            # 並列枠を必ず解放する
+            if slot_held and chat_limiter is not None:
+                await chat_limiter.release(message.channel.id, self.bot_id)
 
     def _cleanup_old_threads(self):
         for guild_id in list(self.conversation_threads.keys()):
@@ -1725,9 +1758,32 @@ class LLMCog(commands.Cog, name="LLM"):
             ]
             await self._process_tool_calls(tool_calls_obj, current_messages, channel_id, user_id)
 
+            # debate 開始成功後は LLM に追加の開会／反論を書かせない（自分で討論に見える事故防止）
+            if self._debate_just_started(current_messages):
+                brief = (
+                    "討論を開始しました。チャンネルのパネルと交互の投稿を見てください。\n"
+                    "Debate started. Please follow the panel and alternating posts in the channel."
+                )
+                logger.info("[%s] Skipping post-debate LLM turn; using brief notice", self._bot_tag())
+                yield brief
+                return
+
         logger.warning(f"⚠️ Tool processing exceeded max iterations ({max_iterations})")
         yield self.llm_config.get('error_msg', {}).get('tool_loop_timeout',
                                                        "Tool processing exceeded max iterations.\nツールの処理が最大反復回数を超えました.")
+
+    def _debate_just_started(self, messages: List[Dict[str, Any]]) -> bool:
+        """直近の tool 結果が討論開始成功か判定する。"""
+        # 末尾の連続する tool 結果を走査する
+        for msg in reversed(messages):
+            if msg.get("role") != "tool":
+                break
+            name = (msg.get("name") or "").split(".")[-1]
+            content = str(msg.get("content") or "")
+            # debate ツールかつ開始成功メッセージ
+            if name == "debate" and "Debate started" in content:
+                return True
+        return False
 
     async def _process_tool_calls(self, tool_calls: List[Any], messages: List[Dict[str, Any]], channel_id: int,
                                   user_id: int) -> None:
@@ -1890,40 +1946,58 @@ class LLMCog(commands.Cog, name="LLM"):
             # ユーザーメッセージを API 用リストへ追加する
             messages_for_api.append({"role": "user", "content": user_content_parts})
             logger.info(f"🔵 [API] Sending {len(messages_for_api)} messages to LLM")
-            model_name = llm_client.model_name_for_api_calls
-            if self.tips_manager:
-                waiting_embed = self.tips_manager.get_waiting_embed(model_name)
-                temp_message = await interaction.followup.send(embed=waiting_embed, ephemeral=False, wait=True)
-            else:
-                waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
-                temp_message = await interaction.followup.send(waiting_message, ephemeral=False, wait=True)
-            # スレッド作成ボタンは削除（常にFalse）
-            sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
-                sent_message=temp_message, channel=interaction.channel, user=interaction.user,
-                messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
-            if sent_messages and full_response_text:
-                logger.info(
-                    f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
-                log_response, key_log_str = (full_response_text[:200] + '...') if len(
-                    full_response_text) > 203 else full_response_text, f" [key{used_key_index + 1}]" if used_key_index is not None else ""
-                logger.info(f"🤖 [LLM_RESPONSE][{self._bot_tag()}]{key_log_str} {log_response.replace(chr(10), ' ')}")
-                logger.debug(
-                    f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
-                # /chat は履歴非保存のため、メンション/リプライへ誘導する案内を末尾に付与する
-                # followup Message の .content が空のことがあるので、確定済み本文を明示的に渡す
-                last_msg = sent_messages[-1]
-                if len(sent_messages) == 1:
-                    # 単一メッセージならストリーム完了後の全文を使う
-                    hint_base = full_response_text
+            # 通常応答の並列枠を確保する
+            slot_held = False
+            channel_id = interaction.channel_id
+            if chat_limiter is not None and channel_id is not None:
+                slot_held = await chat_limiter.try_acquire(channel_id, self.bot_id)
+                if not slot_held:
+                    busy = self.llm_config.get("error_msg", {}).get(
+                        "busy_error",
+                        "⚠️ 現在混雑しています。しばらくしてからもう一度お試しください。\n"
+                        "⚠️ The bot is busy right now. Please try again shortly.",
+                    )
+                    await interaction.followup.send(content=busy, view=self._create_support_view())
+                    return
+            try:
+                model_name = llm_client.model_name_for_api_calls
+                if self.tips_manager:
+                    waiting_embed = self.tips_manager.get_waiting_embed(model_name)
+                    temp_message = await interaction.followup.send(embed=waiting_embed, ephemeral=False, wait=True)
                 else:
-                    # 分割送信時は最終チャンクを案内の付け先にする
-                    hint_base = last_msg.content or _split_message_smartly(
-                        full_response_text, SAFE_MESSAGE_LENGTH
-                    )[-1]
-                await self._append_chat_history_hint(last_msg, interaction.channel, hint_base)
+                    waiting_message = f"-# :incoming_envelope: waiting response for '{model_name}' :incoming_envelope:"
+                    temp_message = await interaction.followup.send(waiting_message, ephemeral=False, wait=True)
+                # スレッド作成ボタンは削除（常にFalse）
+                sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
+                    sent_message=temp_message, channel=interaction.channel, user=interaction.user,
+                    messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
+                if sent_messages and full_response_text:
+                    logger.info(
+                        f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
+                    log_response, key_log_str = (full_response_text[:200] + '...') if len(
+                        full_response_text) > 203 else full_response_text, f" [key{used_key_index + 1}]" if used_key_index is not None else ""
+                    logger.info(f"🤖 [LLM_RESPONSE][{self._bot_tag()}]{key_log_str} {log_response.replace(chr(10), ' ')}")
+                    logger.debug(
+                        f"LLM full response for /chat (length: {len(full_response_text)} chars):\n{full_response_text}")
+                    # /chat は履歴非保存のため、メンション/リプライへ誘導する案内を末尾に付与する
+                    # followup Message の .content が空のことがあるので、確定済み本文を明示的に渡す
+                    last_msg = sent_messages[-1]
+                    if len(sent_messages) == 1:
+                        # 単一メッセージならストリーム完了後の全文を使う
+                        hint_base = full_response_text
+                    else:
+                        # 分割送信時は最終チャンクを案内の付け先にする
+                        hint_base = last_msg.content or _split_message_smartly(
+                            full_response_text, SAFE_MESSAGE_LENGTH
+                        )[-1]
+                    await self._append_chat_history_hint(last_msg, interaction.channel, hint_base)
 
-            elif not sent_messages:
-                logger.warning("LLM response for /chat was empty or an error occurred.")
+                elif not sent_messages:
+                    logger.warning("LLM response for /chat was empty or an error occurred.")
+            finally:
+                # 並列枠を必ず解放する
+                if slot_held and chat_limiter is not None and channel_id is not None:
+                    await chat_limiter.release(channel_id, self.bot_id)
         except openai.RateLimitError as e:
             # クォータ枯渇は想定内
             logger.warning("[%s] ⚠️ /chat rate limit / quota exhausted: %s", self._bot_tag(), e)

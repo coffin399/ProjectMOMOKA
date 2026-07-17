@@ -92,6 +92,9 @@ llm:
   - debate
   - cross_check
   max_tool_iterations: 3
+  concurrency:
+    max_inflight_chat: 64
+    max_inflight_per_channel: 1
   agent:
     max_results: 10
     timeout: 30.0
@@ -105,6 +108,9 @@ llm:
       Please say something.'
     msg_max_image_size: ⚠️ 一度に処理できる画像は {max_images} 枚までです。
     ratelimit_error: ⚠️ AIが現在大変混雑しています。しばらく経ってからもう一度お試しください。
+    busy_error: '⚠️ 現在リクエストが集中しています。しばらくしてからもう一度お試しください。
+
+      ⚠️ The bot is busy with many requests. Please try again shortly.'
     api_status_error: '⚠️AIとの通信でエラーが発生しました。 (Code: {status_code})'
     general_error: ⚠️ 予期しないエラーが発生しました。もう一度お試しください。
     tool_loop_timeout: ⚠️ツールの処理が複雑すぎたため、応答を生成できませんでした。

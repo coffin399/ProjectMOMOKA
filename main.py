@@ -356,7 +356,7 @@ class Momoka(commands.Bot):
         # ステータスローテーションの設定を取得する
         self.status_templates = self.config.get('status_rotation', [
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-07-17",
+            "prjMOMOKA Ver.2026-07-18",
         ])
         # ステータスローテーションタスクを開始する
         self.rotate_status.start()
@@ -1545,6 +1545,7 @@ if __name__ == "__main__":
     # --- 設定の読み込みとバリデーション ---
     from MOMOKA.config.loader import load_merged_config, validate_bot_tokens
     from MOMOKA.bots.registry import registry
+    from MOMOKA.llm.concurrency import init_concurrency
     from MOMOKA.llm.debate.orchestrator import init_orchestrator
 
     # configs/*.yaml を統合した設定辞書を読み込む
@@ -1572,6 +1573,15 @@ if __name__ == "__main__":
         print("INFO: Debate オーケストレータを初期化しました。")
     except Exception as e_orch:
         print(f"CRITICAL: Debate オーケストレータの初期化中にエラーが発生しました: {e_orch}")
+        sys.exit(1)
+
+    # 通常チャット / 討論の並列背圧を初期化する
+    try:
+        # Chat と Debate で枠を分離する
+        init_concurrency(merged_config)
+        print("INFO: LLM 並列背圧（concurrency）を初期化しました。")
+    except Exception as e_conc:
+        print(f"CRITICAL: concurrency 初期化中にエラーが発生しました: {e_conc}")
         sys.exit(1)
 
     # --- Discord Intents / AllowedMentions の設定 ---

@@ -13,7 +13,7 @@ class ChannelLock:
         self._owners: Dict[int, str] = {}
         # 内部同期用ロック
         self._lock = asyncio.Lock()
-        # 討論中チャンネル（通常 on_message 抑制用）
+        # 討論中チャンネル（並行チャット可否の判定用。新規 debate 排他とは別）
         self._debate_channels: Set[int] = set()
 
     async def try_acquire(self, channel_id: int, mode: str) -> bool:

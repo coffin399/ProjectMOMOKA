@@ -52,7 +52,7 @@
 #### 主な機能
 
 - 画像認識（対応モデルの場合）
-- 会話履歴・ユーザー情報（`/set-user-bio`）・グローバルメモリ（`/memory-save`）
+- 会話履歴
 - Web 検索
 - **debate** — 多ラウンドの PLANA↔ARONA 討論のあと評定ターン
 - **cross_check** — PLANA案 → ARONA検証 → PLANA結論の軽量3ステップ（パネルなし）
@@ -215,8 +215,6 @@ music:
 |---------|------|
 | `@PLANA` / `@ARONA` `<メッセージ>` | メンションで AI 対話 |
 | `/chat <メッセージ>` | メンションなしで対話 |
-| `/set-user-bio` / `/show-user-bio` / `/reset-user-bio` | ユーザー情報 |
-| `/memory-save` / `/memory-list` / `/memory-delete` | グローバルメモリ |
 | `/clear_history` | 会話履歴リセット |
 | `/switch-models` | チャンネル専用モデル切替 |
 

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import discord
 
 from MOMOKA.bots.registry import registry
+from MOMOKA.llm.concurrency import debate_limiter
 from MOMOKA.llm.debate.accents import initiator_accent_color
 from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.llm.debate.stop_view import DebateStopView
@@ -73,6 +74,8 @@ class DebateSession:
     frozen_time: str = ""
     # 討論を起動した Bot（plana / arona）— 先攻にも使う
     initiator_bot_id: str = "plana"
+    # 直前の投稿（次ターンの Discord reply 先）
+    last_post: Optional[discord.Message] = None
 
 
 class DebateOrchestrator:
@@ -121,9 +124,23 @@ class DebateOrchestrator:
             initiator = "plana"
         # 相方 Bot（起動側の反対）
         partner_id = "arona" if initiator == "plana" else "plana"
+        # プロセス全体の同時討論上限（チャンネル占有の前に取る）
+        debate_slot = False
+        if debate_limiter is not None:
+            debate_slot = await debate_limiter.try_acquire()
+            if not debate_slot:
+                limit = debate_limiter.max_concurrent
+                return (
+                    f"Too many debates running (limit={limit}). "
+                    "Please try again later. "
+                    f"同時討論数が上限（{limit}）に達しています。しばらくしてから再度お試しください。"
+                )
         # チャンネル排他
         acquired = await channel_lock.try_acquire(channel_id, "debate")
         if not acquired:
+            # 討論枠だけ先に取っていたら戻す
+            if debate_slot and debate_limiter is not None:
+                await debate_limiter.release()
             owner = channel_lock.owner(channel_id) or "another session"
             return f"This channel is busy with '{owner}'. Wait until it finishes."
         # 相方在籍チェック（起動側ではなく partner を見る）
@@ -131,6 +148,8 @@ class DebateOrchestrator:
         if not partner_ok:
             # ロック解放
             await channel_lock.release(channel_id)
+            if debate_slot and debate_limiter is not None:
+                await debate_limiter.release()
             return partner_msg
         # ポジション既定
         pos_p = position_plana or "cautious / skeptical perspective"
@@ -161,9 +180,13 @@ class DebateOrchestrator:
             panel = await channel.send(view=view)
             # 参照を保存
             session.panel_message = panel
+            # 最初の討論ターンはパネルへ reply する
+            session.last_post = panel
         except Exception as e:
             # 失敗時はロック解放
             await channel_lock.release(channel_id)
+            if debate_slot and debate_limiter is not None:
+                await debate_limiter.release()
             logger.error("Failed to post debate panel: %s", e, exc_info=True)
             return f"Failed to start debate UI: {e}"
         # バックグラウンドで討論を走らせる
@@ -178,7 +201,7 @@ class DebateOrchestrator:
             f"Topic: {topic}. "
             f"First speaker: {registry.display_name(initiator)}. "
             "A stop button is posted in the channel. "
-            "Do not summarize the debate yourself yet; wait for the transcript in a later update if needed. "
+            "Debate turns are posted by each bot as Discord replies — do not write debate arguments yourself. "
             "Tell Sensei briefly that the debate has started."
         )
 
@@ -215,10 +238,14 @@ class DebateOrchestrator:
                 await self._debate_turn(session, channel, first, r)
                 if session.status == "cancelled":
                     break
+                # 相手が読む／投稿する隙間を空ける
+                delay = float(self.debate_cfg.get("post_delay_sec", 1.5))
+                await asyncio.sleep(delay)
                 # 後攻ターン
                 await self._debate_turn(session, channel, second, r)
-                # 投稿間隔
-                delay = float(self.debate_cfg.get("post_delay_sec", 1.5))
+                if session.status == "cancelled":
+                    break
+                # ラウンド間も同じ間隔
                 await asyncio.sleep(delay)
             # 自然終了なら評定
             if session.status == "running":
@@ -239,6 +266,9 @@ class DebateOrchestrator:
         finally:
             # チャンネルロック解放
             await channel_lock.release(session.channel_id)
+            # グローバル討論枠解放
+            if debate_limiter is not None:
+                await debate_limiter.release()
             # タスク辞書から除去
             self._tasks.pop(session.session_id, None)
 
@@ -297,9 +327,18 @@ class DebateOrchestrator:
             max_chars=int(self.debate_cfg.get("max_chars_per_turn", 800)),
             tag="DEBATE",
         )
-        # メンション付与して投稿
+        # メンション付与して投稿（直前ターンへの reply）
         partner = "arona" if speaker_id == "plana" else "plana"
-        posted = await self._post_with_mention(channel, speaker_id, partner, text)
+        posted, msg = await self._post_with_mention(
+            channel,
+            speaker_id,
+            partner,
+            text,
+            reply_to=session.last_post,
+        )
+        # 次ターンの reply 先を更新する
+        if msg is not None:
+            session.last_post = msg
         # transcript へ
         session.transcript.append(
             {"speaker": speaker_id, "text": posted, "round": str(round_i)}
@@ -411,11 +450,18 @@ class DebateOrchestrator:
                     draft_bot=draft_bot,
                     reviewer_bot=reviewer_id,
                 )
-            # Step1 投稿
+            # Step1 投稿（cross_check はメンション可）
+            draft_msg: Optional[discord.Message] = None
             if guild is not None:
-                await self._post_with_mention(channel, draft_bot, reviewer_id, draft)
+                _, draft_msg = await self._post_with_mention(
+                    channel,
+                    draft_bot,
+                    reviewer_id,
+                    draft,
+                    add_mention=bool(self.cross_cfg.get("mention_each_other", True)),
+                )
             else:
-                await channel.send(draft)
+                draft_msg = await channel.send(draft)
             # 相方在籍
             partner_present = False
             invite_msg = ""
@@ -434,7 +480,14 @@ class DebateOrchestrator:
                     frozen_time,
                     reviewer_bot=reviewer_id,
                 )
-                await self._post_with_mention(channel, reviewer_id, draft_bot, review)
+                await self._post_with_mention(
+                    channel,
+                    reviewer_id,
+                    draft_bot,
+                    review,
+                    reply_to=draft_msg,
+                    add_mention=False,
+                )
             else:
                 # フォールバック: プロセス内で相方 persona により検証（投稿省略）
                 review = await self._generate_cross_review(
@@ -661,48 +714,77 @@ class DebateOrchestrator:
         speaker_id: str,
         mention_target_id: str,
         text: str,
-    ) -> str:
-        """Orchestrator がメンションを文頭付与して投稿する。"""
+        *,
+        reply_to: Optional[discord.Message] = None,
+        add_mention: Optional[bool] = None,
+    ) -> Tuple[str, Optional[discord.Message]]:
+        """発言 Bot の Client で投稿する。reply_to があれば Discord 引用返信にする。
+
+        戻り値: (本文クリーンテキスト, 投稿 Message)。投稿失敗時は Message=None。
+        他 Bot の channel オブジェクトへフォールバックしない（自分で反論に見える誤投稿防止）。
+        """
         # LLM 出力の <@...> を除去
         clean = _MENTION_RE.sub("", text or "").strip()
+        # 先頭時刻プレフィックスも落とす
+        clean = self._strip_leading_time(clean)
         # 文字数制限
         max_len = 1900
         if len(clean) > max_len:
             clean = clean[: max_len - 1] + "…"
-        # メンション要否
-        mention_on = True
-        if speaker_id in ("plana", "arona"):
-            # debate / cross の設定を参照
-            mention_on = bool(
-                self.debate_cfg.get("mention_each_other", True)
-                if True
-                else True
-            )
+        # メンション要否（reply がある討論は引用で足りるので既定オフ寄り）
+        if add_mention is None:
+            # reply 付きなら本文メンション不要（二重ピン回避）
+            mention_on = bool(self.debate_cfg.get("mention_each_other", True)) and reply_to is None
+        else:
+            mention_on = add_mention
         # 文頭メンション
         prefix = registry.mention(mention_target_id) if mention_on else ""
         content = f"{prefix} {clean}".strip() if prefix else clean
-        # 発言 Bot の Client で投稿（見た目をその Bot にする）
+        # 発言 Bot の Client 必須
         bot = registry.get(speaker_id)
         if bot is None:
-            # フォールバック: 渡された channel
-            msg = await channel.send(content)
-            return clean
-        # 同一チャンネルを Bot 側から取得
+            logger.error(
+                "Cannot post as %s: bot not registered (skipping to avoid wrong author)",
+                speaker_id,
+            )
+            return clean, None
+        # 同一チャンネルを発言 Bot 側から取得
         ch_id = getattr(channel, "id", None)
-        target = bot.get_channel(ch_id) if ch_id else None
+        if ch_id is None:
+            logger.error("Cannot post as %s: channel has no id", speaker_id)
+            return clean, None
+        target = bot.get_channel(ch_id)
         if target is None:
-            # fetch を試す
+            # fetch を試す（キャッシュ未着時）
             try:
-                if ch_id:
-                    target = await bot.fetch_channel(ch_id)
-            except Exception:
-                target = channel
+                target = await bot.fetch_channel(ch_id)
+            except Exception as e:
+                logger.error(
+                    "Cannot post as %s: failed to resolve channel %s: %s",
+                    speaker_id,
+                    ch_id,
+                    e,
+                )
+                return clean, None
+        # reply 引数
+        send_kwargs: Dict[str, Any] = {}
+        if reply_to is not None:
+            try:
+                send_kwargs["reference"] = reply_to.to_reference(fail_if_not_exists=False)
+                # 引用先作者への自動メンションはしない（本文メンションと分離）
+                send_kwargs["mention_author"] = False
+            except Exception as e:
+                logger.warning("Failed to build message reference: %s", e)
         # 投稿
-        await target.send(content)
+        try:
+            msg = await target.send(content, **send_kwargs)
+        except Exception as e:
+            logger.error("Failed to post as %s: %s", speaker_id, e, exc_info=True)
+            return clean, None
         # ログタグ
         tag = registry.display_name(speaker_id)
         logger.info("🤖 [LLM_RESPONSE][%s] %s", tag, clean.replace("\n", " ")[:500])
-        return clean
+        return clean, msg
 
     async def _generate(
         self,

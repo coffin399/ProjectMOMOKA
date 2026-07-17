@@ -52,7 +52,7 @@ Mention `@PLANA` or `@ARONA` to chat.
 #### Highlights
 
 - Image recognition (supported models)
-- History, user bio (`/set-user-bio`), global memory (`/memory-save`)
+- Conversation history
 - Web search
 - **debate** — Multi-round PLANA↔ARONA discussion, then a judge turn
 - **cross_check** — PLANA draft → ARONA review → PLANA conclusion (3 posts, no stop panel)
@@ -197,8 +197,6 @@ llm:
 |---------|-------------|
 | `@PLANA` / `@ARONA` `<message>` | Chat via mention |
 | `/chat <message>` | Chat without mention |
-| `/set-user-bio` / `/show-user-bio` / `/reset-user-bio` | User bio |
-| `/memory-save` / `/memory-list` / `/memory-delete` | Global memory |
 | `/clear_history` | Reset history |
 | `/switch-models` | Per-channel model |
 
