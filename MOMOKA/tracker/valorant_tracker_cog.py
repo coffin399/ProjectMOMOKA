@@ -434,36 +434,39 @@ class ValorantCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     """Setup function for the cog"""
-    import yaml
-    import os
+    import logging
 
-    # Try to get API key from bot attribute first (for manual setting)
-    api_key = getattr(bot, 'valorant_api_key', None)
+    # ログ用ロガー
+    logger = logging.getLogger(__name__)
 
-    # If not set, try to load from config.yaml
-    if not api_key:
-        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    # プレースホルダ判定用
+    _PLACEHOLDERS = {
+        "",
+        "YOUR_API_KEY",
+        "YOUR_API_KEY_HERE",
+        "YOUR_VALORANT_API_KEY",
+    }
 
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-                api_key = config.get('valorant', {}).get('api_key')
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"Warning: Failed to load config.yaml: {e}")
+    # 手動設定（互換）を先に見る
+    api_key = getattr(bot, "valorant_api_key", None)
 
-    if not api_key:
-        raise ValueError(
-            "Valorant API key is required!\n"
-            "Add to config.yaml:\n"
-            "valorant:\n"
-            "  api_key: YOUR_API_KEY\n\n"
-            "Get your key from: https://discord.com/invite/X3GaVkX2YN\n"
-            "1. Join the Discord server\n"
-            "2. Verify\n"
-            "3. Go to #get-a-key channel\n"
-            "4. Select 'VALORANT (Basic Key)' from dropdown"
+    # bot.config（configs/ マージ済み）から読む
+    if not api_key and hasattr(bot, "config") and isinstance(bot.config, dict):
+        # valorant セクションから api_key を取る
+        api_key = (bot.config.get("valorant") or {}).get("api_key")
+
+    # 文字列化して前後空白を除去する
+    api_key = str(api_key or "").strip()
+
+    # 未設定・プレースホルダなら Cog をスキップ（起動は継続）
+    if not api_key or api_key in _PLACEHOLDERS or api_key.startswith("YOUR_"):
+        logger.warning(
+            "Valorant tracker skipped: api_key is unset. "
+            "Set valorant.api_key in configs/tracker_config.yaml to enable. "
+            "Key guide: https://discord.com/invite/X3GaVkX2YN"
         )
+        # ロード失敗にせず終わる
+        return
 
+    # キーがあるときだけ Cog を登録する
     await bot.add_cog(ValorantCog(bot, api_key))

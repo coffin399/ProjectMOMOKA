@@ -318,6 +318,24 @@ class Momoka(commands.Bot):
                 self.display_name,
                 e
             )
+        # Discord ログ Handler を先に外して Session is closed を防ぐ
+        try:
+            # ルートロガーのハンドラ一覧を走査する
+            root = logging.getLogger()
+            # DiscordLogHandler だけ取り外す
+            for handler in list(root.handlers):
+                # クラス名で判定する（循環 import 回避）
+                if handler.__class__.__name__ == "DiscordLogHandler":
+                    # ハンドラを閉じる
+                    try:
+                        handler.close()
+                    except Exception:
+                        pass
+                    # ルートから除去する
+                    root.removeHandler(handler)
+        except Exception as e:
+            # ハンドラ除去失敗はシャットダウンを止めない
+            logging.debug("%s DiscordLogHandler detach failed: %s", self.display_name, e)
         # discord.py 本来のクローズ処理へ進む
         await super().close()
 
@@ -1300,7 +1318,8 @@ class LogViewerApp:
             text_widget.delete(1.0, f"{lines - self.config['max_lines']}.0")
         
         # ボット識別タグ（[PLANA] / [ARONA]）の色付けを設定する
-        text_widget.tag_config("plana_tag", foreground="#4dabf7", font=("Meiryo UI", 9, "bold"))
+        # PLANA: 見やすい紫 / ARONA: ピンク
+        text_widget.tag_config("plana_tag", foreground="#b388ff", font=("Meiryo UI", 9, "bold"))
         text_widget.tag_config("arona_tag", foreground="#ff6b9d", font=("Meiryo UI", 9, "bold"))
         
         # レベルに応じた色付けを設定する

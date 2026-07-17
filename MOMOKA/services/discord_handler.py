@@ -219,6 +219,9 @@ class DiscordLogHandler(logging.Handler):
         """
         キューに溜まったログを全て取り出し、個々のログが途切れないようにチャンク分けして送信する。
         """
+        # シャットダウン後は送信しない
+        if self._closed:
+            return
         if self.queue.empty():
             return
 
@@ -381,6 +384,12 @@ class DiscordLogHandler(logging.Handler):
                         f"{type(e).__name__}: {e}. Skipping this cycle."
                     )
                     break
+                except RuntimeError as e:
+                    # Bot シャットダウン後の aiohttp Session is closed 等は黙って打ち切る
+                    if "Session is closed" in str(e) or self._closed:
+                        break
+                    print(f"Failed to send log to Discord channel {channel.id}: RuntimeError: {e}")
+                    break
                 except Exception as e:
                     # 予期しないエラー: 失敗カウント加算
                     print(f"Failed to send log to Discord channel {channel.id}: {type(e).__name__}: {e}")
@@ -424,25 +433,43 @@ class DiscordLogHandler(logging.Handler):
             # ループ全体の致命的エラー（通常到達しない）
             print(f"DiscordLogHandler: Fatal error in log sender loop: {e}")
         finally:
-            # ループ終了時に残っているログを送信
-            try:
-                await self._process_queue()
-            except Exception:
-                pass
+            # ループ終了時に残っているログを送信（既に閉じていればスキップ）
+            if not self._closed:
+                try:
+                    await self._process_queue()
+                except Exception:
+                    pass
 
     def close(self):
         """ハンドラを閉じる。"""
+        # 二重 close を無視する
         if self._closed:
             return
+        # 以降の emit / 送信ループを止める
         self._closed = True
+        # バックグラウンドタスクがあればキャンセルする
         if self._task:
-            self._task.cancel()
-        # 同期的なコンテキストから非同期関数を安全に呼び出す
-        if self.bot.loop.is_running():
             try:
-                future = asyncio.run_coroutine_threadsafe(self._process_queue(), self.bot.loop)
-                # タイムアウトを設定して待機
-                future.result(timeout=self.interval)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception) as e:
-                print(f"Error sending remaining logs on close: {e}")
-        super().close()
+                self._task.cancel()
+            except Exception:
+                pass
+            self._task = None
+        # bot クローズ後は loop が _MissingSentinel になるため安全に確認する
+        loop = getattr(self.bot, "loop", None)
+        # is_running を持つ本物のループだけ残ログ送信を試みる
+        if loop is not None and hasattr(loop, "is_running"):
+            try:
+                # ループが生きていれば残キューを送る
+                if loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(self._process_queue(), loop)
+                    # タイムアウト付きで待つ
+                    future.result(timeout=self.interval)
+            except (asyncio.CancelledError, asyncio.TimeoutError, RuntimeError, Exception):
+                # シャットダウン中の失敗は無視する
+                pass
+        # 親 Handler の close を呼ぶ
+        try:
+            super().close()
+        except Exception:
+            # atexit 経路でも落とさない
+            pass
