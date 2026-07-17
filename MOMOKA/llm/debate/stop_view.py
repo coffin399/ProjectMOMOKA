@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Callable, Optional, Set
 
 import discord
 
+from MOMOKA.llm.debate.accents import initiator_accent_color
+
 if TYPE_CHECKING:
     from MOMOKA.llm.debate.orchestrator import DebateSession
 
@@ -64,9 +66,10 @@ class DebateStopView(discord.ui.LayoutView):
                 f"**討論中 / Debate in progress**\n"
                 f"テーマ / Topic: {topic}\n"
                 f"Round: {round_i}/{max_r}\n"
-                f"中止する場合は下のボタンを押してください。"
+                f"中止する場合は下のボタンを押してください。 / Press the button below to stop."
             )
-            accent = discord.Color.from_rgb(120, 80, 180)
+            # 進行中は起動 Bot 色（PLANA 紫 / ARONA 水色）
+            accent = initiator_accent_color(self.session.initiator_bot_id)
             show_button = True
         # コンテナを作る
         container = discord.ui.Container(accent_color=accent)

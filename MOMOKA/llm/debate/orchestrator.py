@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import discord
 
 from MOMOKA.bots.registry import registry
+from MOMOKA.llm.debate.accents import initiator_accent_color
 from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.llm.debate.stop_view import DebateStopView
 
@@ -70,6 +71,8 @@ class DebateSession:
     # セッション開始時に固定した日付・時刻（ターン間で変えない）
     frozen_date: str = ""
     frozen_time: str = ""
+    # 討論を起動した Bot（plana / arona）— 先攻にも使う
+    initiator_bot_id: str = "plana"
 
 
 class DebateOrchestrator:
@@ -97,6 +100,7 @@ class DebateOrchestrator:
         guild: Optional[discord.Guild],
         topic: str,
         starter_user_id: int,
+        initiator_bot_id: str = "plana",
         position_plana: Optional[str] = None,
         position_arona: Optional[str] = None,
     ) -> str:
@@ -111,13 +115,18 @@ class DebateOrchestrator:
         # ギルド必須
         if guild is None:
             return "Debate is only available in guild channels."
+        # 起動 Bot を正規化する
+        initiator = (initiator_bot_id or "plana").lower()
+        if initiator not in ("plana", "arona"):
+            initiator = "plana"
+        # 相方 Bot（起動側の反対）
+        partner_id = "arona" if initiator == "plana" else "plana"
         # チャンネル排他
         acquired = await channel_lock.try_acquire(channel_id, "debate")
         if not acquired:
             owner = channel_lock.owner(channel_id) or "another session"
             return f"This channel is busy with '{owner}'. Wait until it finishes."
-        # 相方在籍チェック
-        partner_id = self.debate_cfg.get("partner_bot", "arona")
+        # 相方在籍チェック（起動側ではなく partner を見る）
         partner_ok, partner_msg = await self._ensure_partner_in_guild(guild, partner_id)
         if not partner_ok:
             # ロック解放
@@ -126,7 +135,6 @@ class DebateOrchestrator:
         # ポジション既定
         pos_p = position_plana or "cautious / skeptical perspective"
         pos_a = position_arona or "optimistic / proactive perspective"
-        # セッション作成
         # セッション開始時の時計を固定する（ターン間ズレ防止）
         frozen_date, frozen_time = _freeze_clock()
         # セッション作成
@@ -140,22 +148,19 @@ class DebateOrchestrator:
             positions={"plana": pos_p, "arona": pos_a},
             frozen_date=frozen_date,
             frozen_time=frozen_time,
+            initiator_bot_id=initiator,
         )
-        # 開会メッセージ
-        opening = self._format_opening(topic)
         try:
-            # パネル View を作る
+            # パネル View を作る（開会文・中止案内はパネル内に集約し、通常メッセージは送らない）
             view = DebateStopView(
                 session=session,
                 admin_ids=self.admin_ids,
                 on_stop=self._cancel_session,
             )
-            # パネル投稿
+            # パネル投稿（起動 Bot の Client 経由）
             panel = await channel.send(view=view)
             # 参照を保存
             session.panel_message = panel
-            # 開会テキスト（通常メッセージ）
-            await channel.send(opening)
         except Exception as e:
             # 失敗時はロック解放
             await channel_lock.release(channel_id)
@@ -171,6 +176,7 @@ class DebateOrchestrator:
         return (
             f"Debate started (session={session.session_id}). "
             f"Topic: {topic}. "
+            f"First speaker: {registry.display_name(initiator)}. "
             "A stop button is posted in the channel. "
             "Do not summarize the debate yourself yet; wait for the transcript in a later update if needed. "
             "Tell Sensei briefly that the debate has started."
@@ -202,12 +208,15 @@ class DebateOrchestrator:
                 # 進捗更新
                 session.current_round = r
                 await self._refresh_panel(session)
-                # PLANA ターン
-                await self._debate_turn(session, channel, "plana", r)
+                # 先攻は起動 Bot、次に相方（ARONA 開始なら ARONA→PLANA）
+                first = session.initiator_bot_id or "plana"
+                second = "arona" if first == "plana" else "plana"
+                # 先攻ターン
+                await self._debate_turn(session, channel, first, r)
                 if session.status == "cancelled":
                     break
-                # ARONA ターン
-                await self._debate_turn(session, channel, "arona", r)
+                # 後攻ターン
+                await self._debate_turn(session, channel, second, r)
                 # 投稿間隔
                 delay = float(self.debate_cfg.get("post_delay_sec", 1.5))
                 await asyncio.sleep(delay)
@@ -326,12 +335,29 @@ class DebateOrchestrator:
             max_chars=1200,
             tag="DEBATE_JUDGE",
         )
-        # メンションなしで投稿
+        # メンション markup を除去する
         clean = _MENTION_RE.sub("", text).strip()
+        # 投稿先チャンネルを解決する
         bot = registry.require(judge_id)
         ch = bot.get_channel(session.channel_id) or channel
-        await ch.send(f"**評定 / Verdict**\n{clean}")
-        session.transcript.append({"speaker": f"judge:{judge_id}", "text": clean, "round": "judge"})
+        # 評定は Embed で目立たせる（起動 Bot 色: PLANA 紫 / ARONA 水色）
+        embed = discord.Embed(
+            title="⚖️ 評定 / Verdict",
+            description=clean[:4096] if clean else "（評定を生成できませんでした）",
+            color=initiator_accent_color(session.initiator_bot_id),
+        )
+        # テーマをフィールドに載せる
+        topic_text = (session.topic or "")[:1024]
+        if topic_text:
+            embed.add_field(name="テーマ / Topic", value=topic_text, inline=False)
+        # 司会 Bot 名をフッターへ
+        embed.set_footer(text=f"Moderator: {registry.display_name(judge_id)}")
+        # Embed を投稿する
+        await ch.send(embed=embed)
+        # transcript へ残す
+        session.transcript.append(
+            {"speaker": f"judge:{judge_id}", "text": clean, "round": "judge"}
+        )
 
     # ------------------------------------------------------------------
     # cross_check（同期: Step1/2 投稿、戻り値は検証コメント）
@@ -345,13 +371,26 @@ class DebateOrchestrator:
         draft_answer: str,
         initiator_bot_id: str = "plana",
     ) -> str:
-        """Step1/2 を投稿し、ARONA 検証全文を返す（Step3 は LLM ループ側）。"""
+        """Step1/2 を投稿し、検証全文を返す（Step3 は LLM ループ側）。
+
+        起動 Bot が一次案、相方が検証。PLANA 起点なら ARONA 検証、逆も可。
+        """
         # 無効なら拒否
         if not self.cross_cfg.get("enabled", True):
             return "cross_check is disabled in config."
         channel_id = getattr(channel, "id", None)
         if channel_id is None:
             return "cross_check requires a text channel."
+        # 起動 Bot / 検証役を決める
+        draft_bot = (initiator_bot_id or "plana").lower()
+        if draft_bot not in ("plana", "arona"):
+            draft_bot = "plana"
+        # 既定 reviewer は相方（config の reviewer_bot は PLANA 起点時の既定）
+        default_reviewer = self.cross_cfg.get("reviewer_bot", "arona")
+        if draft_bot == "plana":
+            reviewer_id = default_reviewer if default_reviewer != "plana" else "arona"
+        else:
+            reviewer_id = "plana"
         # 排他
         acquired = await channel_lock.try_acquire(channel_id, "cross_check")
         if not acquired:
@@ -360,15 +399,17 @@ class DebateOrchestrator:
         try:
             # セッション時計を固定する（Step1/2 で同じ日時）
             frozen_date, frozen_time = _freeze_clock()
-            reviewer_id = self.cross_cfg.get("reviewer_bot", "arona")
             max_chars = int(self.cross_cfg.get("max_chars_review", 600))
-            # Step1: draft を投稿（initiator 視点。通常は PLANA）
-            draft_bot = "plana"
             # draft 本文（引数を優先。空なら生成）
             draft = (draft_answer or "").strip()
             if not draft:
                 draft = await self._generate_cross_draft(
-                    question, max_chars, frozen_date, frozen_time
+                    question,
+                    max_chars,
+                    frozen_date,
+                    frozen_time,
+                    draft_bot=draft_bot,
+                    reviewer_bot=reviewer_id,
                 )
             # Step1 投稿
             if guild is not None:
@@ -377,25 +418,35 @@ class DebateOrchestrator:
                 await channel.send(draft)
             # 相方在籍
             partner_present = False
+            invite_msg = ""
             if guild is not None:
                 partner_present, invite_msg = await self._ensure_partner_in_guild(
                     guild, reviewer_id
                 )
-            else:
-                invite_msg = ""
             # Step2: 検証（同じ固定時計）
+            reviewer_name = registry.display_name(reviewer_id)
             if partner_present:
                 review = await self._generate_cross_review(
-                    question, draft, max_chars, frozen_date, frozen_time
+                    question,
+                    draft,
+                    max_chars,
+                    frozen_date,
+                    frozen_time,
+                    reviewer_bot=reviewer_id,
                 )
                 await self._post_with_mention(channel, reviewer_id, draft_bot, review)
             else:
-                # フォールバック: プロセス内で ARONA persona により検証（投稿省略）
+                # フォールバック: プロセス内で相方 persona により検証（投稿省略）
                 review = await self._generate_cross_review(
-                    question, draft, max_chars, frozen_date, frozen_time
+                    question,
+                    draft,
+                    max_chars,
+                    frozen_date,
+                    frozen_time,
+                    reviewer_bot=reviewer_id,
                 )
                 review = (
-                    f"[ARONA offline review — not posted]\n{review}\n"
+                    f"[{reviewer_name} offline review — not posted]\n{review}\n"
                     f"(Partner not in guild. {invite_msg})"
                 )
             # tool 戻り値 = 検証全文（Step3 は LLM 最終応答のみ）
@@ -410,15 +461,29 @@ class DebateOrchestrator:
         max_chars: int,
         frozen_date: str,
         frozen_time: str,
+        *,
+        draft_bot: str = "plana",
+        reviewer_bot: str = "arona",
     ) -> str:
         """Step1 用ドラフト生成（通常 persona・固定時計）。"""
-        # 指示テンプレ
+        # 指示テンプレ（起動/検証役名を埋める）
         tmpl = self.cross_cfg.get("draft_instruction") or ""
-        instruction = tmpl.format(max_chars_review=max_chars)
+        draft_name = registry.display_name(draft_bot)
+        reviewer_name = registry.display_name(reviewer_bot)
+        try:
+            instruction = tmpl.format(
+                max_chars_review=max_chars,
+                draft_name=draft_name,
+                reviewer_name=reviewer_name,
+            )
+        except KeyError:
+            # 旧テンプレ互換（PLANA 固定文言）
+            instruction = tmpl.format(max_chars_review=max_chars)
+            instruction = instruction.replace("as PLANA", f"as {draft_name}")
         # 通常 persona system（時計固定）+ 時刻言及抑止
         system = (
             self._normal_persona_system(
-                "plana", frozen_date=frozen_date, frozen_time=frozen_time
+                draft_bot, frozen_date=frozen_date, frozen_time=frozen_time
             )
             + "\n\n"
             + instruction
@@ -426,7 +491,7 @@ class DebateOrchestrator:
             + _CLOCK_STABILITY_NOTE
         )
         return await self._generate(
-            speaker_id="plana",
+            speaker_id=draft_bot,
             system=system,
             user_content=question,
             max_chars=max_chars,
@@ -440,21 +505,40 @@ class DebateOrchestrator:
         max_chars: int,
         frozen_date: str,
         frozen_time: str,
+        *,
+        reviewer_bot: str = "arona",
     ) -> str:
-        """Step2 検証生成（通常 ARONA persona・固定時計）。"""
+        """Step2 検証生成（通常 persona・固定時計）。"""
+        # 検証対象（相方）の表示名
+        draft_bot = "plana" if reviewer_bot == "arona" else "arona"
+        draft_name = registry.display_name(draft_bot)
+        reviewer_name = registry.display_name(reviewer_bot)
+        # 呼び方（既存口調に合わせる）
+        draft_address = "「プラナちゃん」" if draft_bot == "plana" else "「アロナ」"
         tmpl = self.cross_cfg.get("review_prompt") or ""
-        system = tmpl.format(
-            question=question,
-            draft_answer=draft,
-            max_chars_review=max_chars,
-        )
-        # 通常 persona + review 指示 + 時刻言及抑止
+        try:
+            system = tmpl.format(
+                question=question,
+                draft_answer=draft,
+                max_chars_review=max_chars,
+                draft_name=draft_name,
+                reviewer_name=reviewer_name,
+                draft_address=draft_address,
+            )
+        except KeyError:
+            # 旧テンプレ互換
+            system = tmpl.format(
+                question=question,
+                draft_answer=draft,
+                max_chars_review=max_chars,
+            )
+        # 検証役の通常 persona を前置きする
         persona = self._normal_persona_system(
-            "arona", frozen_date=frozen_date, frozen_time=frozen_time
+            reviewer_bot, frozen_date=frozen_date, frozen_time=frozen_time
         )
         full_system = f"{persona}\n\n{system}\n\n{_CLOCK_STABILITY_NOTE}"
         return await self._generate(
-            speaker_id="arona",
+            speaker_id=reviewer_bot,
             system=full_system,
             user_content="Please review the draft above.",
             max_chars=max_chars,

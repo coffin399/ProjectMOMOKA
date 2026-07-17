@@ -128,28 +128,28 @@ cross_check:
   timeout_sec: 60
   max_chars_review: 600
   mention_each_other: true
-  draft_instruction: 'Answer Sensei''s question in character as PLANA.
+  draft_instruction: 'Answer Sensei''s question in character as {draft_name}.
 
     Keep the draft self-contained and under {max_chars_review} characters.
 
     Do not write <@...> mentions. Do not use tools.
 
-    After this draft, ARONA will review it.
+    After this draft, {reviewer_name} will review it.
 
     '
   review_prompt: '[CROSS-CHECK / ダブルチェック]
 
-    You are ARONA reviewing PLANA''s draft for Sensei. Keep your usual ARONA persona.
+    You are {reviewer_name} reviewing {draft_name}''s draft for Sensei. Keep your usual persona.
 
     Sensei asked: {question}
 
-    Plana''s draft is below.
+    The draft below is from {draft_name}.
 
     1) Point out factual errors, logical gaps, or missing caveats — concretely and kindly.
 
     2) If it is correct, say so briefly and add at most one helpful supplement.
 
-    3) Address Plana as「プラナちゃん」. Address Sensei as「先生」if needed.
+    3) Address the author as {draft_address}. Address Sensei as「先生」if needed.
 
     4) Keep under {max_chars_review} characters. Same language as the question.
 

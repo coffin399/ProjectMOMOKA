@@ -20,6 +20,7 @@ class DebateTool:
             "name": name,
             "description": (
                 "Start a multi-round debate between PLANA and ARONA. "
+                "You speak first; the partner replies. "
                 "Use ONLY when the user clearly wants a discussion/debate. "
                 "Prefer cross_check for light verification."
             ),
@@ -74,19 +75,22 @@ class DebateTool:
         topic = str(arguments.get("topic") or "").strip()
         if not topic:
             return "topic is required."
+        # 起動 Bot（ARONA 起点なら先攻も ARONA）
+        initiator = getattr(self.bot, "bot_id", "plana")
         # 開始
         return await orchestrator.start_debate(
             channel=channel,
             guild=guild,
             topic=topic,
             starter_user_id=user_id,
+            initiator_bot_id=initiator,
             position_plana=arguments.get("position_plana"),
             position_arona=arguments.get("position_arona"),
         )
 
 
 class CrossCheckTool:
-    """軽量: PLANA案→ARONA検証。戻り値は検証全文（Step3はLLM最終応答）。"""
+    """軽量: 起動Bot案→相方検証。戻り値は検証全文（Step3はLLM最終応答）。"""
 
     name = "cross_check"
     tool_spec = {
@@ -94,7 +98,7 @@ class CrossCheckTool:
         "function": {
             "name": name,
             "description": (
-                "Quickly verify your own answer with ARONA before finalizing. "
+                "Quickly verify your own answer with your partner bot before finalizing. "
                 "Use when the user asks for confirmation, fact-checking, or a second opinion, "
                 "or when you are unsure. Much lighter than 'debate'."
             ),
@@ -107,7 +111,7 @@ class CrossCheckTool:
                     },
                     "draft_answer": {
                         "type": "string",
-                        "description": "PLANAの一次回答（これをARONAが検証する）",
+                        "description": "自分の一次回答（相方Botが検証する）",
                     },
                 },
                 "required": ["question", "draft_answer"],

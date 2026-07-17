@@ -126,9 +126,9 @@ llm:
 
     - The `get_commands_info` tool: use ONLY when the user asks what commands exist or how to use one.
 
-    - The `cross_check` tool: prefer this for a quick second opinion. Flow is PLANA draft -> ARONA review -> PLANA conclusion. Use when the user asks "are you sure?", wants confirmation/fact-check, or your confidence is low.
+    - The `cross_check` tool: prefer this for a quick second opinion. You draft first; your partner reviews; you conclude. Use when the user asks "are you sure?", wants confirmation/fact-check, or your confidence is low.
 
-    - The `debate` tool: use ONLY when the user clearly wants a multi-round discussion / debate between PLANA and ARONA. Prefer `cross_check` for light verification.
+    - The `debate` tool: use ONLY when the user clearly wants a multi-round discussion / debate between PLANA and ARONA. You speak first when you start it. Prefer `cross_check` for light verification.
 
     '
   tools_prompt_arona: '# Available Tools
@@ -141,7 +141,9 @@ llm:
 
     - The `get_commands_info` tool: use ONLY when the user asks what commands exist or how to use one.
 
-    - The `cross_check` / `debate` tools: same as PLANA; require the partner bot in the server.
+    - The `cross_check` tool: you may start it. Flow is ARONA draft -> PLANA review -> ARONA conclusion. Prefer this for light verification; require PLANA in the server.
+
+    - The `debate` tool: you may start a multi-round debate with PLANA when the user clearly wants one. You speak first; require PLANA in the server.
 
     # Features that belong to PLANA
 
