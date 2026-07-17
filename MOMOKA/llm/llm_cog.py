@@ -1252,6 +1252,18 @@ class LLMCog(commands.Cog, name="LLM"):
                     f"⏱️ Response time recorded: {model_name} = {elapsed:.1f}s"
                 )
             return result
+        except openai.RateLimitError as e:
+            # クォータ枯渇は想定内。ERROR / traceback にしない
+            logger.warning("[%s] ⚠️ LLM rate limit / quota exhausted: %s", self._bot_tag(), e)
+            error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
+            if sent_message and not self._shutting_down:
+                try:
+                    await sent_message.edit(content=error_msg, embed=None, view=self._create_support_view())
+                except discord.HTTPException:
+                    pass
+            elif not sent_message:
+                await message.reply(content=error_msg, view=self._create_support_view(), silent=True)
+            return None, "", None
         except Exception as e:
             logger.error(f"❌ Error during LLM streaming response: {e}", exc_info=True)
             error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
@@ -1534,7 +1546,10 @@ class LLMCog(commands.Cog, name="LLM"):
                     logger.warning(
                         f"⚠️ {error_type} error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
                     if attempt + 1 >= num_keys:
-                        logger.error(f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting.")
+                        # 全キー枯渇は想定内（クォータ等）なので ERROR にしない
+                        logger.warning(
+                            f"⚠️ All {num_keys} API keys for provider '{provider_name}' have failed ({error_type}). Aborting."
+                        )
                         raise e
                     next_key_index = (current_key_index + 1) % num_keys
                     self.provider_key_index[provider_name] = next_key_index
@@ -1568,7 +1583,15 @@ class LLMCog(commands.Cog, name="LLM"):
                             f"⚠️ Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
 
                     if attempt + 1 >= num_keys:
-                        logger.error(f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting.")
+                        # 429 等の枯渇は想定内。その他は従来どおり ERROR
+                        if status_code == 429:
+                            logger.warning(
+                                f"⚠️ All {num_keys} API keys for provider '{provider_name}' have failed (429). Aborting."
+                            )
+                        else:
+                            logger.error(
+                                f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting."
+                            )
                         raise e
 
                     next_key_index = (current_key_index + 1) % num_keys
@@ -1901,6 +1924,17 @@ class LLMCog(commands.Cog, name="LLM"):
 
             elif not sent_messages:
                 logger.warning("LLM response for /chat was empty or an error occurred.")
+        except openai.RateLimitError as e:
+            # クォータ枯渇は想定内
+            logger.warning("[%s] ⚠️ /chat rate limit / quota exhausted: %s", self._bot_tag(), e)
+            error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"
+            try:
+                if temp_message:
+                    await temp_message.edit(content=error_msg, embed=None, view=self._create_support_view())
+                else:
+                    await interaction.followup.send(content=error_msg, view=self._create_support_view())
+            except discord.HTTPException:
+                pass
         except Exception as e:
             logger.error(f"❌ Error during /chat command execution: {e}", exc_info=True)
             error_msg = f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}"

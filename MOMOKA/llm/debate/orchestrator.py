@@ -6,7 +6,8 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import discord
 
@@ -21,6 +22,34 @@ logger = logging.getLogger(__name__)
 
 # LLM 出力から誤って含まれるメンション markup を除去する
 _MENTION_RE = re.compile(r"<@!?\d+>")
+
+# 発言先頭の [HH:MM] 時刻プレフィックスを落とす（通常チャット履歴由来のズレ防止）
+_LEADING_TIME_RE = re.compile(r"^\[\d{1,2}:\d{2}\]\s*")
+
+# 討論・cross_check 共通: 壁時計・API遅延による時刻言及を抑止する
+_CLOCK_STABILITY_NOTE = """
+# Timing (system — critical)
+- A fixed session clock may appear in context. Treat it as static scenery only.
+- Do NOT mention the current time, clocks, or that time has passed since the last turn.
+- Apparent time gaps between turns are only API latency — never comment on them.
+- Debate / review the substance only.
+""".strip()
+
+
+def _jst_now() -> datetime:
+    """JST の現在時刻を返す。"""
+    # JST タイムゾーン
+    jst = timezone(timedelta(hours=9))
+    # 現在時刻
+    return datetime.now(jst)
+
+
+def _freeze_clock() -> Tuple[str, str]:
+    """セッション開始時の日付・時刻文字列を固定する。"""
+    # 今を取る
+    now = _jst_now()
+    # 日付と時刻を返す
+    return now.strftime("%Y-%m-%d"), now.strftime("%H:%M")
 
 
 @dataclass
@@ -38,6 +67,9 @@ class DebateSession:
     transcript: List[Dict[str, str]] = field(default_factory=list)
     panel_message: Optional[discord.Message] = None
     positions: Dict[str, str] = field(default_factory=dict)
+    # セッション開始時に固定した日付・時刻（ターン間で変えない）
+    frozen_date: str = ""
+    frozen_time: str = ""
 
 
 class DebateOrchestrator:
@@ -95,6 +127,9 @@ class DebateOrchestrator:
         pos_p = position_plana or "cautious / skeptical perspective"
         pos_a = position_arona or "optimistic / proactive perspective"
         # セッション作成
+        # セッション開始時の時計を固定する（ターン間ズレ防止）
+        frozen_date, frozen_time = _freeze_clock()
+        # セッション作成
         session = DebateSession(
             session_id=uuid.uuid4().hex[:12],
             channel_id=channel_id,
@@ -103,6 +138,8 @@ class DebateOrchestrator:
             starter_user_id=starter_user_id,
             max_rounds=int(self.debate_cfg.get("max_rounds", 2)),
             positions={"plana": pos_p, "arona": pos_a},
+            frozen_date=frozen_date,
+            frozen_time=frozen_time,
         )
         # 開会メッセージ
         opening = self._format_opening(topic)
@@ -222,8 +259,10 @@ class DebateOrchestrator:
         """1 発言者の討論ターン。"""
         # システムプロンプト（討論人格）
         system = self._build_debate_system(speaker_id, session)
-        # 相手の直前発言
-        opponent_text = self._last_opponent_text(session, speaker_id)
+        # 相手の直前発言（先頭の [HH:MM] は除去）
+        opponent_text = self._strip_leading_time(
+            self._last_opponent_text(session, speaker_id)
+        )
         # ターン指示
         turn_tmpl = self.debate_cfg.get("turn_instruction") or ""
         turn_inst = turn_tmpl.format(
@@ -231,6 +270,8 @@ class DebateOrchestrator:
             max_rounds=session.max_rounds,
             max_chars_per_turn=self.debate_cfg.get("max_chars_per_turn", 800),
         )
+        # 時刻言及抑止をターン指示へ足す
+        turn_inst = f"{turn_inst}\nDo not mention clocks or time gaps between turns."
         # user メッセージ
         if opponent_text:
             user_content = f"{opponent_text}\n\n{turn_inst}"
@@ -270,8 +311,12 @@ class DebateOrchestrator:
         for entry in session.transcript:
             lines.append(f"[{entry['speaker'].upper()}] {entry['text']}")
         transcript_text = "\n".join(lines)
-        # 評定用 system（討論人格ではなく judge 指示）
-        system = judge_tmpl.format(topic=session.topic)
+        # 評定用 system（討論人格ではなく judge 指示）+ 時刻言及抑止
+        system = (
+            judge_tmpl.format(topic=session.topic)
+            + "\n\n"
+            + _CLOCK_STABILITY_NOTE
+        )
         user_content = f"Transcript:\n{transcript_text}"
         # 生成
         text = await self._generate(
@@ -313,16 +358,18 @@ class DebateOrchestrator:
             owner = channel_lock.owner(channel_id) or "another session"
             return f"This channel is busy with '{owner}'. Cannot cross_check now."
         try:
+            # セッション時計を固定する（Step1/2 で同じ日時）
+            frozen_date, frozen_time = _freeze_clock()
             reviewer_id = self.cross_cfg.get("reviewer_bot", "arona")
             max_chars = int(self.cross_cfg.get("max_chars_review", 600))
             # Step1: draft を投稿（initiator 視点。通常は PLANA）
-            draft_bot = "plana" if initiator_bot_id != "arona" else "plana"
-            # フロー固定: PLANA 案 → ARONA 検証
             draft_bot = "plana"
             # draft 本文（引数を優先。空なら生成）
             draft = (draft_answer or "").strip()
             if not draft:
-                draft = await self._generate_cross_draft(question, max_chars)
+                draft = await self._generate_cross_draft(
+                    question, max_chars, frozen_date, frozen_time
+                )
             # Step1 投稿
             if guild is not None:
                 await self._post_with_mention(channel, draft_bot, reviewer_id, draft)
@@ -336,13 +383,17 @@ class DebateOrchestrator:
                 )
             else:
                 invite_msg = ""
-            # Step2: 検証
+            # Step2: 検証（同じ固定時計）
             if partner_present:
-                review = await self._generate_cross_review(question, draft, max_chars)
+                review = await self._generate_cross_review(
+                    question, draft, max_chars, frozen_date, frozen_time
+                )
                 await self._post_with_mention(channel, reviewer_id, draft_bot, review)
             else:
                 # フォールバック: プロセス内で ARONA persona により検証（投稿省略）
-                review = await self._generate_cross_review(question, draft, max_chars)
+                review = await self._generate_cross_review(
+                    question, draft, max_chars, frozen_date, frozen_time
+                )
                 review = (
                     f"[ARONA offline review — not posted]\n{review}\n"
                     f"(Partner not in guild. {invite_msg})"
@@ -353,13 +404,27 @@ class DebateOrchestrator:
             # ロック解放
             await channel_lock.release(channel_id)
 
-    async def _generate_cross_draft(self, question: str, max_chars: int) -> str:
-        """Step1 用ドラフト生成（通常 persona）。"""
+    async def _generate_cross_draft(
+        self,
+        question: str,
+        max_chars: int,
+        frozen_date: str,
+        frozen_time: str,
+    ) -> str:
+        """Step1 用ドラフト生成（通常 persona・固定時計）。"""
         # 指示テンプレ
         tmpl = self.cross_cfg.get("draft_instruction") or ""
         instruction = tmpl.format(max_chars_review=max_chars)
-        # 通常 persona system
-        system = self._normal_persona_system("plana") + "\n\n" + instruction
+        # 通常 persona system（時計固定）+ 時刻言及抑止
+        system = (
+            self._normal_persona_system(
+                "plana", frozen_date=frozen_date, frozen_time=frozen_time
+            )
+            + "\n\n"
+            + instruction
+            + "\n\n"
+            + _CLOCK_STABILITY_NOTE
+        )
         return await self._generate(
             speaker_id="plana",
             system=system,
@@ -369,19 +434,25 @@ class DebateOrchestrator:
         )
 
     async def _generate_cross_review(
-        self, question: str, draft: str, max_chars: int
+        self,
+        question: str,
+        draft: str,
+        max_chars: int,
+        frozen_date: str,
+        frozen_time: str,
     ) -> str:
-        """Step2 検証生成（通常 ARONA persona）。"""
+        """Step2 検証生成（通常 ARONA persona・固定時計）。"""
         tmpl = self.cross_cfg.get("review_prompt") or ""
         system = tmpl.format(
             question=question,
             draft_answer=draft,
             max_chars_review=max_chars,
         )
-        # review_prompt 自体が指示なので、通常 persona を前置きしてもよいが
-        # plan では「通常 persona を維持」→ ARONA system + review 指示
-        persona = self._normal_persona_system("arona")
-        full_system = f"{persona}\n\n{system}"
+        # 通常 persona + review 指示 + 時刻言及抑止
+        persona = self._normal_persona_system(
+            "arona", frozen_date=frozen_date, frozen_time=frozen_time
+        )
+        full_system = f"{persona}\n\n{system}\n\n{_CLOCK_STABILITY_NOTE}"
         return await self._generate(
             speaker_id="arona",
             system=full_system,
@@ -406,28 +477,54 @@ class DebateOrchestrator:
         rules = rules_tmpl.format(topic=session.topic, position=position)
         persona_key = f"debate_persona_{speaker_id}"
         persona_tmpl = self.debate_cfg.get(persona_key) or ""
-        return persona_tmpl.format(debate_rules=rules)
+        # 討論人格を展開する
+        body = persona_tmpl.format(debate_rules=rules)
+        # 固定時計の注記（人格に日時プレースホルダが無い場合でも抑止文を足す）
+        clock_line = ""
+        if session.frozen_date and session.frozen_time:
+            clock_line = (
+                f"\n\n# Session clock (fixed)\n"
+                f"Session date: {session.frozen_date}, time: {session.frozen_time} JST "
+                f"(do not update or discuss this clock).\n"
+            )
+        # 時刻言及抑止を末尾へ連結する
+        return f"{body}{clock_line}\n{_CLOCK_STABILITY_NOTE}"
 
-    def _normal_persona_system(self, persona_key: str) -> str:
+    def _normal_persona_system(
+        self,
+        persona_key: str,
+        *,
+        frozen_date: Optional[str] = None,
+        frozen_time: Optional[str] = None,
+    ) -> str:
         """通常チャット用 persona system（tools なし・日付展開）。"""
-        from datetime import datetime, timezone, timedelta
-
         llm = self.config.get("llm") or {}
         personas = llm.get("personas") or {}
         entry = personas.get(persona_key) or {}
         tmpl = entry.get("system_prompt") or ""
-        jst = timezone(timedelta(hours=9))
-        now = datetime.now(jst)
+        # 固定時計が無ければ今を使う（通常呼び出し用）
+        if frozen_date and frozen_time:
+            date_str, time_str = frozen_date, frozen_time
+        else:
+            date_str, time_str = _freeze_clock()
         try:
             return tmpl.format(
-                current_date=now.strftime("%Y-%m-%d"),
-                current_time=now.strftime("%H:%M"),
+                current_date=date_str,
+                current_time=time_str,
             )
         except (KeyError, ValueError):
             return (
-                tmpl.replace("{current_date}", now.strftime("%Y-%m-%d"))
-                .replace("{current_time}", now.strftime("%H:%M"))
+                tmpl.replace("{current_date}", date_str)
+                .replace("{current_time}", time_str)
             )
+
+    def _strip_leading_time(self, text: str) -> str:
+        """文頭の [HH:MM] を除去する。"""
+        # 空ならそのまま
+        if not text:
+            return text
+        # 先頭時刻プレフィックスを落とす
+        return _LEADING_TIME_RE.sub("", text).strip()
 
     def _last_opponent_text(
         self, session: DebateSession, speaker_id: str
