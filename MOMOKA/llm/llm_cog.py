@@ -331,15 +331,15 @@ class LLMCog(commands.Cog, name="LLM"):
         return self.display_name
 
     def _persona_default_model(self) -> Optional[str]:
-        """personas.<id>.model → llm.model の順でデフォルトを返す。"""
+        """デフォルトモデルは llm.model。任意で personas.<id>.model があれば上書き。"""
         # personas 辞書を取る
         personas = self.llm_config.get("personas") or {}
         # 自 persona エントリ
         entry = personas.get(self.persona_key) or {}
-        # persona.model があれば優先
+        # 明示指定があるときだけ persona 別モデルを使う（通常は未設定）
         if entry.get("model"):
             return entry["model"]
-        # 共通 llm.model
+        # 共通 llm.model（通常のデフォルト）
         return self.llm_config.get("model")
 
     def _active_tools_list(self) -> List[str]:
@@ -585,7 +585,7 @@ class LLMCog(commands.Cog, name="LLM"):
             return None
 
     def _resolve_model_string(self, channel_id: int) -> Optional[str]:
-        """チャンネル上書き ＞ persona.model ＞ llm.model。"""
+        """チャンネル上書き ＞（任意）persona.model ＞ llm.model。"""
         # チャンネル上書きを確認する
         override = self._bot_channel_map().get(str(channel_id))
         # 上書きがあればそれを返す

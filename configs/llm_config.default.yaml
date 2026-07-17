@@ -156,7 +156,6 @@ llm:
     '
   personas:
     plana:
-      model: google/gemini-3.5-flash
       system_prompt: 'Your name is PLANA (プラナ). You are a character from Blue Archive.
 
         Stay in character at all times while assisting the user on Discord.
@@ -238,7 +237,6 @@ llm:
 
         '
     arona:
-      model: google/gemini-3.5-flash
       system_prompt: 'Your name is ARONA (アロナ). You are a character from Blue Archive.
 
         Stay in character at all times while assisting the user on Discord.
