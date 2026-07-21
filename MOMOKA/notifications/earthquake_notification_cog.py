@@ -1105,6 +1105,16 @@ class EarthquakeTsunamiCog(commands.Cog, name="EarthquakeNotifications"):
                 permissions = channel.permissions_for(guild.me)
                 if not permissions.send_messages or not permissions.embed_links:
                     logger.error(f"送信失敗 ({info_type}): チャンネル '{channel.name}' への権限が不足")
+                    # 再送しても失敗するため当該通知設定を削除する
+                    del self.config[guild_id][info_type]
+                    config_modified = True
+                    logger.info(
+                        f"🗑️ ギルド '{guild.name}' の {info_type} チャンネル設定を削除しました（権限不足）"
+                    )
+                    # 設定が空になった場合はギルド設定自体も削除する
+                    if not self.config[guild_id]:
+                        del self.config[guild_id]
+                        logger.info(f"🗑️ ギルド '{guild.name}' の設定が空になったため削除しました")
                     failed_count += 1
                     continue
 
@@ -1120,6 +1130,23 @@ class EarthquakeTsunamiCog(commands.Cog, name="EarthquakeNotifications"):
 
             except discord.Forbidden:
                 logger.error(f"送信失敗 ({info_type}): 権限不足 - ギルド {guild_id}")
+                # 送信直前に権限が落ちた場合も設定を削除する
+                try:
+                    # ギルド設定が残っているか確認する
+                    if guild_id in self.config and info_type in self.config[guild_id]:
+                        # 該当通知キーを削除する
+                        del self.config[guild_id][info_type]
+                        config_modified = True
+                        logger.info(
+                            f"🗑️ ギルド {guild_id} の {info_type} チャンネル設定を削除しました（Forbidden）"
+                        )
+                        # 空になったらギルドキーも削除する
+                        if not self.config[guild_id]:
+                            del self.config[guild_id]
+                            logger.info(f"🗑️ ギルド {guild_id} の設定が空になったため削除しました")
+                except Exception:
+                    # 削除処理自体の失敗は送信失敗カウントのみに留める
+                    pass
                 failed_count += 1
             except discord.HTTPException as e:
                 logger.error(f"送信失敗 ({info_type}): Discord APIエラー - {e.status}")

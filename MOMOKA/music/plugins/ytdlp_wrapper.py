@@ -14,7 +14,7 @@ import logging
 import yt_dlp
 # yt-dlpの出力ログをMOMOKAのログシステムに統合するためのロガーを設定する
 logger = logging.getLogger("MOMOKA.music.plugins.ytdlp")
-from yt_dlp.utils import ExtractorError  # 個別のエラーをキャッチするため
+from yt_dlp.utils import DownloadError, ExtractorError  # 抽出・ダウンロード失敗を個別に捕捉する
 
 
 class UnsupportedMediaError(RuntimeError):
@@ -143,15 +143,20 @@ _FORMAT_TRIES: tuple[str, ...] = (
     "best[acodec!=none]/best*",
     "best*",
 )
+# PO Token 無しでも使える可能性が高い一次クライアント（tv/mweb は除外）
+_YOUTUBE_PLAYER_CLIENT_PRIMARY: list[str] = ["android_vr", "web_embedded", "ios"]
+# 403 リトライ・フォールバック用（tv 本体 / mweb は載せない）
+_YOUTUBE_PLAYER_CLIENT_FALLBACK: list[str] = ["web_creator", "android", "tv_downgraded"]
 # player_client 候補（None は yt-dlp デフォルトに任せる）
-# tv_embedded は現行 yt-dlp で unsupported（Skipping unsupported client）
-# tv/android は DRM・SABR 実験で https 形式が欠けることがあるため android_vr 等を優先
+# tv は DRM 実験、mweb は GVS PO Token 必須のため一次・フォールバックから除外
 _YOUTUBE_PLAYER_CLIENT_TRIES: tuple[Optional[list[str]], ...] = (
-    ["android_vr", "tv", "web_embedded"],
-    ["mweb", "ios", "web_creator"],
-    ["tv_downgraded", "android"],
+    _YOUTUBE_PLAYER_CLIENT_PRIMARY,
+    _YOUTUBE_PLAYER_CLIENT_FALLBACK,
     None,
 )
+# 外部モジュール向けの公開エイリアス
+YOUTUBE_PLAYER_CLIENT_PRIMARY = _YOUTUBE_PLAYER_CLIENT_PRIMARY
+YOUTUBE_PLAYER_CLIENT_FALLBACK = _YOUTUBE_PLAYER_CLIENT_FALLBACK
 
 
 def _detect_js_runtimes() -> dict:
@@ -261,13 +266,19 @@ _KNOWN_DRM_HOST_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
-# DRM / 非対応サイトの例外メッセージに含まれる判定用キーワード
+# DRM / 非対応 / 永続失敗の例外メッセージに含まれる判定用キーワード
 _NON_RETRYABLE_EXTRACTOR_MARKERS: tuple[str, ...] = (
     "DRM protection",
     "known to use DRM",
     "primarily used for piracy",
     "will not be supported",
     "is not supported and will not be supported",
+    "Video unavailable",
+    "This video is not available",
+    "Private video",
+    "has been removed",
+    "Unsupported URL",
+    "No suitable extractor",
 )
 
 
@@ -287,18 +298,52 @@ def _is_non_retryable_extractor_error(error: BaseException) -> bool:
     """format / player_client 再試行しても意味がない抽出エラーか判定する。"""
     # 例外メッセージを文字列化する
     message = str(error)
-    # DRM / 非対応サイト系の文言を含むか返す
+    # DRM / 非対応 / 動画利用不可系の文言を含むか返す
     return any(marker in message for marker in _NON_RETRYABLE_EXTRACTOR_MARKERS)
+
+
+def _unsupported_media_user_message(url_or_query: str, cause: Optional[BaseException] = None) -> str:
+    """原因に応じたユーザー向け短い説明文を組み立てる。"""
+    # 原因メッセージを文字列化する
+    cause_text = str(cause) if cause is not None else ""
+    # 動画そのものが利用できない場合
+    if any(
+        marker in cause_text
+        for marker in (
+            "Video unavailable",
+            "This video is not available",
+            "Private video",
+            "has been removed",
+        )
+    ):
+        # 削除・非公開・地域制限などを案内する
+        return (
+            "この動画は再生できません（削除・非公開・地域制限など）。"
+            f" (query: {url_or_query})"
+        )
+    # URL 自体が yt-dlp 非対応の場合
+    if any(
+        marker in cause_text
+        for marker in ("Unsupported URL", "No suitable extractor")
+    ):
+        # 対応 URL または曲名検索を案内する
+        return (
+            "この URL は再生に対応していません。"
+            " YouTube / ニコニコ動画などの対応 URL、または曲名検索を使ってください。"
+            f" (query: {url_or_query})"
+        )
+    # DRM / その他非対応の既定文言
+    return (
+        "この URL は DRM 保護または非対応サイトのため再生できません。"
+        " YouTube / ニコニコ動画などの対応 URL、または曲名検索を使ってください。"
+        f" (query: {url_or_query})"
+    )
 
 
 def _raise_unsupported_media(url_or_query: str, cause: Optional[BaseException] = None) -> None:
     """ユーザー向けの DRM / 非対応メッセージ付き例外を送出する。"""
     # Discord 等に出す短い説明文を組み立てる
-    message = (
-        "この URL は DRM 保護または非対応サイトのため再生できません。"
-        " YouTube / ニコニコ動画などの対応 URL、または曲名検索を使ってください。"
-        f" (query: {url_or_query})"
-    )
+    message = _unsupported_media_user_message(url_or_query, cause)
     # 原因例外がある場合はチェーンして送出する
     if cause is not None:
         # 元例外を保持したまま送出する
@@ -307,11 +352,19 @@ def _raise_unsupported_media(url_or_query: str, cause: Optional[BaseException] =
     raise UnsupportedMediaError(message)
 
 
-def build_ytdlp_pipe_command(webpage_url: str) -> list[str]:
+def build_ytdlp_pipe_command(
+    webpage_url: str,
+    *,
+    player_clients: Optional[list[str]] = None,
+) -> list[str]:
     """
     FFmpeg へ標準出力パイプするための yt-dlp CLI コマンドを組み立てる。
     直接 googlevideo URL を FFmpeg に渡すと 403 になるため、yt-dlp 経由で取得する。
     """
+    # 未指定なら一次クライアント列を使う（抽出 API と揃える）
+    clients = player_clients or list(_YOUTUBE_PLAYER_CLIENT_PRIMARY)
+    # CLI 向けにカンマ区切りへ変換する
+    client_arg = ",".join(clients)
     # 現在の Python で yt_dlp モジュールを起動する
     cmd: list[str] = [
         sys.executable,
@@ -328,7 +381,7 @@ def build_ytdlp_pipe_command(webpage_url: str) -> list[str]:
         "--remote-components",
         "ejs:github",
         "--extractor-args",
-        "youtube:player_client=android_vr,tv,web_embedded,mweb",
+        f"youtube:player_client={client_arg}",
     ]
     # 有効なクッキーがあれば付与する
     cookie_path = resolve_youtube_cookie_path()
@@ -426,6 +479,12 @@ def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_str
         trial["sleep_interval"] = 0
         trial["max_sleep_interval"] = 0
         trial["sleep_interval_requests"] = 0
+        # フォールバック試行中は yt-dlp 本体の冗長 ERROR を抑える
+        trial["quiet"] = True
+        # verbose デバッグ行を出さない
+        trial["verbose"] = False
+        # 警告もラッパー側 WARNING に集約するため抑止する
+        trial["no_warnings"] = True
         # ストリーム解決では失敗を握りつぶさず例外で検知する
         if resolve_stream:
             # ignoreerrors を無効化して None 返却を防ぐ
@@ -468,7 +527,7 @@ def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_str
             )
         # 抽出失敗を捕捉して次の候補へ進む
         except Exception as e:
-            # DRM / 非対応サイトは再試行しても同じ結果なので即時打ち切る
+            # DRM / 非対応 / 動画利用不可は再試行しても同じ結果なので即時打ち切る
             if _is_non_retryable_extractor_error(e):
                 # 1回分だけ警告ログを残す
                 logger.warning("yt-dlp non-retryable extract error for %s: %s", url, e)
@@ -476,7 +535,7 @@ def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_str
                 _raise_unsupported_media(url, e)
             # 例外を保持する
             last_error = e
-            # 失敗内容を警告ログへ残す
+            # 失敗内容を警告ログへ残す（スタックは出さない）
             logger.warning(
                 "yt-dlp extract failed (format=%s clients=%s cookies=%s): %s",
                 fmt,
@@ -488,6 +547,8 @@ def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_str
             continue
     # 全候補失敗時、最後の例外があれば再送出する
     if last_error is not None:
+        # 最終失敗のみ ERROR で残す
+        logger.error("yt-dlp extract exhausted all fallbacks for %s: %s", url, last_error)
         # 呼び出し元へ例外を伝播する
         raise last_error
     # 例外も結果も無い場合は None を返す
@@ -508,12 +569,12 @@ COMMON_YTDL_OPTS: dict = {
     "noplaylist": False,
     # プレイリストの高速なインデックス取得を行うためのフラット展開設定
     "extract_flat": "in_playlist",
-    # 詳細なログを取得するために出力を抑制しない設定にする
-    "quiet": False,
-    # 警告情報を出力させる設定にする
-    "no_warnings": False,
-    # 詳細なデバッグログ（[debug]で始まる行など）を出力させる設定にする
-    "verbose": True,
+    # 通常運用では冗長ログを抑える（フォールバック失敗はラッパー側で集約）
+    "quiet": True,
+    # 警告はラッパー WARNING に寄せる
+    "no_warnings": True,
+    # verbose デバッグは既定では出さない
+    "verbose": False,
     # ログの出力先を定義した logger オブジェクトに設定する
     "logger": logger,
     # URLでない文字列が入力された場合はYouTube検索を実行する
@@ -534,11 +595,10 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # YouTube SABR / DRM 実験対策:
-    # tv_embedded は unsupported。android_vr / tv / web_embedded を優先する
+    # YouTube: PO Token 不要寄りのクライアントを優先（tv/mweb は除外）
     "extractor_args": {
         "youtube": {
-            "player_client": ["android_vr", "tv", "web_embedded", "mweb"],
+            "player_client": list(_YOUTUBE_PLAYER_CLIENT_PRIMARY),
         }
     },
     # YouTube JS チャレンジ解決用ランタイム（deno 優先、無ければ node）
@@ -732,13 +792,22 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
     except UnsupportedMediaError:
         # DRM / 非対応は呼び出し元で専用メッセージを出すため再送出する
         raise
+    except DownloadError as e:
+        # 永続失敗は UnsupportedMediaError へ寄せる
+        if _is_non_retryable_extractor_error(e):
+            # ユーザー向け例外へ変換する
+            _raise_unsupported_media(track.url, e)
+        # 一時的失敗の旨を警告ログへ残す
+        logger.warning("ストリーム解決中に DownloadError: %s (Track: %s)", e, track.title)
+        # 例外をラップして RuntimeError を送出する
+        raise RuntimeError(f"ストリーム解決エラー: {e}") from e
     except ExtractorError as e:
         # DRM 文言が含まれる場合は再試行不要の例外へ変換する
         if _is_non_retryable_extractor_error(e):
             # ユーザー向け例外へ変換する
             _raise_unsupported_media(track.url, e)
-        # エラーの旨を標準出力に記録する
-        print(f"[ytdlp_wrapper Error] ストリーム解決中にyt-dlpエラー: {e} (Track: {track.title})")
+        # エラーの旨を警告ログへ残す
+        logger.warning("ストリーム解決中に ExtractorError: %s (Track: %s)", e, track.title)
         # 例外をラップしてRuntimeErrorを送出する
         raise RuntimeError(f"ストリーム解決エラー: {e}") from e
     # その他予期せぬ一般例外を捕捉した場合のハンドリング
@@ -747,8 +816,12 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
         if isinstance(e, UnsupportedMediaError):
             # 呼び出し元へそのまま伝播する
             raise
-        # 予期せぬエラーの旨を標準出力に記録する
-        print(f"[ytdlp_wrapper Error] ストリーム解決中に予期せぬエラー: {e} (Track: {track.title})")
+        # 永続失敗マーカーが DownloadError 以外で来た場合も変換する
+        if _is_non_retryable_extractor_error(e):
+            # ユーザー向け例外へ変換する
+            _raise_unsupported_media(track.url, e)
+        # 予期せぬエラーの旨を ERROR で残す
+        logger.error("ストリーム解決中に予期せぬエラー: %s (Track: %s)", e, track.title)
         # 例外をラップしてRuntimeErrorを送出する
         raise RuntimeError(f"ストリーム解決中の予期せぬエラー: {e}") from e
     # 更新完了したトラックオブジェクトを返す
@@ -830,20 +903,32 @@ async def extract(
         except UnsupportedMediaError:
             # DRM / 非対応は呼び出し元でユーザー向けメッセージを出すため再送出する
             raise
+        except DownloadError as e_dl:
+            # 永続失敗は UnsupportedMediaError へ寄せる
+            if _is_non_retryable_extractor_error(e_dl):
+                # ユーザー向け例外へ変換する
+                _raise_unsupported_media(query, e_dl)
+            # 一時的失敗は短い警告のみ
+            logger.warning("情報抽出失敗 (DownloadError): %s (Query: %s)", e_dl, query)
+            # extracted_info は None のまま
         except ExtractorError as e_ext:  # yt-dlpが処理できないURLや検索結果なしなど
             # DRM 文言が含まれる場合は再試行不要の例外へ変換する
             if _is_non_retryable_extractor_error(e_ext):
                 # ユーザー向け例外へ変換する
                 _raise_unsupported_media(query, e_ext)
-            print(f"[ytdlp_wrapper Info] 情報抽出失敗 (ExtractorError): {e_ext} (Query: {query})")
+            logger.warning("情報抽出失敗 (ExtractorError): %s (Query: %s)", e_ext, query)
             # extracted_info は None のまま
         except Exception as e_gen:  # その他の予期せぬyt-dlpエラー
             # DRM 系は既に UnsupportedMediaError へ変換済みの可能性がある
             if isinstance(e_gen, UnsupportedMediaError):
                 # 呼び出し元へそのまま伝播する
                 raise
+            # 永続失敗マーカーがあれば変換する
+            if _is_non_retryable_extractor_error(e_gen):
+                # ユーザー向け例外へ変換する
+                _raise_unsupported_media(query, e_gen)
             # フォールバック後も失敗した場合はエラーログを記録する
-            logger.error(f"[ytdlp_wrapper Error] yt-dlp実行中に予期せぬエラー: {e_gen} (Query: {query})", exc_info=True)
+            logger.error("yt-dlp実行中に予期せぬエラー: %s (Query: %s)", e_gen, query)
 
     await loop.run_in_executor(None, _run_yt_dlp_extraction)
 

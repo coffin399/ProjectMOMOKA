@@ -31,6 +31,8 @@ try:
         ensure_stream,
         set_youtube_cookie_path,
         UnsupportedMediaError,
+        COMMON_YTDL_OPTS,
+        YOUTUBE_PLAYER_CLIENT_FALLBACK,
     )
     from MOMOKA.music.error.errors import MusicCogExceptionHandler
     from MOMOKA.music.plugins.audio_mixer import AudioMixer, MusicAudioSource
@@ -42,6 +44,8 @@ except ImportError as e:
     ensure_stream = None
     set_youtube_cookie_path = None
     UnsupportedMediaError = None
+    COMMON_YTDL_OPTS = None
+    YOUTUBE_PLAYER_CLIENT_FALLBACK = None
     MusicCogExceptionHandler = None
     AudioMixer = None
     MusicAudioSource = None
@@ -114,6 +118,8 @@ class GuildState:
         self.is_loading: bool = False
         self.mixer: Optional[AudioMixer] = None
         self._playing_next: bool = False  # 次の曲を再生中かどうかのフラグ
+        # パイプ 403 による同一曲リトライ回数（最大 1）
+        self.stream_403_retries: int = 0
         self.last_now_playing_message: Optional[discord.Message] = None
         # プログレスバー定期更新タスク（未起動時は None）
         self.progress_update_task: Optional[asyncio.Task] = None
@@ -624,7 +630,7 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         play_next_and_reset_flag()
 
-    async def _on_music_source_removed(self, guild_id: int):
+    async def _on_music_source_removed(self, guild_id: int, finished_source=None):
         """
         音楽ソースがミキサーから削除されたときに呼ばれる。
         ループモードやキューを考慮して次の曲を再生する。
@@ -640,7 +646,60 @@ class MusicCog(commands.Cog, name="music_cog"):
         try:
             # 終了したトラック情報を保存
             finished_track = state.current_track
+            # NO audio + HTTP 403 なら同一曲を 1 回だけ代替 client でリトライする
+            should_retry_403 = (
+                finished_source is not None
+                and getattr(finished_source, "http_forbidden_failure", False)
+                and getattr(finished_source, "no_audio_failure", False)
+                and finished_track is not None
+                and state.stream_403_retries < 1
+            )
+            # 403 リトライ経路
+            if should_retry_403:
+                # リトライ回数を加算する
+                state.stream_403_retries += 1
+                # 再生中フラグを下ろして再起動可能にする
+                state.is_playing = False
+                # トラッキングをリセットする
+                state.reset_playback_tracking()
+                # リトライ開始をログする
+                logger.warning(
+                    "Guild %s: Retrying '%s' once after HTTP 403 / NO audio "
+                    "(attempt %s, fallback player_client)",
+                    guild_id,
+                    finished_track.title,
+                    state.stream_403_retries,
+                )
+                # 同一曲をフォールバック client で再再生する
+                await self._play_next_song(
+                    guild_id,
+                    retry_track=finished_track,
+                    use_fallback_clients=True,
+                )
+                # リトライ処理を終了する
+                return
+
+            # 通常終了・リトライ尽きた場合はカウンタをリセットする
+            state.stream_403_retries = 0
+            # 再生中フラグを下ろす
             state.is_playing = False
+
+            # 403 でリトライ済みかつ NO audio ならユーザーへ短文通知する
+            if (
+                finished_source is not None
+                and getattr(finished_source, "no_audio_failure", False)
+                and state.last_text_channel_id
+                and finished_track is not None
+            ):
+                # チャンネルへ再生失敗を通知する
+                await self._send_background_message(
+                    state.last_text_channel_id,
+                    "error_message_wrapper",
+                    error=(
+                        f"再生に失敗しました: {finished_track.title} "
+                        "(ストリーム取得エラー)"
+                    ),
+                )
 
             # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
             if state.loop_mode != LoopMode.ONE:
@@ -676,18 +735,30 @@ class MusicCog(commands.Cog, name="music_cog"):
         # ミキサーを停止（read()がb''を返す→voice_clientのプレイヤーが停止）
         mixer.stop()
 
-    async def _play_next_song(self, guild_id: int, seek_seconds: int = 0, play_msg: Optional[discord.Message] = None):
+    async def _play_next_song(
+        self,
+        guild_id: int,
+        seek_seconds: int = 0,
+        play_msg: Optional[discord.Message] = None,
+        *,
+        retry_track: Optional[Track] = None,
+        use_fallback_clients: bool = False,
+    ):
         state = self._get_guild_state(guild_id)
         if not state:
             return
 
-        if state.is_playing and not seek_seconds > 0:
+        if state.is_playing and not seek_seconds > 0 and retry_track is None:
             return
 
         is_seek_operation = seek_seconds > 0
         track_to_play: Optional[Track] = None
 
-        if is_seek_operation and state.current_track:
+        # 403 リトライ時は同一トラックを強制再生する
+        if retry_track is not None and not is_seek_operation:
+            # リトライ対象をそのまま使う
+            track_to_play = retry_track
+        elif is_seek_operation and state.current_track:
             track_to_play = state.current_track
         elif state.loop_mode == LoopMode.ONE and state.current_track and not is_seek_operation:
             track_to_play = state.current_track
@@ -703,6 +774,8 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.current_track = None
             # 再生中フラグを下ろす
             state.is_playing = False
+            # 403 リトライカウンタもリセットする
+            state.stream_403_retries = 0
             # 再生位置トラッキングを初期化する
             state.reset_playback_tracking()
             # キュー終了時はプログレスバー更新を停止する
@@ -731,6 +804,11 @@ class MusicCog(commands.Cog, name="music_cog"):
         if not is_seek_operation:
             state.current_track = track_to_play
 
+        # 新規曲の通常再生開始時は 403 カウンタをリセットする（リトライ中は維持）
+        if retry_track is None and not is_seek_operation:
+            # カウンタをゼロに戻す
+            state.stream_403_retries = 0
+
         state.is_playing = True
         state.is_paused = False
         state.update_activity()
@@ -738,6 +816,13 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.seek_position = seek_seconds
         state.playback_start_time = time.time()
         state.paused_at = None
+
+        # パイプ / ensure_stream で使う player_client 列を決める
+        pipe_clients = None
+        # フォールバック client 指定がある場合
+        if use_fallback_clients and YOUTUBE_PLAYER_CLIENT_FALLBACK:
+            # 代替クライアント列を使う
+            pipe_clients = list(YOUTUBE_PLAYER_CLIENT_FALLBACK)
 
         try:
             is_local_file = False
@@ -748,7 +833,16 @@ class MusicCog(commands.Cog, name="music_cog"):
                     pass
 
             if not is_local_file:
-                updated_track = await ensure_stream(track_to_play)
+                # ensure_stream 用オプション（フォールバック時は client を上書き）
+                ensure_opts = None
+                if use_fallback_clients and COMMON_YTDL_OPTS and pipe_clients:
+                    # 共通オプションをコピーする
+                    ensure_opts = COMMON_YTDL_OPTS.copy()
+                    # 代替 player_client を注入する
+                    ensure_opts["extractor_args"] = {
+                        "youtube": {"player_client": list(pipe_clients)}
+                    }
+                updated_track = await ensure_stream(track_to_play, ytdl_opts_override=ensure_opts)
                 if not updated_track or not updated_track.stream_url:
                     raise RuntimeError(f"'{track_to_play.title}' の有効なストリームURLを取得できませんでした。")
                 # ストリームURLを最新値へ更新する
@@ -768,16 +862,20 @@ class MusicCog(commands.Cog, name="music_cog"):
                 guild_id=guild_id,
                 webpage_url=track_to_play.url,
                 http_headers=getattr(track_to_play, "http_headers", None),
+                player_clients=pipe_clients,
                 executable=self.ffmpeg_path,
                 before_options=ffmpeg_before_opts,
                 options=self.ffmpeg_options,
             )
 
             if state.mixer is None:
-                def on_source_removed(name: str):
+                def on_source_removed(name: str, removed_source=None):
                     """ソースが削除されたときのコールバック"""
                     if name == 'music':
-                        asyncio.run_coroutine_threadsafe(self._on_music_source_removed(guild_id), self.bot.loop)
+                        asyncio.run_coroutine_threadsafe(
+                            self._on_music_source_removed(guild_id, removed_source),
+                            self.bot.loop,
+                        )
                 
                 state.mixer = AudioMixer(on_source_removed_callback=on_source_removed)
 
@@ -885,7 +983,21 @@ class MusicCog(commands.Cog, name="music_cog"):
                             )
         except Exception as e:
             guild = self.bot.get_guild(guild_id)
-            logger.error(f"Guild {guild_id} ({guild.name if guild else ''}): Playback error: {e}", exc_info=True)
+            # UnsupportedMediaError は想定内のためフルスタックを出さない
+            if UnsupportedMediaError is not None and isinstance(e, UnsupportedMediaError):
+                # 短い WARNING のみ
+                logger.warning(
+                    "Guild %s (%s): Playback skipped (unsupported): %s",
+                    guild_id,
+                    guild.name if guild else "",
+                    e,
+                )
+            else:
+                # 想定外は従来どおり ERROR + traceback
+                logger.error(
+                    f"Guild {guild_id} ({guild.name if guild else ''}): Playback error: {e}",
+                    exc_info=True,
+                )
             error_message = self.exception_handler.handle_error(e, guild)
             if state.last_text_channel_id:
                 await self._send_background_message(state.last_text_channel_id, "error_message_wrapper",

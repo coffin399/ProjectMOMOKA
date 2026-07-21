@@ -58,10 +58,19 @@ class MusicCogExceptionHandler:
         """
         guild_log_info = f"Guild {guild.id} ({guild.name})"
 
-        # DRM / 非対応サイトは想定内のため ERROR+traceback ではなく WARNING にする
+        # DRM / 非対応 / 動画利用不可は想定内のため ERROR+traceback ではなく WARNING にする
         if type(error).__name__ == "UnsupportedMediaError":
             # 想定内の失敗として短い警告だけ残す
             logger.warning("%s: Unsupported media: %s", guild_log_info, error)
+            # 例外メッセージをユーザー向けに使う
+            err_text = str(error)
+            # 動画利用不可・非対応 URL は例外メッセージを優先する
+            if any(
+                marker in err_text
+                for marker in ("再生できません", "対応していません")
+            ):
+                # 具体的な失敗理由を返す
+                return self.get_message("error_fetching_song", error=err_text)
             # コンフィグの DRM メッセージがあればそれを優先する
             drm_msg = self.messages.get("error_drm_protected")
             # 専用メッセージがある場合はそれを返す
@@ -69,7 +78,7 @@ class MusicCogExceptionHandler:
                 # テンプレートをフォーマットする
                 return self.get_message("error_drm_protected")
             # 例外メッセージそのものを返す
-            return self.get_message("error_fetching_song", error=str(error))
+            return self.get_message("error_fetching_song", error=err_text)
 
         logger.error(f"{guild_log_info}: An error occurred: {error}", exc_info=True)
 

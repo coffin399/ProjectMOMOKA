@@ -100,7 +100,7 @@ class AudioMixer(discord.AudioSource):
                 finished_sources.append((name, source))
 
         # 終了したソースを削除
-        actually_removed: List[str] = []
+        actually_removed: List[Tuple[str, discord.AudioSource]] = []
         if finished_sources:
             with self._thread_lock:
                 for name, finished_source in finished_sources:
@@ -119,15 +119,22 @@ class AudioMixer(discord.AudioSource):
                             finished_source.cleanup()
                         except Exception as e:
                             logger.error(f"Error cleaning up finished source '{name}': {e}")
-                    # 実際に削除されたソース名を記録
-                    actually_removed.append(name)
+                    # 実際に削除されたソースを記録（失敗フラグ参照用にソースも残す）
+                    actually_removed.append((name, finished_source))
 
             # コールバックはロック外で実行（デッドロック防止）
             # 各ソースの削除ごとにコールバックを発火
             if self.on_source_removed_callback and actually_removed:
-                for name in actually_removed:
+                for name, removed_source in actually_removed:
                     try:
-                        self.on_source_removed_callback(name)
+                        # ソース参照も渡し、NO audio / 403 判定を可能にする
+                        self.on_source_removed_callback(name, removed_source)
+                    except TypeError:
+                        # 旧シグネチャ（name のみ）互換
+                        try:
+                            self.on_source_removed_callback(name)
+                        except Exception as e:
+                            logger.error(f"Error in on_source_removed_callback for '{name}': {e}")
                     except Exception as e:
                         logger.error(f"Error in on_source_removed_callback for '{name}': {e}")
 
@@ -167,7 +174,14 @@ class AudioMixer(discord.AudioSource):
         # ソース削除コールバックを発火（asyncio lock外で実行）
         if removed_source and self.on_source_removed_callback:
             try:
-                self.on_source_removed_callback(name)
+                # ソース参照も渡す（スキップ時は失敗フラグ無し）
+                self.on_source_removed_callback(name, removed_source)
+            except TypeError:
+                # 旧シグネチャ互換
+                try:
+                    self.on_source_removed_callback(name)
+                except Exception as e:
+                    logger.error(f"Error in on_source_removed_callback for '{name}': {e}")
             except Exception as e:
                 logger.error(f"Error in on_source_removed_callback for '{name}': {e}")
         return removed_source
@@ -231,6 +245,7 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         guild_id: int,
         webpage_url: Optional[str] = None,
         http_headers: Optional[dict] = None,
+        player_clients: Optional[list] = None,
         executable: str = "ffmpeg",
         before_options: Optional[str] = None,
         options: Optional[str] = None,
@@ -250,6 +265,12 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         self._has_produced_audio = False
         # yt-dlp パイプ用プロセス（未使用時は None）
         self._ytdlp_proc: Optional[subprocess.Popen] = None
+        # 一度も PCM を出せずに終了したか
+        self.no_audio_failure: bool = False
+        # yt-dlp / FFmpeg 側が HTTP 403 だったか
+        self.http_forbidden_failure: bool = False
+        # パイプ再生時に使う player_client 列（未指定なら一次セット）
+        self._player_clients = player_clients
 
         # YouTube 判定用に遅延インポートする（循環 import 回避）
         from MOMOKA.music.plugins.ytdlp_wrapper import (
@@ -291,8 +312,11 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
 
         # YouTube: yt-dlp → FFmpeg(pipe:0)
         if use_ytdlp_pipe and webpage_url:
-            # yt-dlp CLI コマンドを組み立てる
-            ytdlp_cmd = build_ytdlp_pipe_command(webpage_url)
+            # yt-dlp CLI コマンドを組み立てる（リトライ時は代替 client を渡す）
+            ytdlp_cmd = build_ytdlp_pipe_command(
+                webpage_url,
+                player_clients=player_clients,
+            )
             # yt-dlp を起動し stdout をパイプする
             self._ytdlp_proc = subprocess.Popen(
                 ytdlp_cmd,
@@ -430,6 +454,15 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                     returncode = self._process.poll()
             except Exception:
                 pass
+
+            # NO audio 失敗フラグを立てる（コールバック側でリトライ判定に使う）
+            self.no_audio_failure = True
+            # stderr 結合テキストで 403 を検出する
+            combined_err = f"{stderr_output}\n{ytdlp_err}".lower()
+            # Forbidden / HTTP 403 ならリトライ候補とする
+            if "403" in combined_err or "forbidden" in combined_err:
+                # HTTP 403 失敗フラグを立てる
+                self.http_forbidden_failure = True
 
             logger.error(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio!\n"
