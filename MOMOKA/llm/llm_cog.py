@@ -213,7 +213,12 @@ class ThreadCreationView(discord.ui.View):
                 )
                 
                 if sent_messages and full_response_text:
-                    logger.info(f"✅ Thread conversation completed | model='{model_name}' | response_length={len(full_response_text)} chars")
+                    # フォールバック後の実使用モデルで完了ログを出す
+                    used_model = self.llm_cog._effective_model_label(llm_client, thread.id)
+                    logger.info(
+                        f"✅ Thread conversation completed | model='{used_model}' | "
+                        f"response_length={len(full_response_text)} chars"
+                    )
                 
                 # ボタンを無効化
                 button.disabled = True
@@ -1379,6 +1384,8 @@ class LLMCog(commands.Cog, name="LLM"):
                                                                                                     llm_client,
                                                                                                     is_first_response)
             if sent_messages and llm_response:
+                # フォールバック後の実使用モデルで完了ログを出す
+                model_in_use = self._effective_model_label(llm_client, message.channel.id)
                 logger.info(
                     f"✅ LLM response completed | model='{model_in_use}' | response_length={len(llm_response)} chars")
                 log_response = (llm_response[:200] + '...') if len(llm_response) > 203 else llm_response
@@ -1450,9 +1457,11 @@ class LLMCog(commands.Cog, name="LLM"):
             elapsed = time.time() - stream_start_time
             # 応答時間をトラッカーに記録（tips_manager が有効な場合のみ）
             if self.tips_manager and result[0] is not None:
-                self.tips_manager.response_tracker.record(model_name, elapsed)
+                # フォールバック後の実使用モデル名で記録する
+                used_model_name = self._effective_model_label(client, message.channel.id)
+                self.tips_manager.response_tracker.record(used_model_name, elapsed)
                 logger.info(
-                    f"⏱️ Response time recorded: {model_name} = {elapsed:.1f}s"
+                    f"⏱️ Response time recorded: {used_model_name} = {elapsed:.1f}s"
                 )
             return result
         except openai.RateLimitError as e:
@@ -1746,6 +1755,21 @@ class LLMCog(commands.Cog, name="LLM"):
         # 欠ける場合はチャンネル解決結果へフォールバックする
         return self._resolve_model_string(channel_id)
 
+    def _effective_model_label(self, client: openai.AsyncOpenAI, channel_id: Optional[int] = None) -> str:
+        """ログ用: フォールバック後の実使用モデルを優先して返す。"""
+        # ストリーム成功時に書き戻した実モデルを優先する
+        used = getattr(client, "last_used_model_string", None)
+        # 実モデルがあればそれを返す
+        if used:
+            return used
+        # channel_id があれば正規の provider/model を組み立てる
+        if channel_id is not None:
+            resolved = self._client_model_string(client, channel_id)
+            if resolved:
+                return resolved
+        # 最後の手段として API 用モデル名のみ返す
+        return str(getattr(client, "model_name_for_api_calls", "unknown"))
+
     def _get_or_create_llm_client(self, model_string: str) -> Optional[openai.AsyncOpenAI]:
         """モデル文字列に対応するクライアントをキャッシュ優先で取得する。"""
         # 既に初期化済みならキャッシュを返す
@@ -1875,6 +1899,10 @@ class LLMCog(commands.Cog, name="LLM"):
 
     async def _llm_stream_and_tool_handler(self, messages: List[Dict[str, Any]], client: openai.AsyncOpenAI,
                                            channel_id: int, user_id: int) -> AsyncGenerator[str, None]:
+        # 呼び出し元クライアント参照を保持（フォールバック後のメタ書き戻し用）
+        request_client = client
+        # 前回の実使用モデル情報をクリアする
+        request_client.last_used_model_string = None
         # チャンネルの選択モデル文字列を解決する
         model_string = self._resolve_model_string(channel_id)
         # 実クライアントの provider/model を優先して試行チェーンを組む
@@ -1943,8 +1971,10 @@ class LLMCog(commands.Cog, name="LLM"):
             for model_idx, attempt_model_string in enumerate(model_chain):
                 # 2件目以降はフォールバック先クライアントへ切り替える
                 if model_idx > 0:
+                    # 直前に失敗したモデル名を特定する
+                    failed_model = model_chain[model_idx - 1]
                     logger.warning(
-                        f"🔄 [MODEL FALLBACK] All keys failed for previous model. "
+                        f"🔄 [MODEL FALLBACK] All keys failed for '{failed_model}'. "
                         f"Trying fallback model '{attempt_model_string}' "
                         f"({model_idx + 1}/{len(model_chain)})."
                     )
@@ -2074,14 +2104,23 @@ class LLMCog(commands.Cog, name="LLM"):
 
                 # ストリーム確立済みならモデルループも終了する
                 if stream is not None:
+                    # 実使用モデルを呼び出し元クライアントへ書き戻す
+                    request_client.last_used_model_string = attempt_model_string
+                    # 実使用キー index も書き戻す（ログ用）
+                    request_client.last_used_key_index = getattr(client, "last_used_key_index", None)
                     if model_idx > 0:
                         logger.info(
-                            f"✅ [MODEL FALLBACK] Connected with fallback model '{attempt_model_string}'."
+                            f"✅ [MODEL FALLBACK] Connected with fallback model '{attempt_model_string}' "
+                            f"(primary was '{primary_model_string}')."
                         )
                         # 以降の tool 反復でも成功モデルを先頭にする
                         model_chain = [attempt_model_string] + [
                             m for m in model_chain if m != attempt_model_string
                         ]
+                    else:
+                        logger.debug(
+                            f"Stream connected with primary model '{attempt_model_string}'."
+                        )
                     break
 
                 # キー枯渇で次モデルがあるなら続行する
@@ -2451,6 +2490,8 @@ class LLMCog(commands.Cog, name="LLM"):
                     sent_message=temp_message, channel=interaction.channel, user=interaction.user,
                     messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
                 if sent_messages and full_response_text:
+                    # フォールバック後の実使用モデルで完了ログを出す
+                    model_in_use = self._effective_model_label(llm_client, interaction.channel_id)
                     logger.info(
                         f"✅ LLM response completed | model='{model_in_use}' | response_length={len(full_response_text)} chars")
                     log_response, key_log_str = (full_response_text[:200] + '...') if len(
