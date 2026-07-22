@@ -32,7 +32,7 @@
 - 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with a judge turn, or a light 3-step verification
 - 🎵 **Music playback** — YouTube, Spotify, Google Drive, and more (both bots)
 - 🎨 **Image generation / TTS / notifications / trackers** — **PLANA only**
-- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, and more
+- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
 
 ---
 
@@ -86,7 +86,20 @@ Earthquake alerts and Twitch stream notifications.
 
 ### 7. Utilities
 
-Dice, timers, media download, server/user info, gacha, etc. `/help` and `/invite` use Components V2 and cover both bot invites.
+Dice, timers, server/user info, gacha, etc. `/help` and `/invite` use Components V2 and cover both bot invites.
+
+#### Media download (Components V2)
+
+Fetches media with yt-dlp and shares it via Google Drive (links expire after a delay).
+
+| Command | Description |
+|---------|-------------|
+| `/download_video <query>` | Download from a URL or search query. Shows a Components V2 format picker, then auto-merges best audio and shares |
+| `/download_audio <query> <format>` | Extract audio only (mp3 / m4a / opus / flac / wav) and share |
+
+- Format labels do **not** show “video only” notes (audio is merged after selection)
+- Requires Google Drive API `client_secrets.json` / `token.json` and the folder ID configured in the cog
+- For YouTube, Deno (recommended) or Node.js 22+ plus `yt-dlp[default]` is advised (same EJS guidance as music)
 
 ---
 
@@ -241,6 +254,7 @@ llm:
 |---------|-------------|
 | `/help` | Help (Components V2) |
 | `/invite` | PLANA / ARONA invites (Components V2) |
+| `/download_video` `/download_audio` | Media download (Components V2, Google Drive share) |
 | `/ping` `/serverinfo` `/userinfo` `/avatar` | Info |
 | `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` | Misc |
 

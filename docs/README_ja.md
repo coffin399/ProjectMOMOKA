@@ -32,7 +32,7 @@
 - 🗣️ **debate / cross_check** - PLANA↔ARONA の多ラウンド討論＋評定、または軽量3ステップ検証
 - 🎵 **音楽再生** - YouTube、Spotify、Google Drive など（両ボット）
 - 🎨 **画像生成 / TTS / 通知 / tracker** - **PLANA 専用**
-- 🎲 **ユーティリティ** - `/help`・`/invite`（Components V2）、ダイス、タイマーなど
+- 🎲 **ユーティリティ** - `/help`・`/invite`（Components V2）、ダイス、タイマー、メディアダウンロード（`/download_video` / `/download_audio`・Components V2）など
 
 ---
 
@@ -86,7 +86,20 @@ Rainbow Six Siege / VALORANT の統計表示。
 
 ### 7. ユーティリティ
 
-ダイス、タイマー、メディアダウンロード、サーバー/ユーザー情報、ガチャなど。`/help` と `/invite` は Components V2 で、両ボットの招待を案内します。
+ダイス、タイマー、サーバー/ユーザー情報、ガチャなど。`/help` と `/invite` は Components V2 で、両ボットの招待を案内します。
+
+#### メディアダウンロード（Components V2）
+
+yt-dlp で取得したメディアを Google Drive 経由で共有します（リンクは一定時間後に失効）。
+
+| コマンド | 説明 |
+|---------|------|
+| `/download_video <query>` | URL または検索語から動画を取得。フォーマット選択 UI（Components V2）表示後、最良音声と自動結合して共有 |
+| `/download_audio <query> <format>` | 音声のみ抽出（mp3 / m4a / opus / flac / wav）して共有 |
+
+- 動画フォーマット一覧に「映像のみ」などの注記は出しません（選択後に音声を結合するため）
+- Google Drive API 用の `client_secrets.json` / `token.json` と、Cog 内のフォルダ ID 設定が必要です
+- YouTube 向けには Deno（推奨）または Node.js 22+ と `yt-dlp[default]` を推奨（音楽機能と同じ EJS 対策）
 
 ---
 
@@ -259,6 +272,7 @@ music:
 |---------|------|
 | `/help` | ヘルプ（Components V2） |
 | `/invite` | PLANA / ARONA 招待（Components V2） |
+| `/download_video` `/download_audio` | メディアダウンロード（Components V2・Google Drive 共有） |
 | `/ping` `/serverinfo` `/userinfo` `/avatar` | 情報系 |
 | `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` | その他 |
 

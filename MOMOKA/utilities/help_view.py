@@ -304,6 +304,12 @@ class HelpLayoutView(discord.ui.LayoutView):
             "• `/updates` — GitHub コミット履歴\n"
             "• `/support` — 開発者への連絡方法\n"
             "• Overview ページの Ko-fi — サーバー代の支援 / Server-cost support\n\n"
+            "**メディアダウンロード / Media download**（Components V2）\n"
+            "• `/download_video <query>` — 動画を取得し Google Drive 経由で共有\n"
+            "• `/download_video <query>` — download video and share via Google Drive\n"
+            "• `/download_audio <query> <format>` — 音声抽出（mp3 / m4a / opus / flac / wav）\n"
+            "• `/download_audio <query> <format>` — extract audio (mp3 / m4a / opus / flac / wav)\n"
+            "• 動画選択後は最良音声と自動結合します / Selected video is auto-merged with best audio\n\n"
             "**その他 / Other**\n"
             "• `/ping` `/serverinfo` `/userinfo` `/avatar` `/gacha` `/meow`"
         )

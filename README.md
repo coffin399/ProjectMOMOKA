@@ -43,7 +43,7 @@
 - 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with judge, or a light 3-step cross-check
 - 🎵 **Music** — YouTube, Spotify, and more (both bots)
 - 🎨 **Image Generation / TTS / Notifications / Trackers** — PLANA only
-- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, and more
+- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
 
 ### 📋 Quick Start
 
