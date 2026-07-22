@@ -13,6 +13,11 @@ llm:
   - nvidia_nim/minimaxai/minimax-m2.7
   - google/gemini-3.5-flash
   - mistral/mistral-medium-latest
+  # メインモデルの全APIキー失敗時に上から順に試すフォールバックモデル
+  fallback_models:
+  - nvidia_nim/deepseek-ai/deepseek-v4-flash
+  - nvidia_nim/moonshotai/kimi-k2.6
+  - mistral/mistral-medium-latest
   providers:
     openai:
       base_url: https://api.openai.com/v1

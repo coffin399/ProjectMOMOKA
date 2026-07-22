@@ -1552,16 +1552,176 @@ class LLMCog(commands.Cog, name="LLM"):
         converted_messages.extend(other_messages)
         return converted_messages, combined_system_prompt
 
+    def _get_model_fallback_chain(self, primary_model: Optional[str]) -> List[str]:
+        """メインモデル＋fallback_models の試行順リストを返す。"""
+        # 試行順を格納するリストを用意する
+        chain: List[str] = []
+        # primary が有効なら先頭に入れる
+        if primary_model:
+            # 重複防止のためそのまま append する
+            chain.append(primary_model)
+        # 設定のフォールバック一覧を順に読む
+        for model in self.llm_config.get("fallback_models") or []:
+            # 空文字や primary 重複はスキップする
+            if model and model not in chain:
+                # 次候補として末尾へ追加する
+                chain.append(model)
+        # 完成した試行順を返す
+        return chain
+
+    def _client_model_string(self, client: openai.AsyncOpenAI, channel_id: int) -> Optional[str]:
+        """クライアントから provider/model 文字列を組み立てる。"""
+        # クライアントに付与された provider 名を取得する
+        provider_name = getattr(client, "provider_name", None)
+        # クライアントに付与された API 用モデル名を取得する
+        model_name = getattr(client, "model_name_for_api_calls", None)
+        # 両方揃っていれば正規形式で返す
+        if provider_name and model_name:
+            return f"{provider_name}/{model_name}"
+        # 欠ける場合はチャンネル解決結果へフォールバックする
+        return self._resolve_model_string(channel_id)
+
+    def _get_or_create_llm_client(self, model_string: str) -> Optional[openai.AsyncOpenAI]:
+        """モデル文字列に対応するクライアントをキャッシュ優先で取得する。"""
+        # 既に初期化済みならキャッシュを返す
+        if model_string in self.llm_clients:
+            return self.llm_clients[model_string]
+        # 未初期化なら新規作成する
+        client = self._initialize_llm_client(model_string)
+        # 成功時のみキャッシュへ登録する
+        if client:
+            self.llm_clients[model_string] = client
+        # 作成結果（失敗時は None）を返す
+        return client
+
+    def _ensure_messages_for_model(
+        self, messages: List[Dict[str, Any]], model_string: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """切替先モデル向けにメッセージ形式を必要なら変換する。"""
+        # Gemini 判定に使う
+        is_gemini = bool(model_string and "gemini" in model_string.lower())
+        # system role が残っているか確認する（未変換の目安）
+        has_system = any(m.get("role") == "system" for m in messages)
+        # Gemini かつ system が残っていれば変換する
+        if is_gemini and has_system:
+            # Gemini 用アダプタで system を潰す
+            converted, _combined = self._convert_messages_for_gemini(messages)
+            # 変換後メッセージを返す
+            return converted
+        # それ以外はそのまま返す
+        return messages
+
+    def _apply_tools_to_api_kwargs(
+        self,
+        api_kwargs: Dict[str, Any],
+        tools_def: Optional[List[Dict[str, Any]]],
+        provider_name: str,
+        supports_tools: bool,
+    ) -> None:
+        """api_kwargs に tools を付与／除去する。"""
+        # 既存 tools 指定をいったん消す（モデル切替時の残留防止）
+        api_kwargs.pop("tools", None)
+        # tool_choice も同様に消す
+        api_kwargs.pop("tool_choice", None)
+        # KoboldCPP 判定用フラグ
+        is_koboldcpp = provider_name.lower() == "koboldcpp"
+        # ツール定義がありサポートも有効なら渡す
+        if tools_def and supports_tools:
+            # tools 定義を API 引数へ載せる
+            api_kwargs["tools"] = tools_def
+            # 自動選択を指定する
+            api_kwargs["tool_choice"] = "auto"
+            # ログ用にツール名一覧を集める
+            tool_names = []
+            # 各ツール定義を走査する
+            for t in tools_def:
+                try:
+                    # dict 形式を想定して名前を取り出す
+                    if isinstance(t, dict):
+                        if "function" in t and isinstance(t["function"], dict):
+                            tool_names.append(t["function"].get("name", "unnamed_function"))
+                        elif "name" in t:
+                            tool_names.append(t["name"])
+                        else:
+                            tool_names.append("unnamed_tool")
+                    else:
+                        tool_names.append(str(t))
+                except Exception as e:
+                    logger.warning(f"⚠️ [TOOLS] Error processing tool: {e}")
+                    tool_names.append("error_processing_tool")
+            logger.info(f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
+            if is_koboldcpp:
+                logger.info("🔧 [KoboldCPP] Tools are enabled for this model")
+        elif tools_def and not supports_tools:
+            logger.warning(
+                f"⚠️ [TOOLS] Tools are disabled for provider '{provider_name}' "
+                f"(supports_tools=false). Skipping tools."
+            )
+            if is_koboldcpp:
+                logger.warning(
+                    "⚠️ [KoboldCPP] This KoboldCPP model may not support tools. "
+                    "Consider enabling 'supports_tools: true' in config if the model supports it."
+                )
+        else:
+            logger.warning("⚠️ [TOOLS] No tools available to pass to API")
+
+    async def _rotate_provider_api_key(
+        self, client: openai.AsyncOpenAI, provider_name: str, api_keys: List[str], current_key_index: int
+    ) -> openai.AsyncOpenAI:
+        """同一プロバイダー内で次の API キーへローテーションする。"""
+        # キー総数を取得する
+        num_keys = len(api_keys)
+        # 次インデックスを環状に計算する
+        next_key_index = (current_key_index + 1) % num_keys
+        # プロバイダーの現在キー位置を更新する
+        self.provider_key_index[provider_name] = next_key_index
+        # 次に使うキー文字列を取り出す
+        next_key = api_keys[next_key_index]
+        # 切替をログに残す
+        logger.info(
+            f"🔄 Switching to next API key for provider '{provider_name}' "
+            f"(index: {next_key_index}) and retrying."
+        )
+        # プロバイダー設定を読む
+        provider_config = self.llm_config.get("providers", {}).get(provider_name, {})
+        # KoboldCPP かどうか判定する
+        is_koboldcpp = provider_name.lower() == "koboldcpp"
+        # KoboldCPP のみ timeout を明示する
+        timeout = provider_config.get("timeout", 300.0) if is_koboldcpp else None
+        # 新しいキーでクライアントを作り直す
+        new_client = openai.AsyncOpenAI(base_url=client.base_url, api_key=next_key, timeout=timeout)
+        # モデル名メタデータを引き継ぐ
+        new_client.model_name_for_api_calls = client.model_name_for_api_calls
+        # プロバイダー名メタデータを引き継ぐ
+        new_client.provider_name = client.provider_name
+        # ツール対応フラグを引き継ぐ
+        if is_koboldcpp:
+            new_client.supports_tools = getattr(
+                client, "supports_tools", provider_config.get("supports_tools", True)
+            )
+        else:
+            new_client.supports_tools = getattr(client, "supports_tools", True)
+        # キャッシュを新クライアントで更新する
+        self.llm_clients[f"{provider_name}/{new_client.model_name_for_api_calls}"] = new_client
+        # 連打抑制のため短く待つ
+        await asyncio.sleep(1)
+        # 新しいクライアントを返す
+        return new_client
+
     async def _llm_stream_and_tool_handler(self, messages: List[Dict[str, Any]], client: openai.AsyncOpenAI,
                                            channel_id: int, user_id: int) -> AsyncGenerator[str, None]:
+        # チャンネルの選択モデル文字列を解決する
         model_string = self._resolve_model_string(channel_id)
-        is_gemini = model_string and 'gemini' in model_string.lower()
+        # 実クライアントの provider/model を優先して試行チェーンを組む
+        primary_model_string = self._client_model_string(client, channel_id) or model_string
+        # Gemini 向け初回変換が必要か判定する
+        is_gemini = primary_model_string and "gemini" in primary_model_string.lower()
 
         if is_gemini:
             original_messages_for_log = messages
             messages, combined_system_prompt = self._convert_messages_for_gemini(messages)
             if combined_system_prompt:
-                logger.info(f"🔄 [GEMINI ADAPTER] Converting system prompts for Gemini model '{model_string}'.")
+                logger.info(f"🔄 [GEMINI ADAPTER] Converting system prompts for Gemini model '{primary_model_string}'.")
                 logger.debug(
                     f"  - Combined system prompt ({len(combined_system_prompt)} chars): {combined_system_prompt.replace(chr(10), ' ')[:300]}...")
                 logger.debug(f"  - Message count changed: {len(original_messages_for_log)} -> {len(messages)}")
@@ -1574,8 +1734,8 @@ class LLMCog(commands.Cog, name="LLM"):
 
         provider_name = getattr(client, 'provider_name', None)
         if not provider_name:
-            if model_string and '/' in model_string:
-                provider_name = model_string.split('/', 1)[0]
+            if primary_model_string and '/' in primary_model_string:
+                provider_name = primary_model_string.split('/', 1)[0]
                 logger.debug(
                     "Provider name missing on client; inferring from model string as '%s'", provider_name
                 )
@@ -1585,6 +1745,10 @@ class LLMCog(commands.Cog, name="LLM"):
                     "Provider name missing on client and could not be inferred from model string."
                 )
             client.provider_name = provider_name
+
+        # メイン→fallback_models の試行順を構築する
+        model_chain = self._get_model_fallback_chain(primary_model_string)
+        logger.debug(f"LLM model attempt chain: {model_chain}")
 
         for iteration in range(max_iterations):
             logger.debug(f"Starting LLM API call (iteration {iteration + 1}/{max_iterations})")
@@ -1598,137 +1762,176 @@ class LLMCog(commands.Cog, name="LLM"):
                 "max_tokens": extra_params.get('max_tokens', 4096)
             }
 
-            # ✅ Gemini でも tools を正しく渡す
-            # KoboldCPPの場合はツールサポートをチェック
-            is_koboldcpp = provider_name.lower() == 'koboldcpp'
-            supports_tools = getattr(client, 'supports_tools', True)
-            
-            if tools_def and supports_tools:
-                api_kwargs["tools"] = tools_def
-                api_kwargs["tool_choice"] = "auto"
-                # Safely get tool names, handling cases where the structure might be different
-                tool_names = []
-                for t in tools_def:
-                    try:
-                        if isinstance(t, dict):
-                            if 'function' in t and isinstance(t['function'], dict):
-                                tool_names.append(t['function'].get('name', 'unnamed_function'))
-                            elif 'name' in t:
-                                tool_names.append(t['name'])
-                            else:
-                                tool_names.append('unnamed_tool')
-                        else:
-                            tool_names.append(str(t))
-                    except Exception as e:
-                        logger.warning(f"⚠️ [TOOLS] Error processing tool: {e}")
-                        tool_names.append('error_processing_tool')
-                
-                logger.info(f"🔧 [TOOLS] Passing {len(tools_def)} tools to API: {tool_names}")
-                if is_koboldcpp:
-                    logger.info(f"🔧 [KoboldCPP] Tools are enabled for this model")
-            elif tools_def and not supports_tools:
-                logger.warning(
-                    f"⚠️ [TOOLS] Tools are disabled for provider '{provider_name}' (supports_tools=false). Skipping tools.")
-                if is_koboldcpp:
-                    logger.warning(
-                        f"⚠️ [KoboldCPP] This KoboldCPP model may not support tools. Consider enabling 'supports_tools: true' in config if the model supports it.")
-            else:
-                logger.warning(f"⚠️ [TOOLS] No tools available to pass to API")
+            # 初期クライアント向けに tools を載せる
+            self._apply_tools_to_api_kwargs(
+                api_kwargs,
+                tools_def,
+                provider_name,
+                getattr(client, "supports_tools", True),
+            )
 
             stream = None
-            api_keys = self.provider_api_keys.get(client.provider_name, [])
-            num_keys = len(api_keys)
+            # モデル横断での最後の例外を保持する
+            last_model_error: Optional[Exception] = None
 
-            if num_keys == 0:
-                raise Exception(f"No API keys available for provider {provider_name}")
-
-            for attempt in range(num_keys):
-                try:
-                    current_key_index = self.provider_key_index.get(provider_name, 0)
-                    client.last_used_key_index = current_key_index
-                    logger.debug(
-                        f"Attempting API call to '{provider_name}' with key index {current_key_index} (Attempt {attempt + 1}/{num_keys}).")
-                    stream = await client.chat.completions.create(**api_kwargs)
-                    logger.debug(f"Stream connection established successfully.")
-                    break
-                except (openai.RateLimitError, openai.InternalServerError) as e:
-                    error_type = "Rate limit" if isinstance(e, openai.RateLimitError) else "Server"
-                    status_code = getattr(e, 'status_code', 'N/A')
+            # メインモデルの全キー失敗後、fallback_models を順に試す
+            for model_idx, attempt_model_string in enumerate(model_chain):
+                # 2件目以降はフォールバック先クライアントへ切り替える
+                if model_idx > 0:
                     logger.warning(
-                        f"⚠️ {error_type} error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
-                    if attempt + 1 >= num_keys:
-                        # 全キー枯渇は想定内（クォータ等）なので ERROR にしない
-                        logger.warning(
-                            f"⚠️ All {num_keys} API keys for provider '{provider_name}' have failed ({error_type}). Aborting."
+                        f"🔄 [MODEL FALLBACK] All keys failed for previous model. "
+                        f"Trying fallback model '{attempt_model_string}' "
+                        f"({model_idx + 1}/{len(model_chain)})."
+                    )
+                    # フォールバック先クライアントを取得する
+                    fallback_client = self._get_or_create_llm_client(attempt_model_string)
+                    # 初期化失敗なら次候補へ進む
+                    if not fallback_client:
+                        logger.error(
+                            f"❌ [MODEL FALLBACK] Failed to initialize client for '{attempt_model_string}'. Skipping."
                         )
-                        raise e
-                    next_key_index = (current_key_index + 1) % num_keys
-                    self.provider_key_index[provider_name] = next_key_index
-                    next_key = api_keys[next_key_index]
-                    logger.info(
-                        f"🔄 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) and retrying.")
-                    provider_config = self.llm_config.get('providers', {}).get(provider_name, {})
-                    is_koboldcpp = provider_name.lower() == 'koboldcpp'
-                    timeout = provider_config.get('timeout', 300.0) if is_koboldcpp else None
-                    new_client = openai.AsyncOpenAI(base_url=client.base_url, api_key=next_key, timeout=timeout)
-                    new_client.model_name_for_api_calls = client.model_name_for_api_calls
-                    new_client.provider_name = client.provider_name
-                    # KoboldCPPメタデータを保持
-                    if is_koboldcpp:
-                        new_client.supports_tools = getattr(client, 'supports_tools', provider_config.get('supports_tools', True))
-                    else:
-                        new_client.supports_tools = getattr(client, 'supports_tools', True)
-                    client = new_client
-                    self.llm_clients[f"{provider_name}/{client.model_name_for_api_calls}"] = new_client
-                    await asyncio.sleep(1)
-                except (openai.BadRequestError, openai.APIStatusError) as e:
-                    status_code = getattr(e, 'status_code', None)
-                    if isinstance(status_code, int) and status_code >= 500:
-                        logger.warning(
-                            f"⚠️ Server-like status error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
-                    elif isinstance(status_code, int) and status_code >= 400:
-                        logger.warning(
-                            f"⚠️ Client error ({status_code}) for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
-                    else:
-                        logger.warning(
-                            f"⚠️ Bad request/API status error for provider '{provider_name}' with key index {current_key_index}. Details: {e}")
+                        continue
+                    # 以降の API 呼び出しに使うクライアントを差し替える
+                    client = fallback_client
+                    # プロバイダー名を更新する
+                    provider_name = getattr(client, "provider_name", attempt_model_string.split("/", 1)[0])
+                    # メッセージ形式を切替先モデル向けに整える
+                    current_messages = self._ensure_messages_for_model(current_messages, attempt_model_string)
+                    # API 引数のモデル名を更新する
+                    api_kwargs["model"] = client.model_name_for_api_calls
+                    # API 引数の messages も更新する
+                    api_kwargs["messages"] = current_messages
+                    # tools 可否を切替先に合わせて再設定する
+                    self._apply_tools_to_api_kwargs(
+                        api_kwargs,
+                        tools_def,
+                        provider_name,
+                        getattr(client, "supports_tools", True),
+                    )
 
-                    if attempt + 1 >= num_keys:
-                        # 429 等の枯渇は想定内。その他は従来どおり ERROR
-                        if status_code == 429:
+                # 現在プロバイダーの API キー一覧を取得する
+                api_keys = self.provider_api_keys.get(client.provider_name, [])
+                # キー数を数える
+                num_keys = len(api_keys)
+
+                # キーが無い場合は次モデルへ進む（最後なら例外）
+                if num_keys == 0:
+                    last_model_error = Exception(
+                        f"No API keys available for provider {provider_name}"
+                    )
+                    logger.warning(str(last_model_error))
+                    continue
+
+                # このモデルでのキー全枯れフラグ
+                keys_exhausted = False
+                # 同一モデル内でキーを順に試す
+                for attempt in range(num_keys):
+                    try:
+                        # 現在のキーインデックスを読む
+                        current_key_index = self.provider_key_index.get(provider_name, 0)
+                        # 使用キーをクライアントへ記録する
+                        client.last_used_key_index = current_key_index
+                        logger.debug(
+                            f"Attempting API call to '{attempt_model_string}' "
+                            f"with key index {current_key_index} (Attempt {attempt + 1}/{num_keys})."
+                        )
+                        # ストリーム接続を開始する
+                        stream = await client.chat.completions.create(**api_kwargs)
+                        logger.debug(
+                            f"Stream connection established successfully "
+                            f"(model='{attempt_model_string}')."
+                        )
+                        # 成功したのでキーループを抜ける
+                        break
+                    except (openai.RateLimitError, openai.InternalServerError) as e:
+                        # エラー種別ラベルを決める
+                        error_type = "Rate limit" if isinstance(e, openai.RateLimitError) else "Server"
+                        # ステータスコードを取り出す
+                        status_code = getattr(e, 'status_code', 'N/A')
+                        logger.warning(
+                            f"⚠️ {error_type} error ({status_code}) for provider '{provider_name}' "
+                            f"with key index {current_key_index}. Details: {e}"
+                        )
+                        # 最終失敗として保持する
+                        last_model_error = e
+                        # 全キー使い切ったら次モデルへ回す
+                        if attempt + 1 >= num_keys:
+                            keys_exhausted = True
                             logger.warning(
-                                f"⚠️ All {num_keys} API keys for provider '{provider_name}' have failed (429). Aborting."
+                                f"⚠️ All {num_keys} API keys for provider '{provider_name}' "
+                                f"have failed ({error_type})."
+                            )
+                            break
+                        # 次キーへローテーションする
+                        client = await self._rotate_provider_api_key(
+                            client, provider_name, api_keys, current_key_index
+                        )
+                    except (openai.BadRequestError, openai.APIStatusError) as e:
+                        # ステータスコードを取り出す
+                        status_code = getattr(e, 'status_code', None)
+                        if isinstance(status_code, int) and status_code >= 500:
+                            logger.warning(
+                                f"⚠️ Server-like status error ({status_code}) for provider '{provider_name}' "
+                                f"with key index {current_key_index}. Details: {e}"
+                            )
+                        elif isinstance(status_code, int) and status_code >= 400:
+                            logger.warning(
+                                f"⚠️ Client error ({status_code}) for provider '{provider_name}' "
+                                f"with key index {current_key_index}. Details: {e}"
                             )
                         else:
-                            logger.error(
-                                f"❌ All {num_keys} API keys for provider '{provider_name}' have failed. Aborting."
+                            logger.warning(
+                                f"⚠️ Bad request/API status error for provider '{provider_name}' "
+                                f"with key index {current_key_index}. Details: {e}"
                             )
-                        raise e
+                        # 最終失敗として保持する
+                        last_model_error = e
+                        # 全キー使い切ったら次モデルへ回す
+                        if attempt + 1 >= num_keys:
+                            keys_exhausted = True
+                            if status_code == 429:
+                                logger.warning(
+                                    f"⚠️ All {num_keys} API keys for provider '{provider_name}' "
+                                    f"have failed (429)."
+                                )
+                            else:
+                                logger.error(
+                                    f"❌ All {num_keys} API keys for provider '{provider_name}' have failed."
+                                )
+                            break
+                        # 次キーへローテーションする
+                        client = await self._rotate_provider_api_key(
+                            client, provider_name, api_keys, current_key_index
+                        )
+                    except Exception as e:
+                        logger.error(f"❌ Unhandled error calling LLM API: {e}", exc_info=True)
+                        raise
 
-                    next_key_index = (current_key_index + 1) % num_keys
-                    self.provider_key_index[provider_name] = next_key_index
-                    next_key = api_keys[next_key_index]
-                    logger.info(
-                        f"🔄 Switching to next API key for provider '{provider_name}' (index: {next_key_index}) after error and retrying.")
-                    provider_config = self.llm_config.get('providers', {}).get(provider_name, {})
-                    is_koboldcpp = provider_name.lower() == 'koboldcpp'
-                    timeout = provider_config.get('timeout', 300.0) if is_koboldcpp else None
-                    new_client = openai.AsyncOpenAI(base_url=client.base_url, api_key=next_key, timeout=timeout)
-                    new_client.model_name_for_api_calls = client.model_name_for_api_calls
-                    new_client.provider_name = client.provider_name
-                    if is_koboldcpp:
-                        new_client.supports_tools = getattr(client, 'supports_tools', provider_config.get('supports_tools', True))
-                    else:
-                        new_client.supports_tools = getattr(client, 'supports_tools', True)
-                    client = new_client
-                    self.llm_clients[f"{provider_name}/{client.model_name_for_api_calls}"] = new_client
-                    await asyncio.sleep(1)
-                except Exception as e:
-                    logger.error(f"❌ Unhandled error calling LLM API: {e}", exc_info=True)
-                    raise
+                # ストリーム確立済みならモデルループも終了する
+                if stream is not None:
+                    if model_idx > 0:
+                        logger.info(
+                            f"✅ [MODEL FALLBACK] Connected with fallback model '{attempt_model_string}'."
+                        )
+                        # 以降の tool 反復でも成功モデルを先頭にする
+                        model_chain = [attempt_model_string] + [
+                            m for m in model_chain if m != attempt_model_string
+                        ]
+                    break
+
+                # キー枯渇で次モデルがあるなら続行する
+                if keys_exhausted and model_idx + 1 < len(model_chain):
+                    continue
+
+                # これ以上候補が無い場合は最後の例外を投げる
+                if last_model_error is not None and model_idx + 1 >= len(model_chain):
+                    raise last_model_error
 
             if stream is None:
-                raise Exception("Failed to establish stream with any API key.")
+                # フォールバック含めて全滅した場合の最終例外
+                if last_model_error is not None:
+                    raise last_model_error
+                raise Exception("Failed to establish stream with any API key or fallback model.")
 
             tool_calls_buffer = []
             assistant_response_content = ""
