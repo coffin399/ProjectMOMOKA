@@ -59,6 +59,8 @@ IMAGE_URL_PATTERN = re.compile(
 )
 DISCORD_MESSAGE_MAX_LENGTH = 2000
 SAFE_MESSAGE_LENGTH = 1990  # 安全マージン
+# チャンネル別モデル上書きの有効期限（秒）= 3時間
+MODEL_OVERRIDE_TTL_SECONDS = 3 * 60 * 60
 # /chat 応答末尾に付ける案内（Discord の -# サブテキスト）
 CHAT_HISTORY_HINT = (
     "\n-# 💡 会話履歴は @メンション と LLM 応答へのリプライでのみ保存されます。"
@@ -308,7 +310,7 @@ class LLMCog(commands.Cog, name="LLM"):
         self.model_reset_tasks: Dict[int, asyncio.Task] = {}
         self.exception_handler = LLMExceptionHandler(self.llm_config)
         self.channel_settings_path = "data/channel_llm_models.json"
-        # {bot_id: {channel_id: model}} 形式
+        # {bot_id: {channel_id: {"model": str, "expires_at": float}}} 形式
         self.channel_models: Dict[str, Any] = self._load_channel_models_nested()
         logger.info(
             f"[{self.display_name}] Loaded channel model settings from '{self.channel_settings_path}'.")
@@ -338,6 +340,11 @@ class LLMCog(commands.Cog, name="LLM"):
         else:
             logger.error(f"[{self.display_name}] Default LLM model is not configured.")
 
+    async def cog_load(self) -> None:
+        """Cog ロード時に期限切れ掃除とリセットタイマー復元を行う。"""
+        # 永続化された expires_at を見て復元する
+        await self._restore_channel_model_resets()
+
     def _bot_tag(self) -> str:
         """ログ用 Bot タグ。"""
         # 表示名を返す
@@ -365,8 +372,8 @@ class LLMCog(commands.Cog, name="LLM"):
         # それ以外は通常リスト
         return list(self.llm_config.get("active_tools") or [])
 
-    def _bot_channel_map(self) -> Dict[str, str]:
-        """自 Bot 用の channel_id→model マップを返す。"""
+    def _bot_channel_map(self) -> Dict[str, Any]:
+        """自 Bot 用の channel_id→上書き設定マップを返す。"""
         # bot_id キーが無ければ作る
         if self.bot_id not in self.channel_models or not isinstance(
             self.channel_models.get(self.bot_id), dict
@@ -375,8 +382,166 @@ class LLMCog(commands.Cog, name="LLM"):
         # マップを返す
         return self.channel_models[self.bot_id]
 
+    def _parse_channel_override(self, entry: Any) -> Tuple[Optional[str], Optional[float]]:
+        """上書きエントリから (model, expires_at) を取り出す。"""
+        # 旧形式: モデル文字列のみ
+        if isinstance(entry, str):
+            # 期限情報は無いので None
+            return entry, None
+        # 新形式: dict
+        if isinstance(entry, dict):
+            # モデル名を取り出す
+            model = entry.get("model")
+            # 期限（UNIX秒）を取り出す
+            expires_raw = entry.get("expires_at")
+            # モデルが文字列でなければ無効
+            if not isinstance(model, str) or not model:
+                return None, None
+            # 期限を float へ正規化する
+            expires_at: Optional[float]
+            try:
+                expires_at = float(expires_raw) if expires_raw is not None else None
+            except (TypeError, ValueError):
+                expires_at = None
+            # 正規化結果を返す
+            return model, expires_at
+        # 想定外形式
+        return None, None
+
+    def _get_channel_override_model(self, channel_id: int) -> Optional[str]:
+        """有効なチャンネル上書きモデルを返す（期限切れは無視）。"""
+        # チャンネルキー文字列
+        channel_id_str = str(channel_id)
+        # Bot 用マップを取得する
+        bot_map = self._bot_channel_map()
+        # エントリが無ければ上書きなし
+        if channel_id_str not in bot_map:
+            return None
+        # model / expires_at をパースする
+        model, expires_at = self._parse_channel_override(bot_map[channel_id_str])
+        # モデルが取れなければ無効
+        if not model:
+            # 壊れたエントリを除去する
+            bot_map.pop(channel_id_str, None)
+            return None
+        # 期限切れならメモリ上から消し、可能なら JSON も更新する
+        if expires_at is not None and expires_at <= time.time():
+            # 期限切れエントリを削除する
+            bot_map.pop(channel_id_str, None)
+            # 実行中ループがあれば非同期保存する
+            try:
+                # 現在のイベントループを取得する
+                loop = asyncio.get_running_loop()
+                # 保存タスクを投げる（失敗しても読み取りは続行）
+                loop.create_task(self._save_channel_models())
+            except RuntimeError:
+                # ループ無しならメモリ削除のみ
+                pass
+            # 上書き無しとして扱う
+            return None
+        # 有効な上書きモデルを返す
+        return model
+
+    def _set_channel_override(self, channel_id: int, model: str, expires_at: float) -> None:
+        """チャンネル上書きを新形式で書き込む。"""
+        # Bot 用マップへ dict 形式で保存する
+        self._bot_channel_map()[str(channel_id)] = {
+            "model": model,
+            "expires_at": float(expires_at),
+        }
+
+    def _clear_channel_override(self, channel_id: int) -> bool:
+        """チャンネル上書きを削除する。削除したら True。"""
+        # 削除結果を返す
+        return self._bot_channel_map().pop(str(channel_id), None) is not None
+
+    def _cancel_model_reset_task(self, channel_id: int) -> None:
+        """既存のリセットタイマーをキャンセルする。"""
+        # タスクが無ければ何もしない
+        task = self.model_reset_tasks.pop(channel_id, None)
+        if task is None:
+            return
+        # 実行中ならキャンセルする
+        task.cancel()
+
+    async def _restore_channel_model_resets(self) -> None:
+        """起動時: 期限切れ掃除・旧形式移行・残り時間の再スケジュール。"""
+        # 現在時刻（UNIX秒）
+        now = time.time()
+        # 自 Bot のマップ
+        bot_map = self._bot_channel_map()
+        # デフォルトモデル
+        default_model = self._persona_default_model()
+        # JSON 書き換えが必要か
+        changed = False
+        # 再スケジュール対象 (channel_id, expires_at)
+        to_schedule: List[Tuple[int, float]] = []
+
+        # 全チャンネル上書きを走査する
+        for channel_id_str, entry in list(bot_map.items()):
+            # model / expires_at を取り出す
+            model, expires_at = self._parse_channel_override(entry)
+            # 無効エントリは削除する
+            if not model:
+                bot_map.pop(channel_id_str, None)
+                changed = True
+                continue
+            # デフォルトと同じなら上書き不要なので削除する
+            if default_model and model == default_model:
+                bot_map.pop(channel_id_str, None)
+                changed = True
+                continue
+            # 旧形式（文字列）や期限欠落は、アップグレード後に新たに 3 時間を付与する
+            if expires_at is None:
+                # 新しい期限を計算する
+                expires_at = now + MODEL_OVERRIDE_TTL_SECONDS
+                # 新形式へ書き換える
+                bot_map[channel_id_str] = {"model": model, "expires_at": expires_at}
+                changed = True
+                logger.info(
+                    f"[{self._bot_tag()}] Migrated channel {channel_id_str} override "
+                    f"to expires_at format (TTL {MODEL_OVERRIDE_TTL_SECONDS}s)."
+                )
+            # 既に期限切れなら削除する
+            if expires_at <= now:
+                bot_map.pop(channel_id_str, None)
+                changed = True
+                logger.info(
+                    f"[{self._bot_tag()}] Removed expired model override for channel {channel_id_str}."
+                )
+                continue
+            # チャンネル ID を int 化してスケジュール対象へ入れる
+            try:
+                channel_id_int = int(channel_id_str)
+            except ValueError:
+                bot_map.pop(channel_id_str, None)
+                changed = True
+                continue
+            # 残り時間でタイマーを張り直す対象へ追加する
+            to_schedule.append((channel_id_int, expires_at))
+
+        # 変更があれば JSON へ保存する
+        if changed:
+            await self._save_channel_models()
+            logger.info(f"[{self._bot_tag()}] Channel model overrides cleaned/migrated and saved.")
+
+        # 有効な上書きのリセットタイマーを復元する
+        for channel_id_int, expires_at in to_schedule:
+            # 既存があればキャンセルする
+            self._cancel_model_reset_task(channel_id_int)
+            # 残り時間で再スケジュールする
+            task = asyncio.create_task(self._schedule_model_reset(channel_id_int, expires_at))
+            # タスク辞書へ登録する
+            self.model_reset_tasks[channel_id_int] = task
+            # 残り秒をログする
+            remaining = max(0.0, expires_at - now)
+            logger.info(
+                f"[{self._bot_tag()}] Restored model reset timer for channel {channel_id_int} "
+                f"({remaining:.0f}s remaining)."
+            )
+
     def _load_channel_models_nested(self) -> Dict[str, Any]:
-        """channel_llm_models.json を {bot_id:{channel:model}} として読む。"""
+        """channel_llm_models.json を {bot_id:{channel:override}} として読む。"""
         # 生データを読む
         raw = self._load_json_data(self.channel_settings_path)
         # 空なら自 Bot 用空 dict
@@ -386,7 +551,7 @@ class LLMCog(commands.Cog, name="LLM"):
         if all(isinstance(v, str) for v in raw.values()):
             # 旧データは plana に紐づける
             return {"plana": dict(raw), "arona": {}}
-        # 既にネストされていればそのまま
+        # 既にネストされていればそのまま（値は str または dict）
         return raw
 
     def _initialize_plugins(self) -> Tuple[
@@ -599,8 +764,8 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def _resolve_model_string(self, channel_id: int) -> Optional[str]:
         """チャンネル上書き ＞（任意）persona.model ＞ llm.model。"""
-        # チャンネル上書きを確認する
-        override = self._bot_channel_map().get(str(channel_id))
+        # 有効期限内のチャンネル上書きを確認する
+        override = self._get_channel_override_model(channel_id)
         # 上書きがあればそれを返す
         if override:
             return override
@@ -2143,28 +2308,62 @@ class LLMCog(commands.Cog, name="LLM"):
             messages.append(
                 {"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": final_content})
 
-    async def _schedule_model_reset(self, channel_id: int):
+    async def _schedule_model_reset(self, channel_id: int, expires_at: Optional[float] = None):
+        """指定時刻（省略時は今+3時間）まで待ち、チャンネル上書きを解除する。"""
         try:
-            await asyncio.sleep(3 * 60 * 60)
+            # 期限が無ければ今から TTL 後を期限にする
+            if expires_at is None:
+                expires_at = time.time() + MODEL_OVERRIDE_TTL_SECONDS
+            # 残り待機秒数を計算する（負なら即実行）
+            delay = max(0.0, float(expires_at) - time.time())
+            logger.info(
+                f"[{self._bot_tag()}] Scheduled model reset for channel {channel_id} "
+                f"in {delay:.0f}s (expires_at={expires_at:.0f})."
+            )
+            # 期限まで待機する
+            await asyncio.sleep(delay)
             logger.info(f"Executing scheduled model reset for channel {channel_id}.")
+            # 生エントリを直接読み、期限直後の lazy 削除に邪魔されないようにする
             channel_id_str = str(channel_id)
             bot_map = self._bot_channel_map()
-            if channel_id_str in bot_map:
-                default_model, current_model = self._persona_default_model(), bot_map.get(channel_id_str)
-                if current_model and current_model != default_model:
-                    del bot_map[channel_id_str]
-                    await self._save_channel_models()
-                    logger.info(f"[{self._bot_tag()}] Model for channel {channel_id} auto-reset to '{default_model}'.")
-                    channel = self.bot.get_channel(channel_id)
-                    if channel and isinstance(channel, discord.TextChannel):
-                        try:
-                            embed = discord.Embed(title="ℹ️ AI Model Reset / AIモデルをリセットしました",
-                                                  description=f"The AI model for this channel has been reset to the default (`{default_model}`) after 3 hours.\n3時間が経過したため、このチャンネルのAIモデルをデフォルト (`{default_model}`) に戻しました。",
-                                                  color=discord.Color.blue())
-                            self._add_support_footer(embed)
-                            await channel.send(embed=embed, view=self._create_support_view())
-                        except discord.HTTPException as e:
-                            logger.warning(f"Failed to send model reset notification to channel {channel_id}: {e}")
+            entry = bot_map.get(channel_id_str)
+            current_model, _saved_expires = (
+                self._parse_channel_override(entry) if entry is not None else (None, None)
+            )
+            # デフォルトモデルを取得する
+            default_model = self._persona_default_model()
+            # 上書きが残っておりデフォルトと違う場合のみクリアする
+            if current_model and current_model != default_model:
+                # 上書きを削除する
+                self._clear_channel_override(channel_id)
+                # JSON へ反映する
+                await self._save_channel_models()
+                logger.info(
+                    f"[{self._bot_tag()}] Model for channel {channel_id} auto-reset to '{default_model}'."
+                )
+                # 通知先チャンネルを取得する
+                channel = self.bot.get_channel(channel_id)
+                # テキストチャンネルなら通知を送る
+                if channel and isinstance(channel, discord.TextChannel):
+                    try:
+                        embed = discord.Embed(
+                            title="ℹ️ AI Model Reset / AIモデルをリセットしました",
+                            description=(
+                                f"The AI model for this channel has been reset to the default "
+                                f"(`{default_model}`) after 3 hours.\n"
+                                f"3時間が経過したため、このチャンネルのAIモデルをデフォルト "
+                                f"(`{default_model}`) に戻しました。"
+                            ),
+                            color=discord.Color.blue(),
+                        )
+                        self._add_support_footer(embed)
+                        await channel.send(embed=embed, view=self._create_support_view())
+                    except discord.HTTPException as e:
+                        logger.warning(f"Failed to send model reset notification to channel {channel_id}: {e}")
+            elif entry is not None:
+                # 無効／デフォルト相当の残骸があれば掃除して保存する
+                self._clear_channel_override(channel_id)
+                await self._save_channel_models()
         except asyncio.CancelledError:
             logger.info(f"Model reset task for channel {channel_id} was cancelled.")
         except Exception as e:
@@ -2321,18 +2520,21 @@ class LLMCog(commands.Cog, name="LLM"):
             self._add_support_footer(embed)
             await interaction.followup.send(embed=embed, view=self._create_support_view())
             return
-        channel_id, channel_id_str, default_model = interaction.channel_id, str(
-            interaction.channel_id), self._persona_default_model()
-        if channel_id in self.model_reset_tasks:
-            self.model_reset_tasks[channel_id].cancel()
-            self.model_reset_tasks.pop(channel_id, None)
-            logger.info(f"Cancelled previous model reset task for channel {channel_id}.")
-        self._bot_channel_map()[channel_id_str] = model
+        channel_id, default_model = interaction.channel_id, self._persona_default_model()
+        # 既存タイマーをキャンセルする
+        self._cancel_model_reset_task(channel_id)
         try:
-            await self._save_channel_models()
-            await self._get_llm_client_for_channel(interaction.channel_id)
             if model != default_model:
-                task = asyncio.create_task(self._schedule_model_reset(channel_id))
+                # 3時間後の期限を計算する
+                expires_at = time.time() + MODEL_OVERRIDE_TTL_SECONDS
+                # 新形式で上書きを保存する
+                self._set_channel_override(channel_id, model, expires_at)
+                # JSON へ永続化する
+                await self._save_channel_models()
+                # クライアントを先に用意する
+                await self._get_llm_client_for_channel(interaction.channel_id)
+                # 期限付きリセットタイマーを起動する
+                task = asyncio.create_task(self._schedule_model_reset(channel_id, expires_at))
                 self.model_reset_tasks[channel_id] = task
                 embed = discord.Embed(title="✅ Model Switched / モデルを切り替えました",
                                       description=f"The AI model for this channel has been switched to `{model}`.\nIt will automatically revert to the default model (`{default_model}`) **after 3 hours**.\nこのチャンネルのAIモデルが `{model}` に切り替えられました。\n**3時間後**にデフォルトモデル (`{default_model}`) に自動的に戻ります。",
@@ -2340,8 +2542,13 @@ class LLMCog(commands.Cog, name="LLM"):
                 self._add_support_footer(embed)
                 await interaction.followup.send(embed=embed, view=self._create_support_view(), ephemeral=False)
                 logger.info(
-                    f"[{self._bot_tag()}] Model for channel {channel_id} switched to '{model}' by {interaction.user.name}.")
+                    f"[{self._bot_tag()}] Model for channel {channel_id} switched to '{model}' by {interaction.user.name} "
+                    f"(expires_at={expires_at:.0f}).")
             else:
+                # デフォルト選択時は上書きを消す
+                self._clear_channel_override(channel_id)
+                await self._save_channel_models()
+                await self._get_llm_client_for_channel(interaction.channel_id)
                 embed = discord.Embed(title="✅ Model Reset to Default / モデルをデフォルトに戻しました",
                                       description=f"The AI model for this channel has been reset to the default `{model}`.\nこのチャンネルのAIモデルがデフォルトの `{model}` に戻されました。",
                                       color=discord.Color.green())
@@ -2360,13 +2567,11 @@ class LLMCog(commands.Cog, name="LLM"):
                           description="Resets the AI model for this channel to the server default.\nこのチャンネルのAIモデルをサーバーのデフォルト設定に戻します。")
     async def reset_model_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
-        channel_id, channel_id_str = interaction.channel_id, str(interaction.channel_id)
-        if channel_id in self.model_reset_tasks:
-            self.model_reset_tasks[channel_id].cancel()
-            self.model_reset_tasks.pop(channel_id, None)
-            logger.info(f"Cancelled scheduled model reset for channel {channel_id} due to manual reset.")
-        if channel_id_str in self._bot_channel_map():
-            del self._bot_channel_map()[channel_id_str]
+        channel_id = interaction.channel_id
+        # スケジュール済みリセットをキャンセルする
+        self._cancel_model_reset_task(channel_id)
+        # 上書きがあれば削除する
+        if self._clear_channel_override(channel_id):
             try:
                 await self._save_channel_models()
                 default_model = self._persona_default_model() or 'Not set / 未設定'
