@@ -186,11 +186,22 @@ class TipsManager:
         tip_embed.description = f"{time_estimate}{switch_hint}\n\n{original_desc}"
         return tip_embed
 
-    def get_waiting_layout_parts(self, model_name: str) -> tuple[str, discord.Color]:
-        """待機 LayoutView 用の本文とアクセント色を返す。"""
-        # ランダム tip を1つ選ぶ
-        tip_data = random.choice(self.tips)
-        # 予想時間文字列
+    def get_waiting_layout_parts(
+        self,
+        model_name: str,
+        *,
+        tip_data: Optional[Dict[str, Any]] = None,
+        fallback_from: Optional[str] = None,
+    ) -> tuple[str, discord.Color, Dict[str, Any]]:
+        """待機 LayoutView 用の本文・アクセント色・使用 tip を返す。
+
+        tip_data を渡すと同一 tip を維持したままモデル名だけ差し替えできる。
+        fallback_from があるときのみクォータ起因のモデル切替案内を付ける。
+        """
+        # tip 未指定ならランダムに1つ選ぶ（再利用時は呼び出し側で渡す）
+        if tip_data is None:
+            tip_data = random.choice(self.tips)
+        # 予想時間文字列（試行中モデル基準）
         time_estimate = self.response_tracker.format_estimate(model_name)
         # 遅いモデルなら切替提案
         estimate = self.response_tracker.get_estimate(model_name)
@@ -200,10 +211,17 @@ class TipsManager:
                 "\n💡 応答が遅い場合は `/switch-models` で他のモデルへの切り替えもご検討ください。"
                 "\n💡 If response is slow, consider switching to another model with `/switch-models`."
             )
+        # 別モデルへのフォールバック時のみ案内を付ける（同一モデルのキー回転では付けない）
+        fallback_notice = ""
+        if fallback_from:
+            fallback_notice = (
+                f"\n⚠️ `{fallback_from}` のクォータ/API制限のため、`{model_name}` に切り替え中..."
+                f"\n⚠️ Switching to `{model_name}` because `{fallback_from}` hit quota/API limits..."
+            )
         # V2 TextDisplay 用本文（タイトル相当を先頭に）
         body = (
             f"### ⏳ Waiting for '{model_name}' response...\n"
-            f"{time_estimate}{switch_hint}\n\n"
+            f"{time_estimate}{switch_hint}{fallback_notice}\n\n"
             f"**{tip_data['title']}**\n"
             f"{tip_data['description']}\n\n"
             f"-# we are experiencing technical difficulties with our main server.\n"
@@ -211,4 +229,4 @@ class TipsManager:
         )
         # tip の色をアクセントに使う
         accent = tip_data.get("color") or discord.Color.orange()
-        return body, accent
+        return body, accent, tip_data

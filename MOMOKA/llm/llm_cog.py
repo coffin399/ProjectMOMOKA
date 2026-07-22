@@ -11,7 +11,17 @@ import re
 import time
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
-from typing import List, Dict, Any, Tuple, Optional, AsyncGenerator, Union
+from typing import (
+    List,
+    Dict,
+    Any,
+    Tuple,
+    Optional,
+    AsyncGenerator,
+    Union,
+    Callable,
+    Awaitable,
+)
 
 import aiohttp
 import discord
@@ -258,14 +268,64 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def _create_waiting_view(self, model_name: str) -> WaitingLayoutView:
         """応答待機中の Components V2（Tips + 控えめ Ko-fi）。"""
+        # tip 再利用用（モデル切替時に同じ tip を維持する）
+        tip_data: Optional[Dict[str, Any]] = None
         # Tips が無ければ簡易本文
         if self.tips_manager:
-            body, accent = self.tips_manager.get_waiting_layout_parts(model_name)
+            body, accent, tip_data = self.tips_manager.get_waiting_layout_parts(model_name)
         else:
             body = f"### ⏳ Waiting for '{model_name}' response..."
             accent = discord.Color.orange()
-        # LayoutView を返す
-        return WaitingLayoutView(body=body, accent=accent, bot=self.bot)
+        # LayoutView を返す（試行中モデル名と tip を保持）
+        return WaitingLayoutView(
+            body=body,
+            accent=accent,
+            bot=self.bot,
+            tip_data=tip_data,
+            model_name=model_name,
+        )
+
+    async def _refresh_waiting_view_for_model(
+        self,
+        sent_message: discord.Message,
+        waiting_view: WaitingLayoutView,
+        model_name: str,
+        *,
+        fallback_from: Optional[str] = None,
+    ) -> None:
+        """待機 UI の試行中モデル名を差し替え、必要ならフォールバック案内を付ける。"""
+        # 再利用する tip（無ければ新規抽選）
+        tip_data = getattr(waiting_view, "tip_data", None)
+        # TipsManager があれば本文を再構築する
+        if self.tips_manager:
+            body, accent, tip_data = self.tips_manager.get_waiting_layout_parts(
+                model_name,
+                tip_data=tip_data,
+                fallback_from=fallback_from,
+            )
+        else:
+            # Tips 無し時の簡易本文
+            notice = ""
+            if fallback_from:
+                notice = (
+                    f"\n⚠️ `{fallback_from}` のクォータ/API制限のため、`{model_name}` に切り替え中..."
+                    f"\n⚠️ Switching to `{model_name}` because `{fallback_from}` hit quota/API limits..."
+                )
+            body = f"### ⏳ Waiting for '{model_name}' response...{notice}"
+            accent = waiting_view.accent
+        # View 内部状態を更新して再構築する
+        waiting_view.update_body(
+            body,
+            accent=accent,
+            model_name=model_name,
+            tip_data=tip_data,
+        )
+        try:
+            # Discord 上の待機メッセージを edit する
+            await sent_message.edit(view=waiting_view)
+        except discord.HTTPException as e:
+            # 編集失敗でもストリーム本体は続行する
+            logger.debug("Failed to refresh waiting view for model fallback: %s", e)
 
     async def _append_chat_history_hint(
             self,
@@ -1451,7 +1511,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 sent_message=sent_message, channel=message.channel,
                 user=message.author,
                 messages_for_api=initial_messages, llm_client=client,
-                is_first_response=is_first_response
+                is_first_response=is_first_response,
+                waiting_view=waiting_view,
             )
             # ストリーミング完了後の経過時間を算出
             elapsed = time.time() - stream_start_time
@@ -1544,7 +1605,8 @@ class LLMCog(commands.Cog, name="LLM"):
                                                    user: Union[discord.User, discord.Member],
                                                    messages_for_api: List[Dict[str, Any]],
                                                    llm_client: openai.AsyncOpenAI,
-                                                   is_first_response: bool = False) -> Tuple[
+                                                   is_first_response: bool = False,
+                                                   waiting_view: Optional[WaitingLayoutView] = None) -> Tuple[
         Optional[List[discord.Message]], str, Optional[int]]:
         # 応答生成中として追跡登録する（再起動通知の対象にする）
         self._register_active_response(sent_message)
@@ -1557,7 +1619,30 @@ class LLMCog(commands.Cog, name="LLM"):
             # 待機 V2 から通常 content へ切り替えたか
             waiting_v2_cleared = False
             logger.debug(f"Starting LLM stream for message {sent_message.id}")
-            stream_generator = self._llm_stream_and_tool_handler(messages_for_api, llm_client, channel.id, user.id)
+
+            async def _on_model_fallback(new_model: str, failed_model: str) -> None:
+                """別モデルへフォールバックしたとき待機 UI のモデル名を更新する。"""
+                # 待機 UI が無い／既に本文へ切替済みなら何もしない
+                if waiting_view is None or waiting_v2_cleared:
+                    return
+                # シャットダウン中は編集しない
+                if self._shutting_down:
+                    return
+                # Waiting for のモデル名と切替案内をリアルタイム更新する
+                await self._refresh_waiting_view_for_model(
+                    sent_message,
+                    waiting_view,
+                    new_model,
+                    fallback_from=failed_model,
+                )
+
+            stream_generator = self._llm_stream_and_tool_handler(
+                messages_for_api,
+                llm_client,
+                channel.id,
+                user.id,
+                on_model_fallback=_on_model_fallback if waiting_view is not None else None,
+            )
             async for content_chunk in stream_generator:
                 # シャットダウン通知後はストリーム編集を打ち切る
                 if self._shutting_down:
@@ -1897,8 +1982,14 @@ class LLMCog(commands.Cog, name="LLM"):
         # 新しいクライアントを返す
         return new_client
 
-    async def _llm_stream_and_tool_handler(self, messages: List[Dict[str, Any]], client: openai.AsyncOpenAI,
-                                           channel_id: int, user_id: int) -> AsyncGenerator[str, None]:
+    async def _llm_stream_and_tool_handler(
+        self,
+        messages: List[Dict[str, Any]],
+        client: openai.AsyncOpenAI,
+        channel_id: int,
+        user_id: int,
+        on_model_fallback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    ) -> AsyncGenerator[str, None]:
         # 呼び出し元クライアント参照を保持（フォールバック後のメタ書き戻し用）
         request_client = client
         # 前回の実使用モデル情報をクリアする
@@ -1973,6 +2064,11 @@ class LLMCog(commands.Cog, name="LLM"):
                 if model_idx > 0:
                     # 直前に失敗したモデル名を特定する
                     failed_model = model_chain[model_idx - 1]
+                    # 待機 UI 表示用に、切替前クライアントの短名を控える
+                    failed_label = getattr(client, "model_name_for_api_calls", None)
+                    # 短名が取れなければ provider/model のモデル部分を使う
+                    if not failed_label:
+                        failed_label = failed_model.split("/", 1)[-1]
                     logger.warning(
                         f"🔄 [MODEL FALLBACK] All keys failed for '{failed_model}'. "
                         f"Trying fallback model '{attempt_model_string}' "
@@ -2003,6 +2099,18 @@ class LLMCog(commands.Cog, name="LLM"):
                         provider_name,
                         getattr(client, "supports_tools", True),
                     )
+                    # 別モデル切替時のみ待機 UI を更新（同一モデルのキー回転では呼ばない）
+                    if on_model_fallback is not None:
+                        try:
+                            await on_model_fallback(
+                                client.model_name_for_api_calls,
+                                str(failed_label),
+                            )
+                        except Exception as callback_error:
+                            # UI 更新失敗でストリーム自体は止めない
+                            logger.debug(
+                                "on_model_fallback callback failed: %s", callback_error
+                            )
 
                 # 現在プロバイダーの API キー一覧を取得する
                 api_keys = self.provider_api_keys.get(client.provider_name, [])
@@ -2488,7 +2596,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 # スレッド作成ボタンは削除（常にFalse）
                 sent_messages, full_response_text, used_key_index = await self._process_streaming_and_send_response(
                     sent_message=temp_message, channel=interaction.channel, user=interaction.user,
-                    messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False)
+                    messages_for_api=messages_for_api, llm_client=llm_client, is_first_response=False,
+                    waiting_view=waiting_view)
                 if sent_messages and full_response_text:
                     # フォールバック後の実使用モデルで完了ログを出す
                     model_in_use = self._effective_model_label(llm_client, interaction.channel_id)
