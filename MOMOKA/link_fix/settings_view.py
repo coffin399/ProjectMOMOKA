@@ -184,14 +184,15 @@ class LinkFixSettingsView(discord.ui.LayoutView):
             f"**Feature:** `{status}`\n"
             f"**Sites enabled:** `{on_count}/{total}`\n\n"
             "Suppress original social embeds and quote-replace with fixer proxy URLs.\n"
-            "Use **Sites** to toggle each network and pick fixer denominations.\n"
+            "Default is **enabled**. Use **Enable/Disable All Sites** for bulk toggles,\n"
+            "or **Sites** for per-network settings.\n"
             "Requires **Manage Server**."
         )
         # TextDisplay
         container.add_item(discord.ui.TextDisplay(body))
         # 区切り
         container.add_item(discord.ui.Separator())
-        # マスター行
+        # マスター行（機能全体）
         master = discord.ui.ActionRow()
         # Enable / Disable トグル
         toggle = discord.ui.Button(
@@ -201,6 +202,26 @@ class LinkFixSettingsView(discord.ui.LayoutView):
         )
         toggle.callback = self._toggle_feature
         master.add_item(toggle)
+        # 全サイト一括有効化
+        enable_all = discord.ui.Button(
+            label="Enable All Sites",
+            style=discord.ButtonStyle.success,
+            custom_id="lf_enable_all_sites",
+        )
+        enable_all.callback = self._enable_all_sites
+        master.add_item(enable_all)
+        # 全サイト一括無効化
+        disable_all = discord.ui.Button(
+            label="Disable All Sites",
+            style=discord.ButtonStyle.danger,
+            custom_id="lf_disable_all_sites",
+        )
+        disable_all.callback = self._disable_all_sites
+        master.add_item(disable_all)
+        # 行を追加
+        container.add_item(master)
+        # ナビ行（Sites / Reset）
+        nav = discord.ui.ActionRow()
         # Sites へ
         to_sites = discord.ui.Button(
             label="Sites",
@@ -208,7 +229,7 @@ class LinkFixSettingsView(discord.ui.LayoutView):
             custom_id="lf_goto_sites",
         )
         to_sites.callback = self._goto_sites
-        master.add_item(to_sites)
+        nav.add_item(to_sites)
         # Reset
         reset = discord.ui.Button(
             label="Reset Guild",
@@ -216,9 +237,9 @@ class LinkFixSettingsView(discord.ui.LayoutView):
             custom_id="lf_reset_guild",
         )
         reset.callback = self._reset_guild
-        master.add_item(reset)
+        nav.add_item(reset)
         # 行を追加
-        container.add_item(master)
+        container.add_item(nav)
 
     def _build_sites(self, container: discord.ui.Container) -> None:
         """サイト一覧ページ。"""
@@ -273,6 +294,25 @@ class LinkFixSettingsView(discord.ui.LayoutView):
             cfg.callback = self._make_site_cfg_cb(sid)
             row.add_item(cfg)
             container.add_item(row)
+        # 一括 on/off 行
+        bulk = discord.ui.ActionRow()
+        # 全サイト有効化
+        enable_all = discord.ui.Button(
+            label="Enable All",
+            style=discord.ButtonStyle.success,
+            custom_id="lf_sites_enable_all",
+        )
+        enable_all.callback = self._enable_all_sites
+        bulk.add_item(enable_all)
+        # 全サイト無効化
+        disable_all = discord.ui.Button(
+            label="Disable All",
+            style=discord.ButtonStyle.danger,
+            custom_id="lf_sites_disable_all",
+        )
+        disable_all.callback = self._disable_all_sites
+        bulk.add_item(disable_all)
+        container.add_item(bulk)
         # ナビ行
         nav = discord.ui.ActionRow()
         prev_btn = discord.ui.Button(
@@ -433,6 +473,28 @@ class LinkFixSettingsView(discord.ui.LayoutView):
         # 反転
         current = self.store.is_feature_enabled(self.guild_id)
         self.store.set_feature_enabled(self.guild_id, not current)
+        self._rebuild()
+        await interaction.response.edit_message(view=self)
+
+    async def _enable_all_sites(self, interaction: discord.Interaction) -> None:
+        """全サイトを一括で有効化する。"""
+        # 権限チェック
+        if not await self._ensure_manage(interaction):
+            return
+        # 全サイトを ON にする
+        self.store.set_all_sites_enabled(self.guild_id, True)
+        # 再描画する
+        self._rebuild()
+        await interaction.response.edit_message(view=self)
+
+    async def _disable_all_sites(self, interaction: discord.Interaction) -> None:
+        """全サイトを一括で無効化する。"""
+        # 権限チェック
+        if not await self._ensure_manage(interaction):
+            return
+        # 全サイトを OFF にする
+        self.store.set_all_sites_enabled(self.guild_id, False)
+        # 再描画する
         self._rebuild()
         await interaction.response.edit_message(view=self)
 

@@ -149,6 +149,17 @@ class LinkFixSettingsStore:
         # 保存する
         self.save()
 
+    def set_all_sites_enabled(self, guild_id: int, enabled: bool) -> None:
+        """定義済み全サイトの on/off を一括で保存する。"""
+        # 全サイト id を取る
+        for site_id in list_site_ids(self.bot_config):
+            # サイト dict を確保する
+            site = self._ensure_site(guild_id, site_id)
+            # 有効フラグを書く
+            site["enabled"] = bool(enabled)
+        # まとめて1回だけ保存する
+        self.save()
+
     def set_fix_domain(self, guild_id: int, site_id: str, domain: str) -> bool:
         """Fix 先ドメインを保存する。不正なら False。"""
         # 正規化する
