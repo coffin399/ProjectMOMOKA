@@ -96,6 +96,7 @@ llm:
   - get_commands_info
   - debate
   - cross_check
+  - feedback
   max_tool_iterations: 3
   concurrency:
     max_inflight_chat: 64
@@ -141,6 +142,8 @@ llm:
 
     - The `debate` tool: use ONLY when the user clearly wants a multi-round discussion / debate between PLANA and ARONA. You speak first when you start it. Prefer `cross_check` for light verification.
 
+    - The `feedback` tool: use when the user wants to report a bug, request a feature, or send feedback to the developers. Prefer mode=form if details are incomplete; use mode=submit (with category/title/body) when you can draft from the conversation (user must still confirm). Do not claim submission succeeded until the user confirms or submits the Modal.
+
     '
   tools_prompt_arona: '# Available Tools
 
@@ -155,6 +158,8 @@ llm:
     - The `cross_check` tool: you may start it. Flow is ARONA draft -> PLANA review -> ARONA conclusion. Prefer this for light verification; require PLANA in the server.
 
     - The `debate` tool: you may start a multi-round debate with PLANA when the user clearly wants one. You speak first; require PLANA in the server.
+
+    - The `feedback` tool: use when the user wants to report a bug, request a feature, or send feedback. Prefer mode=form if details are incomplete; use mode=submit when you can draft category/title/body (user must confirm). Do not claim success until they confirm or submit the Modal.
 
     # Features that belong to PLANA
 
@@ -335,3 +340,4 @@ llm:
   - get_commands_info
   - debate
   - cross_check
+  - feedback

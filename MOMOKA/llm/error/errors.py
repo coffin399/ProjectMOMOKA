@@ -108,4 +108,4 @@ class LLMExceptionHandler:
         logger.error(f"An unexpected error occurred during LLM interaction: {exception}", exc_info=True)
         # エラーメッセージからローカルディレクトリパスを除去して安全な表示を行う
         sanitized_error = self._sanitize_error_message(str(exception))
-        return f"予期せぬエラーが発生しました。\nAn unexpected error occurred.\n\n**詳細 / Details:**\n```\n{sanitized_error}\n```\n\n[GitHub で報告 / Report on GitHub](https://github.com/coffin399/ProjectMOMOKA/issues)"
+        return f"予期せぬエラーが発生しました。\nAn unexpected error occurred.\n\n**詳細 / Details:**\n```\n{sanitized_error}\n```\n\n下のボタンからフォームまたは GitHub で報告できます。 / Use the buttons below to report via form or GitHub."

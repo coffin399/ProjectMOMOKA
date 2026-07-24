@@ -252,7 +252,7 @@ music:
 | `/clear_history` | 会話履歴リセット |
 | `/switch-models` | チャンネル専用モデル切替 |
 
-※ debate / cross_check は LLM ツールとして呼び出されます（多ラウンド討論＋評定 / 軽量3ステップ検証）。
+※ debate / cross_check / feedback は LLM ツールとして呼び出されます（討論・検証・開発者へのフィードバック送信）。
 
 ### 音楽
 
@@ -307,7 +307,7 @@ Now Playing パネル（Components V2）: 曲名（##）直下にチャンネル
 | `/invite` | PLANA / ARONA 招待（Components V2） |
 | `/download_video` `/download_audio` | メディアダウンロード（Components V2・Google Drive 共有） |
 | `/ping` `/serverinfo` `/userinfo` `/avatar` | 情報系 |
-| `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` | その他 |
+| `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` `/feedback` | その他 |
 
 ---
 
@@ -385,6 +385,11 @@ Now Playing パネル（Components V2）: 曲名（##）直下にチャンネル
 
 - Discord: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
 - `/support` コマンド
+- `/feedback` — 不具合・機能リクエストを Modal から開発者サーバーへ送信（LLM 会話からも可）
+
+### フィードバック設定（セルフホスト）
+
+`configs/utilities_config.yaml` の `feedback.channel_ids` に投稿先チャンネル ID を複数列挙します（Bot がその鯖にいる必要あり）。空のままでは `/feedback` と LLM `feedback` ツールは投稿できません。
 
 ### ライセンス
 

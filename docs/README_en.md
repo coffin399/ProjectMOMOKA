@@ -234,7 +234,7 @@ llm:
 | `/clear_history` | Reset history |
 | `/switch-models` | Per-channel model |
 
-\* `debate` / `cross_check` are LLM tools (multi-round debate + judge / light 3-step check).
+\* `debate` / `cross_check` / `feedback` are LLM tools (multi-round debate + judge / light 3-step check / developer feedback form).
 
 ### Music
 
@@ -289,7 +289,7 @@ Music messages are sent `@silent` (suppress notifications) by default.
 | `/invite` | PLANA / ARONA invites (Components V2) |
 | `/download_video` `/download_audio` | Media download (Components V2, Google Drive share) |
 | `/ping` `/serverinfo` `/userinfo` `/avatar` | Info |
-| `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` | Misc |
+| `/roll` `/diceroll` `/check` `/gacha` `/timer` `/meow` `/support` `/feedback` | Misc |
 
 ---
 
@@ -367,6 +367,11 @@ Real-time JMA WebSocket alerts (early warning, quake info, tsunami forecast).
 
 - Discord: [https://discord.com/invite/H79HKKqx3s](https://discord.com/invite/H79HKKqx3s)
 - `/support` command
+- `/feedback` — submit bug reports / feature requests via Modal to developer channels (also available from LLM chat)
+
+### Feedback setup (self-host)
+
+Set one or more destination channel IDs under `feedback.channel_ids` in `configs/utilities_config.yaml` (the bot must be in that guild). If empty, `/feedback` and the LLM `feedback` tool cannot deliver reports.
 
 ### License
 

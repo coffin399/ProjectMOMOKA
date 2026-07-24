@@ -41,6 +41,7 @@ from MOMOKA.llm.plugins import (
     ImageGenerator
 )
 from MOMOKA.llm.plugins.debate_tools import DebateTool, CrossCheckTool
+from MOMOKA.llm.plugins.feedback_tool import FeedbackTool
 from MOMOKA.llm.debate.channel_lock import channel_lock
 from MOMOKA.llm.concurrency import chat_limiter
 from MOMOKA.llm.utils.waiting_view import WaitingLayoutView
@@ -50,6 +51,10 @@ from MOMOKA.utilities.bot_permissions import (
     build_permission_update_hint,
     is_missing_required_permissions,
     resolve_bot_invite_url,
+)
+from MOMOKA.utilities.feedback import (
+    create_support_report_view,
+    support_footer_text,
 )
 
 try:
@@ -259,18 +264,16 @@ class LLMCog(commands.Cog, name="LLM"):
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
         current_footer = embed.footer.text if embed.footer and embed.footer.text else ""
-        support_text = "\n問題がありますか？GitHubで報告してください！ / Having issues? Report on GitHub!"
+        # フォーム + GitHub 誘導文言を付ける
+        support_text = "\n" + support_footer_text()
         if current_footer:
             embed.set_footer(text=current_footer + support_text)
         else:
-            embed.set_footer(text=support_text.strip())
+            embed.set_footer(text=support_footer_text())
 
     def _create_support_view(self) -> discord.ui.View:
-        # GitHubリポジトリへの誘導ボタンを作成
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="GitHub / 問題報告", style=discord.ButtonStyle.link,
-                                        url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
-        return view
+        # フィードバック Modal ボタン + GitHub リンクを返す
+        return create_support_report_view(self.bot)
 
     async def _safe_reply(
         self,
@@ -517,6 +520,7 @@ class LLMCog(commands.Cog, name="LLM"):
             self.tips_manager,
             self.debate_tool,
             self.cross_check_tool,
+            self.feedback_tool,
         ) = self._initialize_plugins()
         # persona / llm デフォルト model を初期化
         default_model_string = self._persona_default_model()
@@ -751,6 +755,7 @@ class LLMCog(commands.Cog, name="LLM"):
         Optional[TipsManager],
         Optional[DebateTool],
         Optional[CrossCheckTool],
+        Optional[FeedbackTool],
     ]:
         """プラグインの初期化と返却。"""
         plugins = {
@@ -760,6 +765,7 @@ class LLMCog(commands.Cog, name="LLM"):
             "TipsManager": None,
             "DebateTool": None,
             "CrossCheckTool": None,
+            "FeedbackTool": None,
         }
 
         # TipsManagerの初期化
@@ -784,6 +790,9 @@ class LLMCog(commands.Cog, name="LLM"):
             plugins["DebateTool"] = DebateTool(self.bot)
         if 'cross_check' in active_tools:
             plugins["CrossCheckTool"] = CrossCheckTool(self.bot)
+        # フィードバック（PLANA / ARONA 両方）
+        if 'feedback' in active_tools:
+            plugins["FeedbackTool"] = FeedbackTool(self.bot)
 
         # 初期化状態のログ出力
         for name, instance in plugins.items():
@@ -799,6 +808,7 @@ class LLMCog(commands.Cog, name="LLM"):
             plugins["TipsManager"],
             plugins["DebateTool"],
             plugins["CrossCheckTool"],
+            plugins["FeedbackTool"],
         )
 
     async def cog_unload(self):
@@ -1162,6 +1172,11 @@ class LLMCog(commands.Cog, name="LLM"):
             definitions.append(self.debate_tool.tool_spec)
         if 'cross_check' in active_tools and self.cross_check_tool:
             definitions.append(self.cross_check_tool.tool_spec)
+        if 'feedback' in active_tools:
+            if self.feedback_tool:
+                definitions.append(self.feedback_tool.tool_spec)
+            else:
+                logger.warning(f"⚠️ [TOOLS] 'feedback' is in active_tools but feedback_tool is None")
 
         logger.info(f"[{self._bot_tag()}] 🔧 [TOOLS] Total tools: {len(definitions)}")
 
@@ -2630,6 +2645,14 @@ class LLMCog(commands.Cog, name="LLM"):
                         user_id=user_id,
                     )
                     logger.info("[%s] cross_check completed", self._bot_tag())
+                elif self.feedback_tool and function_name == self.feedback_tool.name:
+                    # フィードバック UI（form / confirm）をチャンネルへ送る
+                    tool_response_content = await self.feedback_tool.run(
+                        arguments=function_args,
+                        channel_id=channel_id,
+                        user_id=user_id,
+                    )
+                    logger.info("[%s] feedback tool completed", self._bot_tag())
                 elif function_name == "image_generator" and self.bot_role == "companion":
                     # ARONA に画像ツールが誤って来た場合の PLANA 誘導
                     ch = self.bot.get_channel(channel_id)

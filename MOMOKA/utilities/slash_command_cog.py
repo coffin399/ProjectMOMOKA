@@ -16,6 +16,15 @@ from discord.ext import commands
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
 # /help /invite 用 Components V2 LayoutView
 from MOMOKA.utilities.help_view import HelpLayoutView, InviteLayoutView, resolve_invite_urls
+# フィードバック Modal / 複数チャンネル投稿
+from MOMOKA.utilities.feedback import (
+    CATEGORIES,
+    FeedbackModal,
+    FeedbackService,
+    category_label,
+    create_support_report_view,
+    support_footer_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +35,8 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         self.session = aiohttp.ClientSession()
         # 保存先を data/json/ に変更
         self.logging_channels_file = "data/logging_channels.json"
+        # フィードバック投稿サービスを初期化する
+        self.feedback_service = FeedbackService(bot)
 
         # slash_commands 配下とトップレベル両方から読む（後方互換）
         slash_cfg = self.bot.config.get("slash_commands") or {}
@@ -52,6 +63,11 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
             logger.error(
                 "CRITICAL: bots.plana.invite_url / bots.arona.invite_url が未設定です。"
                 "/invite コマンドは機能しません。"
+            )
+        # feedback.channel_ids 未設定を起動時に警告する
+        if not self.feedback_service.is_configured():
+            logger.warning(
+                "feedback.channel_ids が空です。/feedback と LLM feedback ツールは投稿できません。"
             )
 
     async def cog_unload(self) -> None:
@@ -95,21 +111,16 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         return prefix
 
     def _add_support_footer(self, embed: discord.Embed) -> None:
-        """embedにサポートサーバーへのフッターを追加"""
+        """embedにサポート誘導フッターを追加"""
         current_footer = embed.footer.text if embed.footer else ""
-        support_text = "\n問題がありますか？GitHubで報告してください！ / Having issues? Report on GitHub!"
-        embed.set_footer(text=current_footer + support_text if current_footer else support_text.strip())
+        # フォーム + GitHub 誘導文言を付ける
+        support_text = "\n" + support_footer_text()
+        embed.set_footer(text=current_footer + support_text if current_footer else support_footer_text())
 
     def _create_support_view(self) -> discord.ui.View:
-        """GitHubリポジトリへのリンクボタンを含むViewを作成"""
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(
-            label="GitHub / 問題報告",
-            style=discord.ButtonStyle.link,
-            url="https://github.com/coffin399/ProjectMOMOKA",
-            emoji="🐙"
-        ))
-        return view
+        """フィードバック Modal ボタンと GitHub リンクを含む View を作成"""
+        # 共有 SupportReportView を返す
+        return create_support_report_view(self.bot)
 
     def _get_single_recruit(self, guaranteed_star2: bool = False) -> int:
         if guaranteed_star2:
@@ -285,6 +296,60 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         await interaction.response.send_message(embed=embed, view=self._create_support_view(), ephemeral=False)
         logger.info(f"/avatar が実行されました。 (TargetUser: {target_user.id}, Requester: {interaction.user.id})")
 
+    @app_commands.command(
+        name="feedback",
+        description="不具合・要望を開発者サーバーへ送ります / Send a bug report or feature request",
+    )
+    @app_commands.describe(
+        category="報告の種類 / Report category",
+    )
+    @app_commands.choices(
+        category=[
+            app_commands.Choice(name="不具合報告 / Bug report", value="bug"),
+            app_commands.Choice(name="機能リクエスト / Feature request", value="feature_request"),
+            app_commands.Choice(name="その他 / Other", value="other"),
+        ]
+    )
+    async def feedback_slash(
+        self,
+        interaction: discord.Interaction,
+        category: app_commands.Choice[str],
+    ) -> None:
+        # 投稿先未設定なら Modal を開かず案内する
+        if not self.feedback_service.is_configured():
+            await interaction.response.send_message(
+                "❌ フィードバック送信先が未設定です。"
+                "管理者に `feedback.channel_ids` の設定を依頼してください。\n"
+                "❌ Feedback destination is not configured. "
+                "Ask an admin to set `feedback.channel_ids`.",
+                ephemeral=True,
+            )
+            return
+        # クールダウン中なら案内する
+        remaining = self.feedback_service.check_cooldown(interaction.user.id)
+        if remaining is not None:
+            await interaction.response.send_message(
+                f"⏳ 連続投稿は少し待ってください（残り約 {remaining} 秒）。\n"
+                f"⏳ Please wait before submitting again (~{remaining}s remaining).",
+                ephemeral=True,
+            )
+            return
+        # カテゴリ ID を確定する
+        category_id = category.value if category.value in CATEGORIES else "other"
+        # Modal を開く（Interaction 必須）
+        modal = FeedbackModal(
+            service=self.feedback_service,
+            category_id=category_id,
+            requester_id=interaction.user.id,
+        )
+        await interaction.response.send_modal(modal)
+        # 実行ログを残す
+        logger.info(
+            "/feedback opened modal category=%s user=%s",
+            category_id,
+            interaction.user.id,
+        )
+
     @app_commands.command(name="support",
                           description="開発者へのお問い合わせ方法を表示します / Shows how to contact the developer")
     async def support_contact_slash(self, interaction: discord.Interaction) -> None:
@@ -294,7 +359,10 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
 
         embed = discord.Embed(
             title="💬 サポート / Support",
-            description="Botに関するご質問・ご要望・不具合報告などは、GitHubリポジトリまたは以下の方法でお気軽にお問い合わせください。\n\nFor questions, requests, or bug reports about the bot, please visit our GitHub repository or contact us using the methods below.",
+            description=(
+                "Botに関するご質問・ご要望・不具合報告などは、ボット内フォーム・GitHub・以下の方法でお気軽にお問い合わせください。\n\n"
+                "For questions, requests, or bug reports, use the in-bot form, GitHub, or the contacts below."
+            ),
             color=discord.Color.blurple()
         )
 
@@ -302,6 +370,16 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
         bot_user = self.bot.user
         if bot_user and bot_user.avatar:
             embed.set_thumbnail(url=bot_user.avatar.url)
+
+        embed.add_field(
+            name="📋 ボット内フォーム / In-bot form",
+            value=(
+                f"`/feedback` — カテゴリを選んで Modal から送信（開発者サーバーへ配信）\n"
+                f"`/feedback` — pick a category and submit via Modal (delivered to developer servers)\n"
+                f"カテゴリ例: {category_label('bug')}, {category_label('feature_request')}, {category_label('other')}"
+            ),
+            inline=False,
+        )
 
         embed.add_field(
             name="🐙 GitHub リポジトリ / GitHub Repository",
