@@ -102,7 +102,10 @@ async def post_discordbotlist_commands(
     )
 
 
-def app_commands_to_payload(commands: Sequence[Any]) -> List[Dict[str, Any]]:
+def app_commands_to_payload(
+    commands: Sequence[Any],
+    tree: Any,
+) -> List[Dict[str, Any]]:
     """discord.app_commands 系オブジェクトを Discord API 形式へ変換する。"""
     # 変換結果
     payloads: List[Dict[str, Any]] = []
@@ -112,8 +115,8 @@ def app_commands_to_payload(commands: Sequence[Any]) -> List[Dict[str, Any]]:
         to_dict = getattr(cmd, "to_dict", None)
         if not callable(to_dict):
             continue
-        # Discord 送信と同じ辞書にする
-        data = to_dict()
+        # discord.py 2.x は Command.to_dict(tree) が必須
+        data = to_dict(tree)
         # dict だけ採用する
         if isinstance(data, dict):
             payloads.append(data)

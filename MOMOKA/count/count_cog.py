@@ -124,8 +124,8 @@ class CountCog(commands.Cog):
             return []
         # 登録済みトップレベルコマンドを取る
         commands_list = tree.get_commands()
-        # Discord API 形式へ変換する
-        return app_commands_to_payload(commands_list)
+        # Discord API 形式へ変換する（to_dict に tree が必要）
+        return app_commands_to_payload(commands_list, tree)
 
     async def _post_discordbotlist_commands(
         self,
