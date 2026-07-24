@@ -246,6 +246,8 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         webpage_url: Optional[str] = None,
         http_headers: Optional[dict] = None,
         player_clients: Optional[list] = None,
+        pipe_format: Optional[str] = None,
+        pipe_use_cookies: Optional[bool] = None,
         executable: str = "ffmpeg",
         before_options: Optional[str] = None,
         options: Optional[str] = None,
@@ -314,10 +316,12 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
 
         # YouTube: yt-dlp → FFmpeg(pipe:0)
         if use_ytdlp_pipe and webpage_url:
-            # yt-dlp CLI コマンドを組み立てる（リトライ時は代替 client を渡す）
+            # yt-dlp CLI コマンドを組み立てる（抽出成功時の format / client / cookie を引き継ぐ）
             ytdlp_cmd = build_ytdlp_pipe_command(
                 webpage_url,
                 player_clients=player_clients,
+                format_spec=pipe_format,
+                use_cookies=pipe_use_cookies,
             )
             # yt-dlp を起動し stdout をパイプする
             self._ytdlp_proc = subprocess.Popen(
@@ -477,12 +481,15 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
                     "invalid data found",
                     "nothing was encoded",
                     "truncated",
+                    # yt-dlp CLI 側の format 全滅も代替 client で再試行する
+                    "requested format is not available",
                 )
             ):
                 # ストリーム再試行フラグを立てる
                 self.stream_retryable_failure = True
 
-            logger.error(
+            # フォーマット欠落等の再試行対象なので ERROR ではなく WARN に落とす
+            logger.warning(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio!\n"
                 f"  read_count={self._read_count}, returncode={returncode}, "
                 f"process_alive={process_alive}, ytdlp_alive={ytdlp_alive}\n"

@@ -1000,6 +1000,10 @@ class MusicCog(commands.Cog, name="music_cog"):
                 # シーク指定位置から再生を開始するための開始オプションを構築する
                 ffmpeg_before_opts = f"-ss {seek_seconds} {ffmpeg_before_opts}"
 
+            # ensure_stream で実際に成功した player_client 列を最優先で使う
+            # （抽出は通るのにパイプ CLI だけ format 全滅する不整合を防ぐ）
+            resolved_clients = getattr(track_to_play, "pipe_player_clients", None) or pipe_clients
+
             # YouTube は yt-dlp パイプ再生（googlevideo 直読みは 403 になる）
             source = MusicAudioSource(
                 track_to_play.stream_url,
@@ -1007,7 +1011,9 @@ class MusicCog(commands.Cog, name="music_cog"):
                 guild_id=guild_id,
                 webpage_url=track_to_play.url,
                 http_headers=getattr(track_to_play, "http_headers", None),
-                player_clients=pipe_clients,
+                player_clients=resolved_clients,
+                pipe_format=getattr(track_to_play, "pipe_format", None),
+                pipe_use_cookies=getattr(track_to_play, "pipe_use_cookies", None),
                 executable=self.ffmpeg_path,
                 before_options=ffmpeg_before_opts,
                 options=self.ffmpeg_options,

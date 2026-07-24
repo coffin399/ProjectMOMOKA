@@ -44,6 +44,12 @@ class Track:
     uploader_url: Optional[str] = None
     # 音声の取得に必要なHTTPヘッダー情報（User-Agentなど、無い場合はNone）
     http_headers: Optional[dict] = None
+    # 抽出成功時の format 指定（パイプ再生 CLI へ引き継ぐ、無い場合はNone）
+    pipe_format: Optional[str] = None
+    # 抽出成功時の player_client 列（パイプ再生 CLI へ引き継ぐ、無い場合はNone）
+    pipe_player_clients: Optional[list] = None
+    # 抽出成功時にクッキーを使ったか（パイプ再生 CLI へ引き継ぐ、None は自動判定）
+    pipe_use_cookies: Optional[bool] = None
 
 
 # --- yt-dlp 設定 ---
@@ -446,19 +452,34 @@ def _raise_unsupported_media(url_or_query: str, cause: Optional[BaseException] =
     raise UnsupportedMediaError(message)
 
 
+# パイプ再生 CLI の既定 format チェーン（_FORMAT_TRIES を1本に結合した相当品）
+# SABR 等で bestaudio*/best* が全滅しても itag 18 (progressive) まで粘る
+_PIPE_FORMAT_DEFAULT = "bestaudio*/bestaudio/best[acodec!=none]/best/best*/18"
+
+
 def build_ytdlp_pipe_command(
     webpage_url: str,
     *,
     player_clients: Optional[list[str]] = None,
+    format_spec: Optional[str] = None,
+    use_cookies: Optional[bool] = None,
 ) -> list[str]:
     """
     FFmpeg へ標準出力パイプするための yt-dlp CLI コマンドを組み立てる。
     直接 googlevideo URL を FFmpeg に渡すと 403 になるため、yt-dlp 経由で取得する。
+    format_spec / player_clients / use_cookies には抽出 API 側で
+    実際に成功した組み合わせを渡すことで CLI 再抽出の失敗を防ぐ。
     """
     # 未指定なら一次クライアント列を使う（抽出 API と揃える）
     clients = player_clients or list(_YOUTUBE_PLAYER_CLIENT_PRIMARY)
     # CLI 向けにカンマ区切りへ変換する
     client_arg = ",".join(clients)
+    # format 指定が無ければ広いフォールバックチェーンを使う
+    fmt = format_spec or _PIPE_FORMAT_DEFAULT
+    # 指定 format の全滅に備え、既定チェーンを末尾に連結して保険を掛ける
+    if fmt != _PIPE_FORMAT_DEFAULT:
+        # 成功実績の format を優先しつつ既定チェーンへフォールバックさせる
+        fmt = f"{fmt}/{_PIPE_FORMAT_DEFAULT}"
     # PATH 上の JS ランタイム名をカンマ連結する（EJS 解決に必須）
     js_runtime_names = ",".join(_detect_js_runtimes().keys()) or "deno"
     # 現在の Python で yt_dlp モジュールを起動する
@@ -480,7 +501,7 @@ def build_ytdlp_pipe_command(
         "--retry-sleep",
         "http:1",
         "-f",
-        "bestaudio*/best*",
+        fmt,
         "-o",
         "-",
         # YouTube JS チャレンジ解決用ランタイムを明示する（未指定だとパイプ側で欠落しやすい）
@@ -491,11 +512,13 @@ def build_ytdlp_pipe_command(
         "--extractor-args",
         f"youtube:player_client={client_arg}",
     ]
-    # 有効なクッキーがあれば付与する
-    cookie_path = resolve_youtube_cookie_path()
-    if cookie_path is not None:
-        # --cookies に絶対パスを渡す
-        cmd.extend(["--cookies", str(cookie_path.resolve())])
+    # クッキー無しで成功した実績がある場合（use_cookies=False）は付与しない
+    if use_cookies is not False:
+        # 有効なクッキーがあれば付与する
+        cookie_path = resolve_youtube_cookie_path()
+        if cookie_path is not None:
+            # --cookies に絶対パスを渡す
+            cmd.extend(["--cookies", str(cookie_path.resolve())])
     # 対象の動画ページ URL を末尾に追加する
     cmd.append(webpage_url)
     # 完成したコマンドリストを返す
@@ -872,7 +895,7 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
     # yt-dlp をスレッド上で同期実行してストリーム情報とヘッダーを取得するローカル関数を定義する
     def _run_extract_single_info():
         # format / player_client / cookie フォールバック付きでメタデータを抽出する
-        info, _used_opts, _cookiejar = _extract_with_fallbacks(
+        info, used_opts, _cookiejar = _extract_with_fallbacks(
             opts_for_ensure, track.url, download=False, resolve_stream=True
         )
 
@@ -893,13 +916,22 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
 
         # 抽出したメタデータから一時的なTrackオブジェクトを構築する
         temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
-        # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報をタプルで返す
+        # 実際に成功した format 指定を取り出す（パイプ再生 CLI へ引き継ぐ）
+        used_format = used_opts.get("format")
+        # 実際に成功した player_client 列を extractor_args から取り出す
+        used_clients = ((used_opts.get("extractor_args") or {}).get("youtube") or {}).get("player_client")
+        # クッキーを使った抽出だったかどうかを判定する
+        used_cookies = ("cookiefile" in used_opts) or ("cookiesfrombrowser" in used_opts)
+        # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報、パイプ用ヒントをタプルで返す
         return (
             temp_track.stream_url,
             temp_track.http_headers,
             temp_track.thumbnail,
             temp_track.uploader,
             temp_track.uploader_url,
+            used_format,
+            used_clients,
+            used_cookies,
         )
 
     try:
@@ -910,6 +942,9 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
             new_thumbnail,
             new_uploader,
             new_uploader_url,
+            new_pipe_format,
+            new_pipe_clients,
+            new_pipe_use_cookies,
         ) = await loop.run_in_executor(None, _run_extract_single_info)
         # 取得した新しいストリームURLが有効か判定する
         if new_stream_url:
@@ -923,6 +958,12 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
             track.uploader = new_uploader
             # チャンネルURLも更新する
             track.uploader_url = new_uploader_url
+            # 成功した format 指定をパイプ再生用ヒントとして記録する
+            track.pipe_format = new_pipe_format
+            # 成功した player_client 列をヒントとして記録する（list へ複製）
+            track.pipe_player_clients = list(new_pipe_clients) if new_pipe_clients else None
+            # クッキー使用有無をヒントとして記録する
+            track.pipe_use_cookies = new_pipe_use_cookies
         else:
             # 取得失敗時は警告メッセージをコンソールに出力する
             print(f"[ytdlp_wrapper Warning] ストリームURLの再取得に失敗: {track.title} (URL: {track.url})")
