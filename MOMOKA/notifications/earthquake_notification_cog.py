@@ -171,48 +171,121 @@ class EarthquakeTsunamiCog(commands.Cog, name="EarthquakeNotifications"):
 
     async def websocket_listener(self):
         """WebSocketで地震情報をリアルタイム受信"""
+        # 再接続待機秒数を初期値から始める
         reconnect_delay = self.ws_reconnect_delay
 
+        # 停止フラグが立つまで再接続ループを回す
         while self.ws_running:
             try:
+                # 接続開始を INFO ログへ残す
                 logger.info(f"🔌 WebSocket接続開始: {self.ws_url}")
 
+                # セッション未作成／クローズ済みなら作り直す
                 if not self.ws_session or self.ws_session.closed:
+                    # 新しい ClientSession を作る
                     self.ws_session = aiohttp.ClientSession(headers=self.request_headers)
 
+                # WebSocket 接続を確立する
                 async with self.ws_session.ws_connect(self.ws_url) as ws:
+                    # 接続オブジェクトを状態へ保持する
                     self.ws_connection = ws
+                    # 接続成功をログする
                     logger.info("✅ WebSocket接続成功")
+                    # 成功したらバックオフを初期値へ戻す
                     reconnect_delay = self.ws_reconnect_delay
 
+                    # サーバーからのメッセージを順に処理する
                     async for msg in ws:
+                        # テキストフレームなら JSON として処理する
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
+                                # JSON を辞書へ変換する
                                 data = json.loads(msg.data)
+                                # 受信内容をデバッグログへ残す
                                 logger.debug(
                                     f"WebSocket受信: code={data.get('code')}, id={data.get('_id') or data.get('id')}")
+                                # 地震／津波メッセージを処理する
                                 await self.process_websocket_message(data)
                             except json.JSONDecodeError as e:
+                                # JSON 破損を ERROR で残す
                                 logger.error(f"WebSocketメッセージのJSON解析エラー: {e}")
+                                # パースエラー統計を加算する
                                 self.error_stats['parsing_errors'] += 1
                             except Exception as e:
+                                # 個別メッセージ処理失敗をハンドラへ渡す
                                 self.exception_handler.log_generic_error(e, "WebSocketメッセージ処理")
 
+                        # プロトコルエラーならループを抜ける
                         elif msg.type == aiohttp.WSMsgType.ERROR:
+                            # 例外内容を ERROR で残す
                             logger.error(f"WebSocketエラー: {ws.exception()}")
+                            # 受信ループを終了して再接続へ進む
                             break
 
-            except aiohttp.ClientError as e:
-                logger.error(f"WebSocket接続エラー: {e}")
+                        # サーバー／ローカルのクローズは想定内として抜ける
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE):
+                            # クローズを INFO で残す
+                            logger.info("WebSocketがクローズされました。再接続します。")
+                            # 受信ループを終了する
+                            break
+
+            except (aiohttp.ClientConnectionError, ConnectionResetError, BrokenPipeError) as e:
+                # 切断中書き込みは想定内なので WARNING に落とす
+                err_text = str(e).lower()
+                # closing transport 系は再接続で回復する
+                if "closing transport" in err_text or "cannot write" in err_text:
+                    # ノイズを抑えるため WARNING にする
+                    logger.warning(f"WebSocket切断中の書き込みを無視: {e}")
+                else:
+                    # その他の接続エラーは ERROR で残す
+                    logger.error(f"WebSocket接続エラー: {e}")
+                # ネットワーク／切断統計を加算する
                 self.error_stats['network_errors'] += 1
                 self.error_stats['ws_disconnects'] += 1
+                # 壊れたセッションは次回作り直すためクローズする
+                await self._reset_ws_session()
+            except aiohttp.ClientError as e:
+                # その他の aiohttp クライアントエラーを ERROR で残す
+                logger.error(f"WebSocket接続エラー: {e}")
+                # 統計を加算する
+                self.error_stats['network_errors'] += 1
+                self.error_stats['ws_disconnects'] += 1
+                # セッションをリセットする
+                await self._reset_ws_session()
             except Exception as e:
+                # 想定外例外をハンドラへ渡す
                 self.exception_handler.log_generic_error(e, "WebSocket接続")
+                # セッションをリセットする
+                await self._reset_ws_session()
+            finally:
+                # 接続参照を必ずクリアする
+                self.ws_connection = None
 
+            # 停止要求が無ければバックオフして再接続する
             if self.ws_running:
+                # 再接続待ちを WARNING で残す
                 logger.warning(f"⚠️ WebSocket切断。{reconnect_delay}秒後に再接続...")
+                # 指定秒数待機する
                 await asyncio.sleep(reconnect_delay)
+                # 指数バックオフで上限まで延ばす
                 reconnect_delay = min(reconnect_delay * 2, self.ws_max_reconnect_delay)
+
+    async def _reset_ws_session(self) -> None:
+        """壊れた WebSocket 用 ClientSession を安全に破棄する。"""
+        # 現在のセッション参照を取る
+        session = self.ws_session
+        # 参照を先にクリアする
+        self.ws_session = None
+        # 接続参照もクリアする
+        self.ws_connection = None
+        # セッションが残っていればクローズを試みる
+        if session is not None and not session.closed:
+            try:
+                # セッションをクローズする
+                await session.close()
+            except Exception as e:
+                # クローズ失敗は WARNING に留める
+                logger.warning(f"WebSocketセッションクローズ失敗: {e}")
 
     async def process_websocket_message(self, data: Dict[str, Any]):
         """WebSocketから受信したメッセージを処理"""

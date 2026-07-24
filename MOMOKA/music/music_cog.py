@@ -660,16 +660,19 @@ class MusicCog(commands.Cog, name="music_cog"):
         try:
             # 終了したトラック情報を保存
             finished_track = state.current_track
-            # NO audio + HTTP 403 なら同一曲を 1 回だけ代替 client でリトライする
-            should_retry_403 = (
+            # NO audio + 403/途中切断などなら同一曲を 1 回だけ代替 client でリトライする
+            should_retry_stream = (
                 finished_source is not None
-                and getattr(finished_source, "http_forbidden_failure", False)
                 and getattr(finished_source, "no_audio_failure", False)
+                and (
+                    getattr(finished_source, "http_forbidden_failure", False)
+                    or getattr(finished_source, "stream_retryable_failure", False)
+                )
                 and finished_track is not None
                 and state.stream_403_retries < 1
             )
-            # 403 リトライ経路
-            if should_retry_403:
+            # ストリーム失敗リトライ経路
+            if should_retry_stream:
                 # リトライ回数を加算する
                 state.stream_403_retries += 1
                 # 再生中フラグを下ろして再起動可能にする
@@ -678,11 +681,13 @@ class MusicCog(commands.Cog, name="music_cog"):
                 state.reset_playback_tracking()
                 # リトライ開始をログする
                 logger.warning(
-                    "Guild %s: Retrying '%s' once after HTTP 403 / NO audio "
-                    "(attempt %s, fallback player_client)",
+                    "Guild %s: Retrying '%s' once after stream failure / NO audio "
+                    "(attempt %s, fallback player_client, forbidden=%s retryable=%s)",
                     guild_id,
                     finished_track.title,
                     state.stream_403_retries,
+                    getattr(finished_source, "http_forbidden_failure", False),
+                    getattr(finished_source, "stream_retryable_failure", False),
                 )
                 # 同一曲をフォールバック client で再再生する
                 await self._play_next_song(
@@ -698,7 +703,7 @@ class MusicCog(commands.Cog, name="music_cog"):
             # 再生中フラグを下ろす
             state.is_playing = False
 
-            # 403 でリトライ済みかつ NO audio ならユーザーへ短文通知する
+            # リトライ済みかつ NO audio ならユーザーへ短文通知する
             if (
                 finished_source is not None
                 and getattr(finished_source, "no_audio_failure", False)
@@ -1847,6 +1852,16 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.last_now_playing_message = target_message
             # 古いメッセージの Embed をクリアしつつ、新しい V2レイアウトでメッセージを上書き編集する
             await target_message.edit(embed=None, view=view)
+        except discord.NotFound:
+            # ユーザー削除などでメッセージが消えている場合は参照を捨てて更新ループを止める
+            state.last_now_playing_message = None
+            # プログレス更新も止めて 404 連打を防ぐ
+            state.stop_progress_updater()
+            # 想定内のため WARNING に留める
+            logger.warning(
+                f"Guild {guild_id}: Now Playing message missing (deleted); "
+                "cleared reference to stop update errors."
+            )
         except discord.HTTPException as e:
             # Invalid Webhook Token（50027）は期限切れInteraction応答の典型なので復旧を試みる
             if e.code == 50027:
@@ -1862,6 +1877,16 @@ class MusicCog(commands.Cog, name="music_cog"):
                         f"Guild {guild_id}: Now Playing webhook token expired; "
                         "cleared message reference to stop update errors."
                     )
+            elif e.code == 10008:
+                # Unknown Message: NotFound 以外の経路でも参照を破棄する
+                state.last_now_playing_message = None
+                # プログレス更新を止める
+                state.stop_progress_updater()
+                # 連打防止の警告を残す
+                logger.warning(
+                    f"Guild {guild_id}: Now Playing message unknown (10008); "
+                    "cleared reference to stop update errors."
+                )
             else:
                 # それ以外のHTTPエラーは通常どおり記録する
                 logger.error(f"Failed to update now playing message UI: {e}")

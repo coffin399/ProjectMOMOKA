@@ -272,6 +272,73 @@ class LLMCog(commands.Cog, name="LLM"):
                                         url="https://github.com/coffin399/ProjectMOMOKA", emoji="🐙"))
         return view
 
+    async def _safe_reply(
+        self,
+        message: discord.Message,
+        *,
+        content: Optional[str] = None,
+        view: Optional[discord.ui.View] = None,
+        silent: bool = True,
+    ) -> Optional[discord.Message]:
+        """権限不足でも例外を外へ漏らさない返信ヘルパー。"""
+        # 送信先チャンネルを取得する
+        channel = message.channel
+        # ギルド内テキスト／スレッドなら事前に Send Messages を確認する
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            # Bot メンバー情報を取る
+            me = channel.guild.me if channel.guild else None
+            # 権限オブジェクトが取れる場合のみチェックする
+            if me is not None:
+                # チャンネル権限を評価する
+                perms = channel.permissions_for(me)
+                # 送信不可なら早期リターンする
+                if not perms.send_messages:
+                    # 想定内のため WARNING に留める
+                    logger.warning(
+                        "[%s] Skip reply: missing Send Messages in channel %s",
+                        self._bot_tag(),
+                        channel.id,
+                    )
+                    # 送信失敗として None を返す
+                    return None
+        # reply / send 共通のキーワード引数を組み立てる
+        send_kwargs: Dict[str, Any] = {"silent": silent}
+        # content 指定があれば入れる
+        if content is not None:
+            # 本文をセットする
+            send_kwargs["content"] = content
+        # view 指定があれば入れる
+        if view is not None:
+            # View をセットする
+            send_kwargs["view"] = view
+        try:
+            # まずリプライで送る
+            return await message.reply(**send_kwargs)
+        except discord.Forbidden:
+            # 権限不足は ERROR 連打にせず警告のみ
+            logger.warning(
+                "[%s] Forbidden when replying in channel %s",
+                self._bot_tag(),
+                getattr(channel, "id", "?"),
+            )
+            # 送信失敗
+            return None
+        except discord.HTTPException:
+            # リプライ不可時は通常送信へフォールバックする
+            try:
+                # チャンネルへ直接送る
+                return await channel.send(**send_kwargs)
+            except (discord.Forbidden, discord.HTTPException) as send_err:
+                # どちらも失敗したら警告のみで終了する
+                logger.warning(
+                    "[%s] Cannot send LLM message in channel %s: %s",
+                    self._bot_tag(),
+                    getattr(channel, "id", "?"),
+                    send_err,
+                )
+                # 送信失敗
+                return None
+
     def _create_waiting_view(self, model_name: str) -> WaitingLayoutView:
         """応答待機中の Components V2（Tips + 控えめ Ko-fi）。"""
         # tip 再利用用（モデル切替時に同じ tip を維持する）
@@ -1410,14 +1477,21 @@ class LLMCog(commands.Cog, name="LLM"):
                 default_error_msg = 'LLM client is not available for this channel.\nこのチャンネルではLLMクライアントが利用できません。'
                 error_msg = self.llm_config.get('error_msg', {}).get('general_error', default_error_msg)
 
-                await message.reply(
-                    content=f"❌ **Error / エラー** ❌\n\n{error_msg}",  # 修正点：変数を使ってf-stringを構成する
-                    view=self._create_support_view(), silent=True)
+                await self._safe_reply(
+                    message,
+                    content=f"❌ **Error / エラー** ❌\n\n{error_msg}",
+                    view=self._create_support_view(),
+                    silent=True,
+                )
                 return
         except Exception as e:
             logger.error(f"Failed to get LLM client for channel {message.channel.id}: {e}", exc_info=True)
-            await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
-                                view=self._create_support_view(), silent=True)
+            await self._safe_reply(
+                message,
+                content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
+                view=self._create_support_view(),
+                silent=True,
+            )
             return
         guild_log = f"guild='{message.guild.name}({message.guild.id})'" if message.guild else "guild='DM'"
         user_log = f"user='{message.author.name}({message.author.id})'"
@@ -1426,9 +1500,17 @@ class LLMCog(commands.Cog, name="LLM"):
         text_content = text_content.replace(f'<@!{self.bot.user.id}>', '').replace(f'<@{self.bot.user.id}>', '').strip()
         if not text_content and not image_contents:
             error_key = 'empty_reply' if is_reply_to_bot and not is_mentioned else 'empty_mention_reply'
-            await message.reply(content=self.llm_config.get('error_msg', {}).get(error_key,
-                                                                                 "Please say something.\n何かお話しください。" if error_key == 'empty_reply' else "Yes, how can I help you?\nはい、何か御用でしょうか?"),
-                                view=self._create_support_view(), silent=True)
+            await self._safe_reply(
+                message,
+                content=self.llm_config.get('error_msg', {}).get(
+                    error_key,
+                    "Please say something.\n何かお話しください。"
+                    if error_key == 'empty_reply'
+                    else "Yes, how can I help you?\nはい、何か御用でしょうか?",
+                ),
+                view=self._create_support_view(),
+                silent=True,
+            )
             return
         logger.info(
             f"📨 Received LLM request | {guild_log} | {user_log} | model='{model_in_use}' | text_length={len(text_content)} chars | images={len(image_contents)}")
@@ -1488,7 +1570,8 @@ class LLMCog(commands.Cog, name="LLM"):
                     "⚠️ 現在混雑しています。しばらくしてからもう一度お試しください。\n"
                     "⚠️ The bot is busy right now. Please try again shortly.",
                 )
-                await message.reply(
+                await self._safe_reply(
+                    message,
                     content=busy,
                     view=self._create_support_view(),
                     silent=True,
@@ -1531,8 +1614,13 @@ class LLMCog(commands.Cog, name="LLM"):
 
 
         except Exception as e:
-            await message.reply(content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
-                                view=self._create_support_view(), silent=True)
+            # 権限不足などでエラー報告すら送れない場合は握りつぶす
+            await self._safe_reply(
+                message,
+                content=f"❌ **Error / エラー** ❌\n\n{self.exception_handler.handle_exception(e)}",
+                view=self._create_support_view(),
+                silent=True,
+            )
         finally:
             # 並列枠を必ず解放する
             if slot_held and chat_limiter is not None:
@@ -1559,10 +1647,22 @@ class LLMCog(commands.Cog, name="LLM"):
             model_name = client.model_name_for_api_calls
             # 待機は Components V2（Tips + 控えめ寄付ボタン）
             waiting_view = self._create_waiting_view(model_name)
-            try:
-                sent_message = await message.reply(view=waiting_view, silent=True)
-            except discord.HTTPException:
-                sent_message = await message.channel.send(view=waiting_view, silent=True)
+            # 権限不足でも例外を外へ出さない送信ヘルパーで待機メッセージを出す
+            sent_message = await self._safe_reply(
+                message,
+                view=waiting_view,
+                silent=True,
+            )
+            # 送信できなければ LLM 処理自体を中止する（エラー返信の連鎖を防ぐ）
+            if sent_message is None:
+                # 権限不足等を WARNING で残す
+                logger.warning(
+                    "[%s] Abort LLM streaming: cannot send waiting message in channel %s",
+                    self._bot_tag(),
+                    message.channel.id,
+                )
+                # 空結果を返す
+                return None, "", None
             # ストリーミング開始前に計測タイマーをスタート
             stream_start_time = time.time()
             result = await self._process_streaming_and_send_response(
@@ -1595,10 +1695,27 @@ class LLMCog(commands.Cog, name="LLM"):
                         error_msg,
                         view=self._create_support_view(),
                     )
-                except discord.HTTPException:
+                except (discord.Forbidden, discord.HTTPException):
+                    # 権限不足時は追加送信しない
                     pass
             elif not sent_message:
-                await message.reply(content=error_msg, view=self._create_support_view(), silent=True)
+                # 安全ヘルパーでエラー報告を試みる
+                await self._safe_reply(
+                    message,
+                    content=error_msg,
+                    view=self._create_support_view(),
+                    silent=True,
+                )
+            return None, "", None
+        except discord.Forbidden as e:
+            # Missing Permissions は想定内。スタックトレースを出さない
+            logger.warning(
+                "[%s] Missing permissions during LLM streaming in channel %s: %s",
+                self._bot_tag(),
+                message.channel.id,
+                e,
+            )
+            # 追加のエラー返信は行わない（連鎖 Forbidden を防ぐ）
             return None, "", None
         except Exception as e:
             logger.error(f"❌ Error during LLM streaming response: {e}", exc_info=True)
@@ -1611,10 +1728,17 @@ class LLMCog(commands.Cog, name="LLM"):
                         error_msg,
                         view=self._create_support_view(),
                     )
-                except discord.HTTPException:
+                except (discord.Forbidden, discord.HTTPException):
+                    # 権限不足時は追加送信しない
                     pass
             elif not sent_message:
-                await message.reply(content=error_msg, view=self._create_support_view(), silent=True)
+                # 安全ヘルパーでエラー報告を試みる
+                await self._safe_reply(
+                    message,
+                    content=error_msg,
+                    view=self._create_support_view(),
+                    silent=True,
+                )
             return None, "", None
 
     async def _replace_waiting_with_content(

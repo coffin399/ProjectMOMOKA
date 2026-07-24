@@ -269,6 +269,8 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
         self.no_audio_failure: bool = False
         # yt-dlp / FFmpeg 側が HTTP 403 だったか
         self.http_forbidden_failure: bool = False
+        # 403 以外でも代替 client 再試行すべきストリーム失敗か（途中切断等）
+        self.stream_retryable_failure: bool = False
         # パイプ再生時に使う player_client 列（未指定なら一次セット）
         self._player_clients = player_clients
 
@@ -457,12 +459,28 @@ class MusicAudioSource(discord.FFmpegPCMAudio):
 
             # NO audio 失敗フラグを立てる（コールバック側でリトライ判定に使う）
             self.no_audio_failure = True
-            # stderr 結合テキストで 403 を検出する
+            # stderr 結合テキストで失敗種別を判定する
             combined_err = f"{stderr_output}\n{ytdlp_err}".lower()
-            # Forbidden / HTTP 403 ならリトライ候補とする
+            # Forbidden / HTTP 403 なら明示フラグを立てる
             if "403" in combined_err or "forbidden" in combined_err:
                 # HTTP 403 失敗フラグを立てる
                 self.http_forbidden_failure = True
+                # 代替 client リトライ候補にも含める
+                self.stream_retryable_failure = True
+            # 途中切断・不完全ヘッダ・再試行尽きもリトライ候補とする
+            elif any(
+                marker in combined_err
+                for marker in (
+                    "0 bytes read",
+                    "partial file",
+                    "giving up after",
+                    "invalid data found",
+                    "nothing was encoded",
+                    "truncated",
+                )
+            ):
+                # ストリーム再試行フラグを立てる
+                self.stream_retryable_failure = True
 
             logger.error(
                 f"Guild {self.guild_id}: FFmpeg for '{self.title}' produced NO audio!\n"

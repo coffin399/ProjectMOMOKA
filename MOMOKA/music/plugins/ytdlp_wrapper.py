@@ -143,15 +143,30 @@ _FORMAT_TRIES: tuple[str, ...] = (
     "best[acodec!=none]/best*",
     "best*",
 )
-# PO Token 無しでも使える可能性が高い一次クライアント（tv/mweb は除外）
-_YOUTUBE_PLAYER_CLIENT_PRIMARY: list[str] = ["android_vr", "web_embedded", "ios"]
-# 403 リトライ・フォールバック用（tv 本体 / mweb は載せない）
-_YOUTUBE_PLAYER_CLIENT_FALLBACK: list[str] = ["web_creator", "android", "tv_downgraded"]
+# 一次クライアント: yt-dlp 既定から PO Token / 403 系を除外する
+# - android_sdkless: ダウンロード時 403 になりやすい
+# - ios: https 形式が GVS PO Token 必須（未設定時はスキップ警告＋403）
+# - mweb: GVS PO Token 必須
+_YOUTUBE_PLAYER_CLIENT_PRIMARY: list[str] = [
+    "default",
+    "-android_sdkless",
+    "-ios",
+    "-mweb",
+]
+# 403 / NO audio リトライ用の代替クライアント列
+# （tv 本体 / mweb / ios は PO Token または DRM 実験のため載せない）
+_YOUTUBE_PLAYER_CLIENT_FALLBACK: list[str] = [
+    "web_embedded",
+    "android_vr",
+    "tv_downgraded",
+    "web_creator",
+]
 # player_client 候補（None は yt-dlp デフォルトに任せる）
-# tv は DRM 実験、mweb は GVS PO Token 必須のため一次・フォールバックから除外
 _YOUTUBE_PLAYER_CLIENT_TRIES: tuple[Optional[list[str]], ...] = (
     _YOUTUBE_PLAYER_CLIENT_PRIMARY,
     _YOUTUBE_PLAYER_CLIENT_FALLBACK,
+    # ios は使わず、PO Token 不要寄りの web 系へ寄せる
+    ["web", "web_embedded", "android_vr"],
     None,
 )
 # 外部モジュール向けの公開エイリアス
@@ -365,6 +380,8 @@ def build_ytdlp_pipe_command(
     clients = player_clients or list(_YOUTUBE_PLAYER_CLIENT_PRIMARY)
     # CLI 向けにカンマ区切りへ変換する
     client_arg = ",".join(clients)
+    # PATH 上の JS ランタイム名をカンマ連結する（EJS 解決に必須）
+    js_runtime_names = ",".join(_detect_js_runtimes().keys()) or "deno"
     # 現在の Python で yt_dlp モジュールを起動する
     cmd: list[str] = [
         sys.executable,
@@ -374,10 +391,22 @@ def build_ytdlp_pipe_command(
         "--no-warnings",
         "--no-playlist",
         "--no-part",
+        # 一時的な HTTP エラーや断片欠落に備えて再試行する
+        "--retries",
+        "5",
+        # HLS / DASH 断片も同様に再試行する
+        "--fragment-retries",
+        "5",
+        # 403 直後の即再試行を少し間隔を空けて緩和する
+        "--retry-sleep",
+        "http:1",
         "-f",
         "bestaudio*/best*",
         "-o",
         "-",
+        # YouTube JS チャレンジ解決用ランタイムを明示する（未指定だとパイプ側で欠落しやすい）
+        "--js-runtimes",
+        js_runtime_names,
         "--remote-components",
         "ejs:github",
         "--extractor-args",
@@ -595,7 +624,7 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # YouTube: PO Token 不要寄りのクライアントを優先（tv/mweb は除外）
+    # YouTube: PO Token 不要寄りのクライアントを優先（android_sdkless は 403 多発のため除外）
     "extractor_args": {
         "youtube": {
             "player_client": list(_YOUTUBE_PLAYER_CLIENT_PRIMARY),
