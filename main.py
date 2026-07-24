@@ -631,7 +631,7 @@ if __name__ == "__main__":
     # ===============================================================
     @plana_bot.tree.command(
         name="shutdown",
-        description="Shut down both bots after notifying active users (owner only).",
+        description="Shut down both bots after notifying users (owner only). / 通知後に両Botを停止（オーナー専用）",
     )
     async def shutdown_command(interaction: discord.Interaction):
         # ハードコード UID 以外は拒否する
@@ -657,7 +657,7 @@ if __name__ == "__main__":
         # レジストリの全ボットをクローズする（再起動通知を含む）
         await registry.close_all()
 
-    @plana_bot.tree.command(name="reload_plana", description="🔄 PLANAのCogをリロードします（管理者専用）")
+    @plana_bot.tree.command(name="reload_plana", description="🔄 Reload PLANA cogs (admin only). / PLANAのCogをリロードします（管理者専用）")
     async def reload_plana_cog(interaction: discord.Interaction, cog_name: str = None):
         # 管理者でなければ拒否する
         if not plana_bot.is_admin(interaction.user.id):
@@ -722,7 +722,7 @@ if __name__ == "__main__":
                 f"全Cogリロードがユーザー {interaction.user} によって実行されました。成功: {len(reloaded)}, 失敗: {len(failed)}"
             )
 
-    @plana_bot.tree.command(name="list_plana_cogs", description="📋 PLANAのロード済みCog一覧を表示します")
+    @plana_bot.tree.command(name="list_plana_cogs", description="📋 List loaded PLANA cogs. / PLANAのロード済みCog一覧を表示します")
     async def list_plana_cogs(interaction: discord.Interaction):
         # ロード済み拡張機能のリストを取得する
         loaded_extensions = list(plana_bot.extensions.keys())

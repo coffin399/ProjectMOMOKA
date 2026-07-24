@@ -496,10 +496,10 @@ class MatchTimeCog(commands.Cog, name="時間調整"):
 
     @app_commands.command(
         name="match_time",
-        description="時間調整を開始します。参加者が希望時間帯を入力し、ベストマッチを自動算出します。"
+        description="Start time matching; find the best overlap from preferences. / 時間調整を開始し、ベストマッチを自動算出します。"
     )
     @app_commands.describe(
-        title="募集タイトル名（例: スクリム練習、ランク周回 など）"
+        title="Session title (e.g. scrim, rank grind). / 募集タイトル名（例: スクリム練習、ランク周回）"
     )
     async def match_time(self, interaction: discord.Interaction, title: str):
         """

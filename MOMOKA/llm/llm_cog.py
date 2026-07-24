@@ -2746,9 +2746,9 @@ class LLMCog(commands.Cog, name="LLM"):
             self.model_reset_tasks.pop(channel_id, None)
 
     @app_commands.command(name="chat",
-                          description="Chat with the AI without needing to mention.\nAIと対話します。メンション不要で会話できます。")
-    @app_commands.describe(message="The message you want to send to the AI.\nAIに送信したいメッセージ",
-                           image_url="URL of an image (optional).\n画像のURL（オプション）")
+                          description="Chat with the AI without needing to mention. / AIと対話します。メンション不要で会話できます。")
+    @app_commands.describe(message="The message you want to send to the AI. / AIに送信したいメッセージ",
+                           image_url="URL of an image (optional). / 画像のURL（オプション）")
     async def chat_slash(self, interaction: discord.Interaction, message: str, image_url: str = None):
         await interaction.response.defer(ephemeral=False)
         temp_message = None
@@ -2884,8 +2884,8 @@ class LLMCog(commands.Cog, name="LLM"):
                 current.lower() in model.lower()][:25]
 
     @app_commands.command(name="switch-models",
-                          description="Switches the AI model used for this channel.\nこのチャンネルで使用するAIモデルを切り替えます。")
-    @app_commands.describe(model="Select the model you want to use.\n使用したいモデルを選択してください。")
+                          description="Switches the AI model used for this channel. / このチャンネルで使用するAIモデルを切り替えます。")
+    @app_commands.describe(model="Select the model you want to use. / 使用したいモデルを選択してください。")
     @app_commands.autocomplete(model=model_autocomplete)
     async def switch_model_slash(self, interaction: discord.Interaction, model: str):
         await interaction.response.defer(ephemeral=False)
@@ -2941,7 +2941,7 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=self._create_support_view())
 
     @app_commands.command(name="switch-models-default-server",
-                          description="Resets the AI model for this channel to the server default.\nこのチャンネルのAIモデルをサーバーのデフォルト設定に戻します。")
+                          description="Resets the AI model for this channel to the server default. / このチャンネルのAIモデルをサーバーのデフォルト設定に戻します。")
     async def reset_model_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         channel_id = interaction.channel_id
@@ -3174,7 +3174,7 @@ class LLMCog(commands.Cog, name="LLM"):
             await interaction.followup.send(embed=embed, view=view, ephemeral=False)
 
     @app_commands.command(name="clear_history",
-                          description="Clears the history of the current conversation thread.\n現在の会話スレッドの履歴をクリアします。")
+                          description="Clears the history of the current conversation thread. / 現在の会話スレッドの履歴をクリアします。")
     async def clear_history_slash(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         guild_id = interaction.guild.id if interaction.guild else 0  # DMの場合は0

@@ -252,7 +252,7 @@ class LinkFixCog(commands.Cog):
 
     @app_commands.command(
         name="linkfix",
-        description="Configure Link Fix (social embed replacement)",
+        description="Configure Link Fix (social embed replacement). / Link Fix（SNS埋め込み置換）を設定します",
     )
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()

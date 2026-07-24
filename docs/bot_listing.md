@@ -2,6 +2,10 @@
 
 Copy-paste ready text for bot listing sites. **English first, Japanese second.**
 
+Slash command descriptions in cogs follow the same **English / Japanese** order
+(except earthquake_* commands, which remain Japanese-only). DiscordBotList and similar
+sites pick these up from the Discord API after command sync.
+
 Listing target: **PLANA** (hosted).
 
 | Site | File |

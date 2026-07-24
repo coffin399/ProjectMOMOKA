@@ -461,11 +461,11 @@ class YtdlpGdriveCog(commands.Cog):
 
     @app_commands.command(
         name="download_audio",
-        description="音声をダウンロードし、Google Drive経由で共有します。/ Downloads audio and shares it via Google Drive.",
+        description="Downloads audio and shares it via Google Drive. / 音声をダウンロードし、Google Drive経由で共有します。",
     )
     @app_commands.describe(
-        query="YouTubeのURLまたは検索キーワード / YouTube URL or search query",
-        audio_format="出力する音声フォーマット / Output audio format",
+        query="YouTube URL or search query. / YouTubeのURLまたは検索キーワード",
+        audio_format="Output audio format. / 出力する音声フォーマット",
     )
     @app_commands.choices(
         audio_format=[
@@ -581,9 +581,9 @@ class YtdlpGdriveCog(commands.Cog):
 
     @app_commands.command(
         name="download_video",
-        description="動画をダウンロードし、Google Drive経由で共有します。/ Downloads a video and shares it via Google Drive.",
+        description="Downloads a video and shares it via Google Drive. / 動画をダウンロードし、Google Drive経由で共有します。",
     )
-    @app_commands.describe(query="ダウンロードしたい動画のURLまたは検索キーワード / URL or search query of the video")
+    @app_commands.describe(query="URL or search query of the video. / ダウンロードしたい動画のURLまたは検索キーワード")
     async def download_video(self, interaction: discord.Interaction, query: str):
         # GDrive 未初期化なら即エラー
         if not self.gdrive_uploader.service:
