@@ -190,7 +190,7 @@ Settings live under `configs/` as category YAML files. See each `*_config.defaul
 | `tracker_config.yaml` | Game stats (PLANA) |
 | `debate_config.yaml` | debate / cross_check |
 | `link_fix_config.yaml` | Link Fix (suppress + quote-replace social embeds, PLANA) |
-| `count_config.yaml` | Server-count posting to bot lists (top.gg, etc., PLANA) |
+| `count_config.yaml` | Server-count posting to bot lists (top.gg, Void Bots, DEL, etc., PLANA) |
 | `utilities_config.yaml` | Utilities |
 | `core_config.yaml` | Shared core settings |
 

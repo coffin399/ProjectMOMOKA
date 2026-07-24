@@ -16,6 +16,33 @@ PostFn = Callable[
 ]
 
 
+async def _post_json(
+    session: aiohttp.ClientSession,
+    *,
+    site_id: str,
+    url: str,
+    token: str,
+    payload: Dict[str, Any],
+) -> None:
+    """Authorization + JSON POST の共通処理。"""
+    # ヘッダを組み立てる
+    headers = {
+        "Authorization": token,
+        "Content-Type": "application/json",
+    }
+    # POST する
+    async with session.post(
+        url,
+        json=payload,
+        headers=headers,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        # 失敗なら本文付きで例外
+        if resp.status >= 400:
+            body = await resp.text()
+            raise RuntimeError(f"{site_id} HTTP {resp.status}: {body[:300]}")
+
+
 async def post_topgg(
     session: aiohttp.ClientSession,
     bot_id: str,
@@ -25,16 +52,14 @@ async def post_topgg(
     """top.gg に server_count を投稿する。"""
     # エンドポイントを組み立てる
     url = f"https://top.gg/api/bots/{bot_id}/stats"
-    # Authorization ヘッダ
-    headers = {"Authorization": token}
-    # ペイロード
-    payload = {"server_count": int(server_count)}
     # POST する
-    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-        # 失敗なら本文付きで例外
-        if resp.status >= 400:
-            body = await resp.text()
-            raise RuntimeError(f"topgg HTTP {resp.status}: {body[:300]}")
+    await _post_json(
+        session,
+        site_id="topgg",
+        url=url,
+        token=token,
+        payload={"server_count": int(server_count)},
+    )
 
 
 async def post_discordbotlist(
@@ -46,16 +71,14 @@ async def post_discordbotlist(
     """Discord Bot List に guilds 数を投稿する。"""
     # エンドポイント
     url = f"https://discordbotlist.com/api/v1/bots/{bot_id}/stats"
-    # ヘッダ
-    headers = {"Authorization": token}
-    # DBL は guilds キー
-    payload = {"guilds": int(server_count)}
     # POST する
-    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-        # 失敗処理
-        if resp.status >= 400:
-            body = await resp.text()
-            raise RuntimeError(f"discordbotlist HTTP {resp.status}: {body[:300]}")
+    await _post_json(
+        session,
+        site_id="discordbotlist",
+        url=url,
+        token=token,
+        payload={"guilds": int(server_count)},
+    )
 
 
 async def post_discordbotsgg(
@@ -67,16 +90,69 @@ async def post_discordbotsgg(
     """discord.bots.gg に guildCount を投稿する。"""
     # エンドポイント
     url = f"https://discord.bots.gg/api/v1/bots/{bot_id}/stats"
-    # ヘッダ
-    headers = {"Authorization": token}
-    # bots.gg は guildCount
-    payload = {"guildCount": int(server_count)}
     # POST する
-    async with session.post(url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-        # 失敗処理
-        if resp.status >= 400:
-            body = await resp.text()
-            raise RuntimeError(f"discordbotsgg HTTP {resp.status}: {body[:300]}")
+    await _post_json(
+        session,
+        site_id="discordbotsgg",
+        url=url,
+        token=token,
+        payload={"guildCount": int(server_count)},
+    )
+
+
+async def post_voidbots(
+    session: aiohttp.ClientSession,
+    bot_id: str,
+    server_count: int,
+    token: str,
+) -> None:
+    """voidbots.net に server_count を投稿する。"""
+    # 公式 npm / BotBlock: POST /bot/stats/:id
+    url = f"https://api.voidbots.net/bot/stats/{bot_id}"
+    # POST する（shard_count は単一プロセス想定で 0）
+    await _post_json(
+        session,
+        site_id="voidbots",
+        url=url,
+        token=token,
+        payload={
+            "server_count": int(server_count),
+            "shard_count": 0,
+        },
+    )
+
+
+async def post_discordextremelist(
+    session: aiohttp.ClientSession,
+    bot_id: str,
+    server_count: int,
+    token: str,
+) -> None:
+    """discordextremelist.xyz に guildCount を投稿する。"""
+    # BotBlock / 公式例: POST /v2/bot/:id/stats
+    url = f"https://api.discordextremelist.xyz/v2/bot/{bot_id}/stats"
+    # POST する
+    await _post_json(
+        session,
+        site_id="discordextremelist",
+        url=url,
+        token=token,
+        payload={"guildCount": int(server_count)},
+    )
+
+
+async def post_dscbot(
+    session: aiohttp.ClientSession,
+    bot_id: str,
+    server_count: int,
+    token: str,
+) -> None:
+    """dsc.bot（nightly）向け。公開 stats API が未確認のため明示エラー。"""
+    # 未実装であることをはっきり伝える
+    raise RuntimeError(
+        "dscbot: public server-count API is not documented yet "
+        "(https://nightly.dsc.bot/). Disable sites.dscbot until an endpoint is published."
+    )
 
 
 # サイト id → 投稿関数
@@ -84,6 +160,9 @@ PROVIDERS: Dict[str, PostFn] = {
     "topgg": post_topgg,
     "discordbotlist": post_discordbotlist,
     "discordbotsgg": post_discordbotsgg,
+    "voidbots": post_voidbots,
+    "discordextremelist": post_discordextremelist,
+    "dscbot": post_dscbot,
 }
 
 

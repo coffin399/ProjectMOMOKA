@@ -1,5 +1,5 @@
 # 掲載サイト向けサーバー数（count）投稿設定
-# top.gg / Discord Bot List / bots.gg などへ guild 数を定期 POST する
+# guild 数を定期 POST する（サイトごとに enabled + token）
 count:
   # 全体スイッチ（false ならどのサイトにも送らない）
   enabled: true
@@ -22,4 +22,19 @@ count:
     discordbotsgg:
       enabled: false
       token: YOUR_DISCORDBOTSGG_TOKEN
+      bot_id: ""
+    # https://voidbots.net/
+    voidbots:
+      enabled: false
+      token: YOUR_VOIDBOTS_TOKEN
+      bot_id: ""
+    # https://discordextremelist.xyz/
+    discordextremelist:
+      enabled: false
+      token: YOUR_DISCORDEXTREMELIST_TOKEN
+      bot_id: ""
+    # https://nightly.dsc.bot/ （公開 stats API 未確認・有効化しても投稿失敗）
+    dscbot:
+      enabled: false
+      token: YOUR_DSCBOT_TOKEN
       bot_id: ""
