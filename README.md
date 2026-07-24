@@ -6,8 +6,8 @@
 
 **AIエージェント型DiscordBOT — PLANA + ARONA のデュアルボット構成。AIチャット・音楽・画像生成・討論など。**
 
-[![Invite PLANA](https://img.shields.io/badge/Invite%20PLANA-24/7%20Online-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
-[![Invite ARONA](https://img.shields.io/badge/Invite%20ARONA-Companion-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot)
+[![Invite PLANA](https://img.shields.io/badge/Invite%20PLANA-24/7%20Online-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
+[![Invite ARONA](https://img.shields.io/badge/Invite%20ARONA-Companion-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)
 
 </div>
 
@@ -63,8 +63,8 @@
    - Edit `configs/bots_config.yaml`: set `bots.plana.token` and `bots.arona.token`
    - Edit `configs/llm_config.yaml` for API keys
    - Invite both bots:
-     - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
-     - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot)
+     - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
+     - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)
 
 4. **Run**
    ```bash

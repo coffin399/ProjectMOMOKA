@@ -20,8 +20,8 @@
 
 | Bot | Role | Invite |
 |-----|------|--------|
-| **PLANA** | Primary — LLM, music, TTS, images, notifications, trackers, utilities | [Invite](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot) |
-| **ARONA** | Companion — LLM, music, utilities. TTS/images/notifications/trackers redirect to PLANA | [Invite](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot) |
+| **PLANA** | Primary — LLM, music, TTS, images, notifications, trackers, utilities | [Invite](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot) |
+| **ARONA** | Companion — LLM, music, utilities. TTS/images/notifications/trackers redirect to PLANA | [Invite](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot) |
 
 - Create **two Discord Applications** and enable **Message Content Intent** on both
 - The old root `config.yaml` / `config.default.yaml` are **not used** (no compatibility)
@@ -135,8 +135,8 @@ Fetches media with yt-dlp and shares it via Google Drive (links expire after a d
    - `configs/llm_config.yaml` — API keys
 
 4. **Invite bots**
-   - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=551906765824&scope=bot)
-   - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=551906765824&scope=bot)
+   - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
+   - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)
    - Invite **both** to any guild where you want debate / cross_check
 
 5. **Start**

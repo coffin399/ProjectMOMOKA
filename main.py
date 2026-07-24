@@ -356,7 +356,7 @@ class Momoka(commands.Bot):
         # ステータスローテーションの設定を取得する
         self.status_templates = self.config.get('status_rotation', [
             "operating on {guild_count} servers",
-            "prjMOMOKA Ver.2026-07-18",
+            "prjMOMOKA Ver.2026-07-25",
         ])
         # ステータスローテーションタスクを開始する
         self.rotate_status.start()
@@ -572,6 +572,7 @@ class Momoka(commands.Bot):
 PRIMARY_COGS = [
     'MOMOKA.images.image_commands_cog',
     'MOMOKA.llm.llm_cog',
+    'MOMOKA.link_fix.link_fix_cog',
     'MOMOKA.media_downloader.ytdlp_downloader_cog',
     'MOMOKA.music.music_cog',
     'MOMOKA.notifications.earthquake_notification_cog',
@@ -1591,7 +1592,8 @@ if __name__ == "__main__":
     intents.guild_messages = True
     intents.dm_messages = True
     intents.voice_states = True
-    intents.message_content = True  # 特権インテント（申請済み前提）
+    # Message Content Intent（特権）を明示ON — Developer Portal側も両Botで有効必須
+    intents.message_content = True
     intents.members = False
     intents.presences = False
 

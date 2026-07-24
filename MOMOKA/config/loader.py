@@ -25,6 +25,7 @@ CATEGORIES: List[str] = [
     "tracker",
     "utilities",
     "debate",
+    "link_fix",
 ]
 
 # プレースホルダ判定用

@@ -1,0 +1,286 @@
+# Link Fix（壊れた SNS embed の代替表示）設定
+link_fix:
+  # 機能全体のデフォルト（ギルド未設定時）
+  enabled: true
+  # 返信は常に @silent
+  silent: true
+  # 公式 embed 待ち秒数
+  embed_wait_seconds: 5.0
+  # Fix 側 embed 待ち秒数（無ければ返信削除）
+  fixed_embed_wait_seconds: 6.0
+  # 本文に含まれていればスキップ
+  ignore_keyword: fxignore
+  # 返信末尾の小さな英文注記（-# 行）
+  footnote: "If this is annoying, disable it with /linkfix (Manage Server)."
+  # ギルド設定の保存先（リポジトリルート相対）
+  settings_path: data/link_fix_settings.json
+  # Twitter 翻訳ボタンのタイムアウト（秒）
+  translation_view_timeout: 3600
+
+  # サイト別定義（UI・書き換えが同じ定義を参照）
+  sites:
+    twitter:
+      label: Twitter / X
+      enabled: true
+      default_fix_domain: fxtwitter.com
+      # 言語サフィックス翻訳に対応する Fix 先
+      translation_domains:
+        - fxtwitter.com
+        - fixupx.com
+        - twittpr.com
+      match_domains:
+        - x.com
+        - twitter.com
+        - nitter.net
+        - xcancel.com
+        - nitter.poast.org
+        - nitter.privacyredirect.com
+        - lightbrd.com
+        - nitter.space
+        - nitter.tiekoetter.com
+      # status ID 付きパスのみ対象
+      path_patterns:
+        - "/i/status/{id}"
+        - "/{username}/status/{id}"
+        - "/{username}/status/{id}/{media_type}/{media_id}"
+      fixer_presets:
+        - fxtwitter.com
+        - fixupx.com
+        - vxtwitter.com
+        - twitterez.com
+
+    instagram:
+      label: Instagram
+      enabled: true
+      default_fix_domain: fxstagram.com
+      match_domains:
+        - instagram.com
+      path_patterns:
+        - "/p/{id}"
+        - "/reel/{id}"
+        - "/reels/{id}"
+        - "/{username}/p/{id}"
+        - "/{username}/reel/{id}"
+        - "/share/{id}"
+        - "/share/p/{id}"
+        - "/share/reel/{id}"
+      fixer_presets:
+        - fxstagram.com
+        - ddinstagram.com
+        - kkinstagram.com
+        - vxinstagram.com
+
+    tiktok:
+      label: TikTok
+      enabled: true
+      default_fix_domain: tnktok.com
+      match_domains:
+        - tiktok.com
+      path_patterns:
+        - "/{username}/video/{id}"
+        - "/{username}/photo/{id}"
+        - "/t/{id}"
+        - "/embed/{id}"
+      fixer_presets:
+        - tnktok.com
+        - vxtiktok.com
+        - tiktokez.com
+        - fixtiktok.com
+
+    reddit:
+      label: Reddit
+      enabled: true
+      default_fix_domain: vxreddit.com
+      match_domains:
+        - reddit.com
+        - redditmedia.com
+      path_patterns:
+        - "/r/{subreddit}/comments/{id}"
+        - "/r/{subreddit}/comments/{id}/{slug}"
+        - "/r/{subreddit}/s/{id}"
+        - "/u/{username}/comments/{id}"
+        - "/user/{username}/comments/{id}"
+      fixer_presets:
+        - vxreddit.com
+        - rxddit.com
+        - redditez.com
+
+    threads:
+      label: Threads
+      enabled: true
+      default_fix_domain: fixthreads.net
+      match_domains:
+        - threads.net
+        - threads.com
+      path_patterns:
+        - "/{username}/post/{id}"
+      fixer_presets:
+        - fixthreads.net
+        - threadsez.net
+
+    bluesky:
+      label: Bluesky
+      enabled: true
+      default_fix_domain: fxbsky.app
+      translation_domains:
+        - fxbsky.app
+        - bskx.app
+      match_domains:
+        - bsky.app
+      path_patterns:
+        - "/profile/{username}/post/{id}"
+      fixer_presets:
+        - fxbsky.app
+        - bskx.app
+        - bsyy.app
+
+    facebook:
+      label: Facebook
+      enabled: true
+      default_fix_domain: facebed.com
+      match_domains:
+        - facebook.com
+      path_patterns:
+        - "/{username}/posts/{hash}"
+        - "/{username}/videos/{hash}"
+        - "/reel/{id}"
+        - "/share/v/{hash}"
+        - "/share/r/{hash}"
+        - "/share/p/{hash}"
+        - "/watch"
+      fixer_presets:
+        - facebed.com
+        - facebookez.com
+
+    pixiv:
+      label: Pixiv
+      enabled: true
+      default_fix_domain: phixiv.net
+      match_domains:
+        - pixiv.net
+      path_patterns:
+        - "/artworks/{id}"
+        - "/{lang}/artworks/{id}"
+      fixer_presets:
+        - phixiv.net
+
+    twitch:
+      label: Twitch Clips
+      enabled: true
+      default_fix_domain: fxtwitch.seria.moe
+      match_domains:
+        - twitch.tv
+      path_patterns:
+        - "/{username}/clip/{id}"
+      fixer_presets:
+        - fxtwitch.seria.moe
+
+    spotify:
+      label: Spotify
+      enabled: true
+      default_fix_domain: fxspotify.com
+      match_domains:
+        - spotify.com
+      path_patterns:
+        - "/track/{id}"
+        - "/{lang}/track/{id}"
+      fixer_presets:
+        - fxspotify.com
+
+    deviantart:
+      label: DeviantArt
+      enabled: true
+      default_fix_domain: fixdeviantart.com
+      match_domains:
+        - deviantart.com
+      path_patterns:
+        - "/{username}/art/{id}"
+        - "/{username}/journal/{id}"
+      fixer_presets:
+        - fixdeviantart.com
+
+    tumblr:
+      label: Tumblr
+      enabled: true
+      default_fix_domain: tpmblr.com
+      match_domains:
+        - tumblr.com
+      path_patterns:
+        - "/post/{id}"
+        - "/{username}/{id}"
+        - "/{username}/{id}/{slug}"
+      fixer_presets:
+        - tpmblr.com
+
+    bilibili:
+      label: BiliBili
+      enabled: true
+      # bilibili は vx + 元ドメイン形式（特殊）
+      default_fix_domain: vxbilibili.com
+      match_domains:
+        - bilibili.com
+        - b23.tv
+        - b22.top
+      path_patterns:
+        - "/video/{id}"
+        - "/{id}"
+      fixer_presets:
+        - vxbilibili.com
+      # ドメイン差し替えではなく vx プレフィックス方式
+      rewrite_mode: vx_prefix
+
+    youtube:
+      label: YouTube
+      enabled: true
+      default_fix_domain: koutube.com
+      match_domains:
+        - youtube.com
+        - youtu.be
+      path_patterns:
+        - "/watch"
+        - "/shorts/{id}"
+        - "/{id}"
+      fixer_presets:
+        - koutube.com
+
+    mastodon:
+      label: Mastodon
+      enabled: true
+      default_fix_domain: fx.zillanlabs.tech
+      match_domains:
+        - mastodon.social
+        - mstdn.jp
+        - mastodon.cloud
+        - mstdn.social
+        - mastodon.world
+        - mastodon.online
+        - mas.to
+        - techhub.social
+        - mastodon.uno
+        - infosec.exchange
+      path_patterns:
+        - "/{username}/{id}"
+      fixer_presets:
+        - fx.zillanlabs.tech
+
+    furaffinity:
+      label: Fur Affinity
+      enabled: true
+      default_fix_domain: xfuraffinity.net
+      match_domains:
+        - furaffinity.net
+      path_patterns:
+        - "/view/{id}"
+      fixer_presets:
+        - xfuraffinity.net
+
+    newgrounds:
+      label: Newgrounds
+      enabled: true
+      default_fix_domain: fixnewgrounds.com
+      match_domains:
+        - newgrounds.com
+      path_patterns:
+        - "/art/view/{username}/{slug}"
+      fixer_presets:
+        - fixnewgrounds.com

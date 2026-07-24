@@ -1,0 +1,232 @@
+# MOMOKA/link_fix/settings_store.py
+# ギルド単位の Link Fix 設定の読込・保存。
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from MOMOKA.link_fix.presets import (
+    get_link_fix_config,
+    get_site_meta,
+    list_site_ids,
+    normalize_domain,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class LinkFixSettingsStore:
+    """data/link_fix_settings.json を扱うストア。"""
+
+    def __init__(self, bot_config: Dict[str, Any], project_root: Optional[Path] = None) -> None:
+        # bot 全体 config を保持する
+        self.bot_config = bot_config
+        # プロジェクトルート（未指定なら cwd）
+        self.project_root = project_root or Path.cwd()
+        # link_fix セクション
+        section = get_link_fix_config(bot_config)
+        # 相対パス
+        rel = str(section.get("settings_path") or "data/link_fix_settings.json")
+        # 絶対パスに解決する
+        self.path = (self.project_root / rel).resolve()
+        # メモリ上の設定
+        self._data: Dict[str, Dict[str, Any]] = {}
+        # 初回読込
+        self.load()
+
+    def load(self) -> None:
+        """ファイルから読み込む。無ければ空。"""
+        # 親ディレクトリを用意する
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 無ければ空 dict
+        if not self.path.exists():
+            self._data = {}
+            return
+        # 読み込む
+        try:
+            with self.path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            # dict でなければ空
+            if not isinstance(raw, dict):
+                self._data = {}
+                return
+            # ギルド id を文字列キーで保持する
+            self._data = {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+        except (OSError, json.JSONDecodeError) as exc:
+            # 壊れていればログして空にする
+            logger.error("Failed to load link_fix settings: %s", exc)
+            self._data = {}
+
+    def save(self) -> None:
+        """ファイルへ保存する。"""
+        # 親を確保する
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 書き込む
+        try:
+            with self.path.open("w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            # 失敗をログする
+            logger.error("Failed to save link_fix settings: %s", exc)
+
+    def _guild_key(self, guild_id: int) -> str:
+        """ギルド id を辞書キーにする。"""
+        return str(guild_id)
+
+    def get_guild(self, guild_id: int) -> Dict[str, Any]:
+        """ギルド生設定（無ければ空 dict のコピー）。"""
+        # キー
+        key = self._guild_key(guild_id)
+        # 無ければ空
+        entry = self._data.get(key) or {}
+        # コピーを返す（呼び出し側の破壊を防ぐ）
+        return dict(entry) if isinstance(entry, dict) else {}
+
+    def is_feature_enabled(self, guild_id: int) -> bool:
+        """ギルド全体の有効フラグ（未設定時は YAML デフォルト）。"""
+        # ギルド設定
+        guild = self.get_guild(guild_id)
+        # 明示値があればそれを使う
+        if "enabled" in guild:
+            return bool(guild.get("enabled"))
+        # YAML デフォルト
+        section = get_link_fix_config(self.bot_config)
+        return bool(section.get("enabled", True))
+
+    def set_feature_enabled(self, guild_id: int, enabled: bool) -> None:
+        """全体 on/off を保存する。"""
+        # キー
+        key = self._guild_key(guild_id)
+        # 既存を取る
+        entry = self._data.setdefault(key, {})
+        # フラグを書く
+        entry["enabled"] = bool(enabled)
+        # 保存する
+        self.save()
+
+    def get_site(self, guild_id: int, site_id: str) -> Dict[str, Any]:
+        """サイト単位のギルド上書き（無ければ空）。"""
+        # ギルド
+        guild = self.get_guild(guild_id)
+        # sites
+        sites = guild.get("sites") or {}
+        # dict でなければ空
+        if not isinstance(sites, dict):
+            return {}
+        # サイト
+        site = sites.get(site_id) or {}
+        # dict のみ
+        return dict(site) if isinstance(site, dict) else {}
+
+    def get_all_sites_overrides(self, guild_id: int) -> Dict[str, Any]:
+        """ギルドの sites 上書き全体。"""
+        # ギルド
+        guild = self.get_guild(guild_id)
+        # sites
+        sites = guild.get("sites") or {}
+        # dict のみ
+        return dict(sites) if isinstance(sites, dict) else {}
+
+    def is_site_enabled(self, guild_id: int, site_id: str) -> bool:
+        """サイトが有効か（ギルド上書き → YAML）。"""
+        # ギルドサイト
+        site = self.get_site(guild_id, site_id)
+        # 明示があればそれ
+        if "enabled" in site:
+            return bool(site.get("enabled"))
+        # YAML
+        meta = get_site_meta(self.bot_config, site_id)
+        return bool(meta.get("enabled", True))
+
+    def set_site_enabled(self, guild_id: int, site_id: str, enabled: bool) -> None:
+        """サイト on/off を保存する。"""
+        # サイト dict を確保する
+        site = self._ensure_site(guild_id, site_id)
+        # 書く
+        site["enabled"] = bool(enabled)
+        # 保存する
+        self.save()
+
+    def set_fix_domain(self, guild_id: int, site_id: str, domain: str) -> bool:
+        """Fix 先ドメインを保存する。不正なら False。"""
+        # 正規化する
+        normalized = normalize_domain(domain)
+        # 失敗
+        if not normalized:
+            return False
+        # サイトを確保する
+        site = self._ensure_site(guild_id, site_id)
+        # 書く
+        site["fix_domain"] = normalized
+        # 保存する
+        self.save()
+        # 成功
+        return True
+
+    def set_match_domains(self, guild_id: int, site_id: str, domains: list[str]) -> bool:
+        """Fix 元ドメイン一覧を保存する。"""
+        # 正規化リスト
+        cleaned: list[str] = []
+        # 走査する
+        for item in domains:
+            normalized = normalize_domain(str(item))
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
+        # 空は拒否
+        if not cleaned:
+            return False
+        # サイトを確保する
+        site = self._ensure_site(guild_id, site_id)
+        # 書く
+        site["match_domains"] = cleaned
+        # 保存する
+        self.save()
+        # 成功
+        return True
+
+    def clear_match_domains(self, guild_id: int, site_id: str) -> None:
+        """マッチ元上書きを消し、YAML デフォルトに戻す。"""
+        # サイト
+        site = self._ensure_site(guild_id, site_id)
+        # キー削除
+        site.pop("match_domains", None)
+        # 保存する
+        self.save()
+
+    def reset_guild(self, guild_id: int) -> None:
+        """ギルド設定を全削除してデフォルトに戻す。"""
+        # キー削除
+        self._data.pop(self._guild_key(guild_id), None)
+        # 保存する
+        self.save()
+
+    def count_enabled_sites(self, guild_id: int) -> tuple[int, int]:
+        """(有効数, 総数) を返す。"""
+        # 全サイト id
+        ids = list_site_ids(self.bot_config)
+        # 有効数
+        enabled = sum(1 for sid in ids if self.is_site_enabled(guild_id, sid))
+        # 返す
+        return enabled, len(ids)
+
+    def _ensure_site(self, guild_id: int, site_id: str) -> Dict[str, Any]:
+        """ギルド sites[site_id] を確保して返す。"""
+        # ギルドエントリ
+        key = self._guild_key(guild_id)
+        entry = self._data.setdefault(key, {})
+        # sites
+        sites = entry.setdefault("sites", {})
+        # dict でなければ作り直す
+        if not isinstance(sites, dict):
+            sites = {}
+            entry["sites"] = sites
+        # サイト
+        site = sites.setdefault(site_id, {})
+        # dict でなければ作り直す
+        if not isinstance(site, dict):
+            site = {}
+            sites[site_id] = site
+        # 返す
+        return site
