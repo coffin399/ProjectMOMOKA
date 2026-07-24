@@ -238,7 +238,11 @@ llm:
 | Command | Description |
 |---------|-------------|
 | `/play` `/pause` `/resume` `/stop` `/skip` | Playback |
-| `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` | Queue & volume |
+| `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` `/loop` | Queue & volume |
+
+Now Playing panel (Components V2): Pause / Skip / Stop (Confirm/Cancel) / Loop / QLoop, queue (up to 10) with paging.
+Playlist fetch limit is `music.max_playlist_items` (default 10000).
+Music messages are sent `@silent` (suppress notifications) by default.
 
 ### Image Generation (PLANA)
 

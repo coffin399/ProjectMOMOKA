@@ -863,11 +863,12 @@ async def extract(
         shuffle_playlist: bool = False,
         nico_email: Optional[str] = None,
         nico_password: Optional[str] = None,
-        max_playlist_items: Optional[int] = 50
+        max_playlist_items: Optional[int] = 10000
 ) -> Union[Track, List[Track], None]:
     """
     与えられたクエリ (URLまたは検索語) から音楽情報を抽出する。
     ニコニコ動画の場合はダウンロードを試み、それ以外はストリームURLを取得する。
+    max_playlist_items はプレイリスト展開の上限（playlistend）。呼び出し元 config を渡すこと。
     """
     loop = asyncio.get_running_loop()
     is_nico_query = _is_nico(query)

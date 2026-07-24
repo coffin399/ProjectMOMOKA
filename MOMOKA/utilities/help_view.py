@@ -287,8 +287,8 @@ class HelpLayoutView(discord.ui.LayoutView):
             "`/queue` `/nowplaying` `/shuffle` `/clear` `/remove <n>` `/loop <off|one|all>`\n\n"
             "**ボイス / Voice**\n"
             "`/join` `/leave` — VC 接続・切断 / Join or leave VC\n\n"
-            "Now Playing パネルのボタンでも Pause / Skip / Stop 操作ができます。\n"
-            "You can also control playback from the Now Playing panel buttons."
+            "Now Playing パネル: Pause / Skip / Stop（Confirm）/ Loop / QLoop、下部にキュー最大10曲＋ページング。\n"
+            "Now Playing panel: Pause / Skip / Stop (confirm) / Loop / QLoop, queue (up to 10) with paging."
         )
 
     def _utilities_text(self) -> str:

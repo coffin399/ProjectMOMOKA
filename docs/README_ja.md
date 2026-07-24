@@ -256,7 +256,11 @@ music:
 | コマンド | 説明 |
 |---------|------|
 | `/play` `/pause` `/resume` `/stop` `/skip` | 再生制御 |
-| `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` | キュー・音量など |
+| `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` `/loop` | キュー・音量など |
+
+Now Playing パネル（Components V2）: Pause / Skip / Stop（Confirm/Cancel）/ Loop / QLoop、下部にキュー最大10曲＋ページング。
+プレイリスト取得上限は `music.max_playlist_items`（既定 10000）。
+音楽メッセージは既定で `@silent`（通知抑制）送信。
 
 ### 画像生成（PLANA）
 

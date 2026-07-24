@@ -1,4 +1,4 @@
-# MOMOKA/music/music_cog.py
+﻿# MOMOKA/music/music_cog.py
 import asyncio
 import collections
 import gc
@@ -59,6 +59,10 @@ logger = logging.getLogger(__name__)
 
 # Now Playing プログレスバーの更新間隔（秒）。Discord rate limit を考慮して 10 秒にする
 PROGRESS_UPDATE_INTERVAL = 10
+# Now Playing パネル下部に表示するキューの1ページあたり曲数
+QUEUE_PAGE_SIZE = 10
+# Components V2 上で大きく見せるプログレスバーの長さ
+PROGRESS_BAR_LENGTH = 28
 
 
 def format_duration(duration_seconds: int) -> str:
@@ -127,6 +131,10 @@ class GuildState:
         self.last_now_playing_message: Optional[discord.Message] = None
         # プログレスバー定期更新タスク（未起動時は None）
         self.progress_update_task: Optional[asyncio.Task] = None
+        # Now Playing パネル内キュー表示のページ番号（0始まり）
+        self.queue_page: int = 0
+        # Stop ボタン押下後の確認ダイアログ表示中フラグ
+        self.confirming_stop: bool = False
 
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -216,6 +224,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         self._apply_youtube_cookie_config()
         self.auto_leave_timeout = self.music_config.get('auto_leave_timeout', 10)
         self.max_queue_size = self.music_config.get('max_queue_size', 9000)
+        # プレイリスト展開の上限（未指定時は 10000。ラッパー既定 50 に依存しない）
+        self.max_playlist_items = self.music_config.get('max_playlist_items', 10000)
         self.max_guilds = self.music_config.get('max_guilds', 100000000)
         self.inactive_timeout_minutes = self.music_config.get('inactive_timeout_minutes', 30)
         self.global_connection_lock = asyncio.Lock()
@@ -419,6 +429,7 @@ class MusicCog(commands.Cog, name="music_cog"):
             embed: Optional[discord.Embed] = None,
             view: Optional[discord.ui.View] = None,
             ephemeral: bool = False,
+            silent: bool = True,
             **kwargs,
     ) -> Optional[discord.Message]:
         # ContextオブジェクトからInteractionを取得する（スラッシュコマンドの場合は存在する）
@@ -436,11 +447,12 @@ class MusicCog(commands.Cog, name="music_cog"):
         try:
             # Interactionが存在する場合の処理
             if interaction:
-                # 送信用のパラメータ辞書を構築する
+                # 送信用のパラメータ辞書を構築する（@silent 相当で通知を抑制）
                 kwargs_to_send = {
                     "content": content,
                     "embed": embed,
                     "ephemeral": ephemeral,
+                    "silent": silent,
                     **kwargs,
                 }
                 # 表示するView（ボタンなど）が指定されているか判定する
@@ -468,8 +480,14 @@ class MusicCog(commands.Cog, name="music_cog"):
                 if ephemeral:
                     # プレフィックスコマンドでは一時表示ができないため、ログを出力する
                     logger.debug("Ephemeral messages are not supported for prefix commands; sending normally.")
-                # 通常のメッセージ送信を行い、そのメッセージオブジェクトを返す
-                return await ctx.send(content=content, embed=embed, view=view, **kwargs)
+                # 通常のメッセージ送信を行い、そのメッセージオブジェクトを返す（silent 既定）
+                return await ctx.send(
+                    content=content,
+                    embed=embed,
+                    view=view,
+                    silent=silent,
+                    **kwargs,
+                )
         # 送信処理中にエラーが発生した場合のハンドリングを行う
         except Exception as e:
             # エラーが発生したギルド（サーバー）の情報を取得する
@@ -490,7 +508,11 @@ class MusicCog(commands.Cog, name="music_cog"):
         try:
             channel = self.bot.get_channel(channel_id)
             if isinstance(channel, discord.TextChannel):
-                await channel.send(self.exception_handler.get_message(message_key, **kwargs))
+                # バックグラウンド通知も @silent 相当で送る
+                await channel.send(
+                    self.exception_handler.get_message(message_key, **kwargs),
+                    silent=True,
+                )
         except discord.Forbidden:
             logger.debug(f"No permission to send to channel {channel_id}")
         except Exception as e:
@@ -981,7 +1003,7 @@ class MusicCog(commands.Cog, name="music_cog"):
                             state.last_now_playing_message = target_message
                         else:
                             # 既存メッセージが無い場合のみ新規投稿する（フォールバック）
-                            state.last_now_playing_message = await channel.send(view=view)
+                            state.last_now_playing_message = await channel.send(view=view, silent=True)
                         # Now Playing 表示後にプログレスバーの定期更新を開始する
                         self._start_progress_updater(guild_id)
                     # 送信または編集処理中に例外が発生した場合のハンドリング
@@ -991,8 +1013,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                         try:
                             # 壊れた参照を捨てる
                             state.last_now_playing_message = None
-                            # チャンネルへ新規 Now Playing を投稿する
-                            state.last_now_playing_message = await channel.send(view=view)
+                            # チャンネルへ新規 Now Playing を投稿する（silent）
+                            state.last_now_playing_message = await channel.send(view=view, silent=True)
                             # 復旧後もプログレス更新を開始する
                             self._start_progress_updater(guild_id)
                         except Exception as send_error:
@@ -1198,6 +1220,10 @@ class MusicCog(commands.Cog, name="music_cog"):
                 if state.is_paused:
                     # 次の間隔まで待つ
                     continue
+                # Stop 確認中はダイアログを上書きしない
+                if state.confirming_stop:
+                    # 次の間隔まで待つ
+                    continue
                 # プログレスバー込みで Now Playing UI を再描画する
                 await self._update_now_playing_message_ui(guild_id)
         except asyncio.CancelledError:
@@ -1303,8 +1329,12 @@ class MusicCog(commands.Cog, name="music_cog"):
                 content=self.exception_handler.get_message("searching_for_song", query=query),
             )
 
-            # yt-dlp等を用いて検索クエリから音声情報を抽出する
-            extracted_media = await extract_audio_data(query, shuffle_playlist=False)
+            # yt-dlp等を用いて検索クエリから音声情報を抽出する（プレイリスト上限は config を渡す）
+            extracted_media = await extract_audio_data(
+                query,
+                shuffle_playlist=False,
+                max_playlist_items=self.max_playlist_items,
+            )
 
             # 音声情報の抽出に失敗した（結果が空だった）か判定する
             if not extracted_media:
@@ -1383,6 +1413,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                     else:
                         # メッセージがない場合は新規に1曲追加メッセージを送信する
                         await self._send_ctx_message(ctx, content=added_song_content)
+                # キュー追加後に Now Playing のキュー一覧を更新する
+                await self._update_now_playing_message_ui(ctx.guild.id)
 
             # 再生中ではない（この play コマンドで新規再生を開始する）か判定する
             if not was_playing:
@@ -1524,6 +1556,10 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         state.loop_mode = LoopMode.OFF
         await state.clear_queue()
+        # Stop 確認ダイアログが残っていれば解除する
+        state.confirming_stop = False
+        # キューページを先頭に戻す
+        state.queue_page = 0
         if state.mixer:
             state.mixer.stop()
             state.mixer = None
@@ -1556,176 +1592,84 @@ class MusicCog(commands.Cog, name="music_cog"):
 
     @commands.hybrid_command(name="queue", description="現在の再生キューを表示します。")
     async def queue(self, ctx: commands.Context):
+        # ギルドの再生状態を取得する
         state = self._get_guild_state(ctx.guild.id)
+        # 状態が無ければエラーを返す
         if not state:
+            # エフェメラルでエラー通知する
             await self._send_ctx_message(ctx, content="エラーが発生しました。", ephemeral=True)
-
+            # 処理を終了する
             return
 
+        # 操作チャンネルを記録する
         state.update_last_text_channel(ctx.channel.id)
+        # キューも再生中曲も無い場合は空メッセージを返す
         if state.queue.empty() and not state.current_track:
+            # キュー空メッセージをエフェメラルで送る
             await self._send_ctx_message(
                 ctx,
                 content=self.exception_handler.get_message("queue_empty"),
                 ephemeral=True,
             )
-
+            # 処理を終了する
             return
 
-        items_per_page = 10
+        # キュー表示ページを先頭に戻す
+        state.queue_page = 0
+        # Now Playing パネルがある場合はそこにキュー＋ページングを統合表示する
+        if state.last_now_playing_message and state.current_track:
+            # パネルUIを最新キューで再描画する
+            await self._update_now_playing_message_ui(ctx.guild.id)
+            # パネル参照を促すエフェメラル案内を送る
+            await self._send_ctx_message(
+                ctx,
+                content="📜 キューは Now Playing パネル下部に表示しています（ページ切替ボタンあり）。",
+                ephemeral=True,
+            )
+            # 処理を終了する
+            return
+
+        # パネルが無い場合のフォールバック：簡易テキスト一覧を送る
+        queue_text, _page, _total = self._build_queue_display_text(state)
+        # フォールバック本文を送信する
+        await self._send_ctx_message(ctx, content=queue_text)
+
+    def _build_queue_display_text(self, state: GuildState) -> Tuple[str, int, int]:
+        """キュー一覧テキストと現在ページ・総ページ数を返す（0始まりページ）。"""
+        # 内部キューからリストを取り出す
         queue_list = list(state.queue._queue)
+        # 総曲数を取得する
         total_items = len(queue_list)
-        total_pages = math.ceil(len(queue_list) / items_per_page) if len(queue_list) > 0 else 1
+        # 曲が無ければ空表示を返す
+        if total_items == 0:
+            # ページは 0/1 として扱う
+            return "### Queue\n*(empty — no upcoming tracks)*", 0, 1
 
-        async def get_page_embed(page_num: int):
-            embed = discord.Embed(
-                title=self.exception_handler.get_message("queue_title",
-                                                         count=total_items + (1 if state.current_track else 0)),
-                color=discord.Color.from_rgb(79, 194, 255)
-            )
-            lines = []
-            if page_num == 1 and state.current_track:
-                track = state.current_track
-                try:
-                    requester = ctx.guild.get_member(track.requester_id) or await self.bot.fetch_user(
-                        track.requester_id)
-                except:
-                    requester = None
-                status_icon = '▶️' if state.is_playing else '⏸️'
-                current_pos = state.get_current_position()
-                lines.append(
-                    f"**{status_icon} {track.title}** (`{format_duration(current_pos)}/{format_duration(track.duration)}`) - Req: **{requester.display_name if requester else '不明'}**\n"
-                )
-
-            start = (page_num - 1) * items_per_page
-            end = (page_num - 1) * items_per_page + items_per_page
-            for i, track in enumerate(queue_list[start:end], start=start + 1):
-                try:
-                    requester = ctx.guild.get_member(track.requester_id) or await self.bot.fetch_user(
-                        track.requester_id)
-                except:
-                    requester = None
-                lines.append(
-                    f"`{i}.` **{track.title}** (`{format_duration(track.duration)}`) - Req: **{requester.display_name if requester else '不明'}**"
-                )
-
-            embed.description = "\n".join(lines) if lines else "このページには曲がありません。"
-            if total_pages > 1:
-                embed.set_footer(text=f"ページ {page_num}/{total_pages}")
-            return embed
-
-        def get_queue_view(current_page: int, total_pages: int, user_id: int):
-            view = discord.ui.View(timeout=60.0)
-
-            first_button = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                emoji="⏪",
-                label="First",
-                disabled=(current_page == 1)
-            )
-
-            async def first_callback(interaction: discord.Interaction):
-                if interaction.user.id != user_id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                nonlocal current_page
-                current_page = 1
-                await interaction.response.edit_message(
-                    embed=await get_page_embed(current_page),
-                    view=get_queue_view(current_page, total_pages, user_id)
-                )
-
-            first_button.callback = first_callback
-            view.add_item(first_button)
-
-            prev_button = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                emoji="◀️",
-                label="Previous",
-                disabled=(current_page == 1)
-            )
-
-            async def prev_callback(interaction: discord.Interaction):
-                if interaction.user.id != user_id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                nonlocal current_page
-                current_page = max(1, current_page - 1)
-                await interaction.response.edit_message(
-                    embed=await get_page_embed(current_page),
-                    view=get_queue_view(current_page, total_pages, user_id)
-                )
-
-            prev_button.callback = prev_callback
-            view.add_item(prev_button)
-
-            stop_button = discord.ui.Button(
-                style=discord.ButtonStyle.danger,
-                emoji="⏹️",
-                label="Close"
-            )
-
-            async def stop_callback(interaction: discord.Interaction):
-                if interaction.user.id != user_id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                view.stop()
-                await interaction.response.edit_message(view=None)
-
-            stop_button.callback = stop_callback
-            view.add_item(stop_button)
-
-            next_button = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                emoji="▶️",
-                label="Next",
-                disabled=(current_page == total_pages)
-            )
-
-            async def next_callback(interaction: discord.Interaction):
-                if interaction.user.id != user_id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                nonlocal current_page
-                current_page = min(total_pages, current_page + 1)
-                await interaction.response.edit_message(
-                    embed=await get_page_embed(current_page),
-                    view=get_queue_view(current_page, total_pages, user_id)
-                )
-
-            next_button.callback = next_callback
-            view.add_item(next_button)
-
-            last_button = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                emoji="⏩",
-                label="Last",
-                disabled=(current_page == total_pages)
-            )
-
-            async def last_callback(interaction: discord.Interaction):
-                if interaction.user.id != user_id:
-                    await interaction.response.send_message("このボタンは使用できません。", ephemeral=True)
-                    return
-                nonlocal current_page
-                current_page = total_pages
-                await interaction.response.edit_message(
-                    embed=await get_page_embed(current_page),
-                    view=get_queue_view(current_page, total_pages, user_id)
-                )
-
-            last_button.callback = last_callback
-            view.add_item(last_button)
-
-            return view
-
-        current_page = 1
-        if total_pages <= 1:
-            await self._send_ctx_message(ctx, embed=await get_page_embed(current_page))
-
-        else:
-            view = get_queue_view(current_page, total_pages, ctx.author.id)
-            await self._send_ctx_message(ctx, embed=await get_page_embed(current_page), view=view)
+        # 総ページ数を計算する（最低1）
+        total_pages = max(1, math.ceil(total_items / QUEUE_PAGE_SIZE))
+        # 保存ページを有効範囲にクランプする
+        page = max(0, min(state.queue_page, total_pages - 1))
+        # クランプ結果を状態へ書き戻す
+        state.queue_page = page
+        # 表示範囲の開始インデックスを求める
+        start = page * QUEUE_PAGE_SIZE
+        # 表示範囲の終了インデックスを求める
+        end = start + QUEUE_PAGE_SIZE
+        # 行バッファを初期化する
+        lines: List[str] = []
+        # ページ内の曲を走査する
+        for i, track in enumerate(queue_list[start:end], start=start + 1):
+            # 長すぎるタイトルは省略する
+            title = track.title if len(track.title) <= 42 else track.title[:39] + "..."
+            # 番号付きリンク行を追加する
+            lines.append(f"`{i}.` [{title}]({track.url})")
+        # 見出し付き本文を組み立てる
+        body = (
+            f"### Queue ({total_items}) — {page + 1}/{total_pages}\n"
+            + "\n".join(lines)
+        )
+        # 本文とページ情報を返す
+        return body, page, total_pages
 
     @commands.hybrid_command(name="nowplaying", description="現在再生中の曲の情報を表示します。")
     async def nowplaying(self, ctx: commands.Context):
@@ -1925,8 +1869,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                 except Exception:
                     # 削除失敗は無視して再送へ進む
                     pass
-            # チャンネル経由で新しい Now Playing を送信する（webhook非依存）
-            state.last_now_playing_message = await channel.send(view=view)
+            # チャンネル経由で新しい Now Playing を送信する（webhook非依存・silent）
+            state.last_now_playing_message = await channel.send(view=view, silent=True)
             # 復旧成功
             return True
         except Exception as e:
@@ -1935,7 +1879,7 @@ class MusicCog(commands.Cog, name="music_cog"):
             # 復旧失敗
             return False
 
-    def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
+    def _create_progress_bar(self, current: int, total: int, length: int = PROGRESS_BAR_LENGTH) -> str:
         # 総時間が無効な場合は空のバーを返す
         if total <= 0:
             # 未確定長の曲向けにプレースホルダを返す
@@ -1966,6 +1910,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         for item in queue_list:
             await state.queue.put(item)
         await self._send_response(ctx, "queue_shuffled")
+        # Now Playing のキュー表示を更新する
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="clear", description="再生キューを空にします（再生中の曲は停止しません）。")
     async def clear(self, ctx: commands.Context):
@@ -1974,7 +1920,11 @@ class MusicCog(commands.Cog, name="music_cog"):
             return
 
         await state.clear_queue()
+        # キューページを先頭に戻す
+        state.queue_page = 0
         await self._send_response(ctx, "queue_cleared")
+        # Now Playing のキュー表示を更新する
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="remove", description="キューから指定した番号の曲を削除します。")
     @app_commands.describe(index="削除したい曲のキュー番号")
@@ -2009,6 +1959,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         for item in queue_list:
             await state.queue.put(item)
         await self._send_response(ctx, "song_removed", title=removed_track.title)
+        # Now Playing のキュー表示を更新する
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="volume", description="音量を変更します (0-200)。")
     @app_commands.describe(level="設定したい音量レベル (0-200)")
@@ -2058,6 +2010,8 @@ class MusicCog(commands.Cog, name="music_cog"):
         state.loop_mode = mode_map.get(mode_val, LoopMode.OFF)
         state.update_activity()
         await self._send_response(ctx, f"loop_{mode_val}")
+        # Now Playing の Loop / QLoop 表示を更新する
+        await self._update_now_playing_message_ui(ctx.guild.id)
 
     @commands.hybrid_command(name="join", description="ボットをあなたのいるボイスチャンネルに接続します。")
     async def join(self, ctx: commands.Context):
@@ -2069,47 +2023,6 @@ class MusicCog(commands.Cog, name="music_cog"):
                 ephemeral=True,
             )
 
-    @commands.hybrid_group(name="reload", description="各種機能を再読み込みします。 / Reloads various features.")
-    async def reload(self, ctx: commands.Context):
-        if ctx.invoked_subcommand is None:
-            await self._send_ctx_message(
-                ctx,
-                content='このコマンドにはサブコマンドが必要です。 (例: `reload music_cog`)',
-                ephemeral=True,
-            )
-
-    @reload.command(name="music_cog", description="音楽Cogを再読み込みして、問題をリセットします。/ Reloads the music cog to fix issues.")
-    async def reload_music_cog(self, ctx: commands.Context):
-        # 処理がタイムアウトしないようレスポンス送信を保留にし、他者に見えないエフェメラルに設定する
-        await ctx.defer(ephemeral=True)
-        # 現在のモジュール（拡張機能）名を取得する
-        module_name = self.__module__
-        # Cogの再読み込み試行をログに出力する
-        logger.info(f"音楽Cog ({module_name}) の再読み込みを試みます。リクエスト者: {ctx.author}")
-
-        try:
-            # ボットに対して拡張機能（このモジュール自身）の再読み込みを実行する
-            await self.bot.reload_extension(module_name)
-            # 再読み込み成功の旨をログに出力する
-            logger.info(f"音楽Cog ({module_name}) の再読み込みに成功しました。")
-            # 完了のメッセージをエフェメラル（一時表示）設定で送信する
-            await ctx.send(
-                "🎵 音楽機能の再読み込みが完了しました。\n🎵 Music feature has been successfully reloaded.",
-                ephemeral=True
-            )
-        # 再読み込み処理中に何らかの例外が発生した場合のハンドリングを行う
-        except Exception as e:
-            # エラーの詳細をログ（スタックトレース付き）に出力する
-            logger.error(f"音楽Cog ({module_name}) の再読み込み中にエラーが発生しました: {e}", exc_info=True)
-            # エラーが発生した旨とエラーの詳細内容をエフェメラル設定で送信する
-            await ctx.send(
-                f"❌ 音楽機能の再読み込み中にエラーが発生しました。\n❌ An error occurred while reloading the music feature.\n```py\n{type(e).__name__}: {e}\n```",
-                ephemeral=True
-            )
-
-    @reload_music_cog.error
-    async def reload_music_cog_error(self, ctx: commands.Context, error: commands.CommandError):
-        await self.exception_handler.handle_generic_command_error(ctx, error)
 class MusicControllerView(discord.ui.LayoutView):
     def __init__(
         self,
@@ -2136,6 +2049,10 @@ class MusicControllerView(discord.ui.LayoutView):
         state = self.cog._get_guild_state(self.guild_id)
         # 再生状態、または再生中のトラックが存在しないか判定する
         if not state or not state.current_track:
+            # 停止確認フラグをクリアする
+            if state:
+                # 確認ダイアログ状態を解除する
+                state.confirming_stop = False
             # グレーのアクセントカラーでコンテナを生成する
             container = discord.ui.Container(accent_color=discord.Color.light_grey())
             # 呼び出し元指定の終了文言があれば使い、無ければ停止用のデフォルト文を使う
@@ -2154,12 +2071,23 @@ class MusicControllerView(discord.ui.LayoutView):
             action_row.add_item(discord.ui.Button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, disabled=True))
             # 停止ボタンを無効状態で追加する
             action_row.add_item(discord.ui.Button(label="⏹️ Stop", style=discord.ButtonStyle.secondary, disabled=True))
+            # 曲ループボタンを無効状態で追加する
+            action_row.add_item(discord.ui.Button(label="🔂 Loop", style=discord.ButtonStyle.secondary, disabled=True))
+            # キューループボタンを無効状態で追加する
+            action_row.add_item(discord.ui.Button(label="🔁 QLoop", style=discord.ButtonStyle.secondary, disabled=True))
             # コンテナにアクション行を追加する
             container.add_item(action_row)
 
             # ビュー自体にコンテナを追加して完了する
             self.add_item(container)
             # 処理を終了する
+            return
+
+        # Stop 確認ダイアログ表示中なら確認専用UIを組み立てる
+        if state.confirming_stop:
+            # 確認UIを構築して終了する
+            self._build_stop_confirm_ui(state)
+            # 通常UIは組まない
             return
 
         # 再生中のトラック情報を取得する
@@ -2190,16 +2118,24 @@ class MusicControllerView(discord.ui.LayoutView):
             # サムネイル無しはテキストのみ追加する
             container.add_item(discord.ui.TextDisplay(title_text))
 
+        # タイトルと Progress の間に区切り線を入れる
+        container.add_item(discord.ui.Separator())
+
         # 現在の再生位置（秒）を取得する
         current_pos = state.get_current_position()
-        # 進行状況バー（テキストアート）を生成する
+        # 進行状況バー（テキストアート）を大きめに生成する
         progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
         # 再生時間と総再生時間の文字列フォーマットを生成する
         duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
-        # 進行状況は TextDisplay のみ（Section は accessory 必須のため使わない）
+        # Progress を大きく目立たせて配置する
         container.add_item(
-            discord.ui.TextDisplay(f"**Progress**\n{progress_bar}\n{duration_str}")
+            discord.ui.TextDisplay(
+                f"## Progress\n# {progress_bar}\n### {duration_str}"
+            )
         )
+
+        # Progress とメタ情報の間に区切り線を入れる
+        container.add_item(discord.ui.Separator())
 
         # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
         uploader_val = track.uploader if track.uploader else "Unknown"
@@ -2207,11 +2143,13 @@ class MusicControllerView(discord.ui.LayoutView):
         requester_mention = f"<@{track.requester_id}>" if track.requester_id else "Unknown"
         # 残りのキューの数を取得する
         remaining = state.queue.qsize()
+        # ループモード表示用の短いラベルを決める
+        loop_label = state.loop_mode.name.lower()
 
         # 詳細メタデータ用のテキスト文字列を構築する
         info_text = (
             f"**Channel:** {uploader_val}  |  **Requested By:** {requester_mention}\n"
-            f"**Loop Mode:** `{state.loop_mode.name.lower()}`  |  **Queue:** {remaining} songs"
+            f"**Loop:** `{loop_label}`  |  **Queue:** {remaining} songs"
         )
         # メタデータも TextDisplay のみで追加する
         container.add_item(discord.ui.TextDisplay(info_text))
@@ -2246,23 +2184,186 @@ class MusicControllerView(discord.ui.LayoutView):
         # コールバックメソッドを紐付ける
         self.stop_btn.callback = self.stop_callback
 
-        # アクション行（ボタン配置用）を作成する
+        # 曲単体ループ（ONE）ボタンを初期化する
+        loop_one_active = state.loop_mode == LoopMode.ONE
+        # 有効時は緑、無効時はグレーにする
+        self.loop_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success if loop_one_active else discord.ButtonStyle.secondary,
+            label="🔂 Loop",
+            custom_id=f"music_loop_one_{self.guild_id}"
+        )
+        # コールバックを紐付ける
+        self.loop_btn.callback = self.loop_one_callback
+
+        # キュー全体ループ（ALL）ボタンを初期化する
+        loop_all_active = state.loop_mode == LoopMode.ALL
+        # 有効時は緑、無効時はグレーにする
+        self.queue_loop_btn = discord.ui.Button(
+            style=discord.ButtonStyle.success if loop_all_active else discord.ButtonStyle.secondary,
+            label="🔁 QLoop",
+            custom_id=f"music_loop_all_{self.guild_id}"
+        )
+        # コールバックを紐付ける
+        self.queue_loop_btn.callback = self.loop_all_callback
+
+        # 再生コントロール用アクション行を作成する（最大5ボタン）
         action_row = discord.ui.ActionRow()
-        # ボタンを追加する
+        # Pause/Resume を追加する
         action_row.add_item(self.pause_resume_btn)
-        # ボタンを追加する
+        # Skip を追加する
         action_row.add_item(self.skip_btn)
-        # ボタンを追加する
+        # Stop を追加する
         action_row.add_item(self.stop_btn)
-        # 控えめな寄付リンク（enabled 時のみ）
-        donation_btn = make_subtle_link_button(donation_from_bot(self.cog.bot))
-        if donation_btn is not None:
-            action_row.add_item(donation_btn)
-        # コンテナにボタンを格納したアクション行を追加する
+        # Loop (ONE) を追加する
+        action_row.add_item(self.loop_btn)
+        # QueueLoop (ALL) を追加する
+        action_row.add_item(self.queue_loop_btn)
+        # コンテナにコントロール行を追加する
         container.add_item(action_row)
+
+        # 控えめな寄付リンク（enabled 時のみ）を別行に載せる
+        donation_btn = make_subtle_link_button(donation_from_bot(self.cog.bot))
+        # 寄付ボタンが有効な場合のみ行を追加する
+        if donation_btn is not None:
+            # 寄付専用のアクション行を作る
+            donation_row = discord.ui.ActionRow()
+            # 寄付ボタンを追加する
+            donation_row.add_item(donation_btn)
+            # コンテナに寄付行を追加する
+            container.add_item(donation_row)
+
+        # コントロールとキュー一覧の間に区切り線を入れる
+        container.add_item(discord.ui.Separator())
+
+        # キュー一覧テキストとページ情報を取得する
+        queue_text, page, total_pages = self.cog._build_queue_display_text(state)
+        # キュー一覧を TextDisplay で追加する
+        container.add_item(discord.ui.TextDisplay(queue_text))
+
+        # 複数ページあるときだけページングボタンを付ける
+        if total_pages > 1:
+            # ページング用アクション行を作成する
+            nav_row = discord.ui.ActionRow()
+            # 先頭ページボタンを作る
+            first_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="⏪",
+                custom_id=f"music_q_first_{self.guild_id}",
+                disabled=(page <= 0),
+            )
+            # コールバックを紐付ける
+            first_btn.callback = self.queue_first_callback
+            # 行に追加する
+            nav_row.add_item(first_btn)
+
+            # 前ページボタンを作る
+            prev_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="◀️",
+                custom_id=f"music_q_prev_{self.guild_id}",
+                disabled=(page <= 0),
+            )
+            # コールバックを紐付ける
+            prev_btn.callback = self.queue_prev_callback
+            # 行に追加する
+            nav_row.add_item(prev_btn)
+
+            # 現在ページ表示（押下不可）を作る
+            page_btn = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label=f"{page + 1}/{total_pages}",
+                custom_id=f"music_q_page_{self.guild_id}",
+                disabled=True,
+            )
+            # 行に追加する
+            nav_row.add_item(page_btn)
+
+            # 次ページボタンを作る
+            next_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="▶️",
+                custom_id=f"music_q_next_{self.guild_id}",
+                disabled=(page >= total_pages - 1),
+            )
+            # コールバックを紐付ける
+            next_btn.callback = self.queue_next_callback
+            # 行に追加する
+            nav_row.add_item(next_btn)
+
+            # 末尾ページボタンを作る
+            last_btn = discord.ui.Button(
+                style=discord.ButtonStyle.primary,
+                label="⏩",
+                custom_id=f"music_q_last_{self.guild_id}",
+                disabled=(page >= total_pages - 1),
+            )
+            # コールバックを紐付ける
+            last_btn.callback = self.queue_last_callback
+            # 行に追加する
+            nav_row.add_item(last_btn)
+
+            # コンテナにページング行を追加する
+            container.add_item(nav_row)
 
         # ビューに構築したコンテナをアタッチする
         self.add_item(container)
+
+    def _build_stop_confirm_ui(self, state: GuildState):
+        """Stop 確認用の Confirm / Cancel UI を組み立てる。"""
+        # 警告色のコンテナを初期化する
+        container = discord.ui.Container(accent_color=discord.Color.orange())
+        # 確認メッセージ本文を構築する
+        confirm_text = (
+            "### ⏹️ Stop Playback?\n"
+            "再生を停止し、キューをすべてクリアします。\n"
+            "Stop playback and clear the entire queue."
+        )
+        # TextDisplay で確認文を載せる
+        container.add_item(discord.ui.TextDisplay(confirm_text))
+
+        # Confirm / Cancel 用アクション行を作る
+        row = discord.ui.ActionRow()
+        # 確定ボタンを作る
+        confirm_btn = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="✅ Confirm",
+            custom_id=f"music_stop_confirm_{self.guild_id}",
+        )
+        # コールバックを紐付ける
+        confirm_btn.callback = self.stop_confirm_callback
+        # 行に追加する
+        row.add_item(confirm_btn)
+
+        # キャンセルボタンを作る
+        cancel_btn = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="❌ Cancel",
+            custom_id=f"music_stop_cancel_{self.guild_id}",
+        )
+        # コールバックを紐付ける
+        cancel_btn.callback = self.stop_cancel_callback
+        # 行に追加する
+        row.add_item(cancel_btn)
+
+        # コンテナに確認行を追加する
+        container.add_item(row)
+        # ビューにコンテナをアタッチする
+        self.add_item(container)
+
+    async def _edit_after_interaction(self, interaction: discord.Interaction, state: GuildState):
+        """defer 後に LayoutView を再編集する共通処理。"""
+        try:
+            # コンポーネント用トークンで元メッセージを編集する
+            await interaction.edit_original_response(embed=None, view=self)
+        except Exception:
+            # フォールバック: チャンネル経由 Message へ変換して編集する
+            durable = await self.cog._to_durable_message(interaction.message)
+            # 変換できた場合のみ編集する
+            if durable is not None:
+                # 通常 Message として編集する
+                await durable.edit(embed=None, view=self)
+                # 最新の参照を状態へ保存する
+                state.last_now_playing_message = durable
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # ギルドの再生状態オブジェクトを取得する
@@ -2327,18 +2428,8 @@ class MusicControllerView(discord.ui.LayoutView):
 
         # 変更された再生状態に基づいてUIを再構築する
         self.rebuild_ui()
-        # コンポーネントinteractionのトークンで編集し、webhook期限切れを避ける
-        try:
-            # defer後は edit_original_response がコンポーネント用の有効トークンを使う
-            await interaction.edit_original_response(embed=None, view=self)
-        except Exception:
-            # フォールバック: チャンネル経由Messageへ変換して編集する
-            durable = await self.cog._to_durable_message(interaction.message)
-            if durable is not None:
-                # 通常Messageとして編集する
-                await durable.edit(embed=None, view=self)
-                # 最新の参照を状態へ保存する
-                state.last_now_playing_message = durable
+        # メッセージを編集して反映する
+        await self._edit_after_interaction(interaction, state)
 
     async def skip_callback(self, interaction: discord.Interaction):
         # インタラクションへの遅延応答を開始する
@@ -2371,12 +2462,33 @@ class MusicControllerView(discord.ui.LayoutView):
             # 処理終了
             return
 
+        # Stop 確認ダイアログを有効にする
+        state.confirming_stop = True
+        # 確認UIに切り替える
+        self.rebuild_ui()
+        # メッセージを編集して確認UIを出す
+        await self._edit_after_interaction(interaction, state)
+
+    async def stop_confirm_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
+        await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
+        if not state:
+            # 処理終了
+            return
+
+        # 確認フラグを解除する
+        state.confirming_stop = False
         # 停止処理の開始をログに記録する
-        logger.info(f"Guild {self.guild_id}: stopping playback via UI button")
+        logger.info(f"Guild {self.guild_id}: stopping playback via UI confirm")
         # ループモードをOFFに設定する
         state.loop_mode = LoopMode.OFF
         # キューの内容をすべて消去する
         await state.clear_queue()
+        # キューページをリセットする
+        state.queue_page = 0
         # オーディオミキサーが存在するか判定する
         if state.mixer:
             # ミキサーを完全に停止する
@@ -2400,21 +2512,142 @@ class MusicControllerView(discord.ui.LayoutView):
 
         # 停止した状態に基づいてUIを再構築する
         self.rebuild_ui()
-        # コンポーネントinteractionのトークンで編集し、webhook期限切れを避ける
-        try:
-            # defer後は edit_original_response がコンポーネント用の有効トークンを使う
-            await interaction.edit_original_response(embed=None, view=self)
-        except Exception:
-            # フォールバック: チャンネル経由Messageへ変換して編集する
-            durable = await self.cog._to_durable_message(interaction.message)
-            if durable is not None:
-                # 通常Messageとして編集する
-                await durable.edit(embed=None, view=self)
+        # メッセージを編集して停止表示にする
+        await self._edit_after_interaction(interaction, state)
 
         # 直前の Now Playing メッセージへの参照が存在するか判定する
         if state.last_now_playing_message:
             # 参照を初期化する
             state.last_now_playing_message = None
+
+    async def stop_cancel_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
+        await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
+        if not state:
+            # 処理終了
+            return
+
+        # 確認フラグを解除する
+        state.confirming_stop = False
+        # 通常の再生UIへ戻す
+        self.rebuild_ui()
+        # メッセージを編集して通常UIに戻す
+        await self._edit_after_interaction(interaction, state)
+
+    async def loop_one_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
+        await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
+        if not state:
+            # 処理終了
+            return
+
+        # 既に ONE なら OFF、それ以外なら ONE に切り替える
+        if state.loop_mode == LoopMode.ONE:
+            # ループを解除する
+            state.loop_mode = LoopMode.OFF
+        else:
+            # 曲単体ループを有効にする
+            state.loop_mode = LoopMode.ONE
+        # 最終操作時刻を更新する
+        state.update_activity()
+        # 変更ログを残す
+        logger.info(f"Guild {self.guild_id}: loop mode set to {state.loop_mode.name} via Loop button")
+        # UIを再構築する
+        self.rebuild_ui()
+        # メッセージを編集する
+        await self._edit_after_interaction(interaction, state)
+
+    async def loop_all_callback(self, interaction: discord.Interaction):
+        # インタラクションへの遅延応答を開始する
+        await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
+        if not state:
+            # 処理終了
+            return
+
+        # 既に ALL なら OFF、それ以外なら ALL に切り替える
+        if state.loop_mode == LoopMode.ALL:
+            # キューループを解除する
+            state.loop_mode = LoopMode.OFF
+        else:
+            # キュー全体ループを有効にする
+            state.loop_mode = LoopMode.ALL
+        # 最終操作時刻を更新する
+        state.update_activity()
+        # 変更ログを残す
+        logger.info(f"Guild {self.guild_id}: loop mode set to {state.loop_mode.name} via QLoop button")
+        # UIを再構築する
+        self.rebuild_ui()
+        # メッセージを編集する
+        await self._edit_after_interaction(interaction, state)
+
+    async def queue_first_callback(self, interaction: discord.Interaction):
+        # 先頭ページへ移動する
+        await self._change_queue_page(interaction, target_page=0)
+
+    async def queue_prev_callback(self, interaction: discord.Interaction):
+        # ギルド状態を取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # 状態が無ければ終了する
+        if not state:
+            # interaction を消費する
+            await interaction.response.defer()
+            # 処理終了
+            return
+        # 前ページ番号を計算する
+        await self._change_queue_page(interaction, target_page=max(0, state.queue_page - 1))
+
+    async def queue_next_callback(self, interaction: discord.Interaction):
+        # ギルド状態を取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # 状態が無ければ終了する
+        if not state:
+            # interaction を消費する
+            await interaction.response.defer()
+            # 処理終了
+            return
+        # 総ページ数を把握するため表示ヘルパーを呼ぶ
+        _text, page, total_pages = self.cog._build_queue_display_text(state)
+        # 次ページ番号を計算する
+        await self._change_queue_page(interaction, target_page=min(total_pages - 1, page + 1))
+
+    async def queue_last_callback(self, interaction: discord.Interaction):
+        # ギルド状態を取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # 状態が無ければ終了する
+        if not state:
+            # interaction を消費する
+            await interaction.response.defer()
+            # 処理終了
+            return
+        # 総ページ数を把握する
+        _text, _page, total_pages = self.cog._build_queue_display_text(state)
+        # 末尾ページへ移動する
+        await self._change_queue_page(interaction, target_page=total_pages - 1)
+
+    async def _change_queue_page(self, interaction: discord.Interaction, target_page: int):
+        # インタラクションへの遅延応答を開始する
+        await interaction.response.defer()
+        # ギルドの再生状態オブジェクトを取得する
+        state = self.cog._get_guild_state(self.guild_id)
+        # オブジェクトが存在しない場合は終了する
+        if not state:
+            # 処理終了
+            return
+        # ページ番号を書き換える
+        state.queue_page = max(0, target_page)
+        # UIを再構築する
+        self.rebuild_ui()
+        # メッセージを編集する
+        await self._edit_after_interaction(interaction, state)
 
 
 async def setup(bot: commands.Bot):
