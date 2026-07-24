@@ -1,7 +1,8 @@
 # 📚 MOMOKA Detailed Documentation (English)
 
 > **If you only want to use the hosted bots**, start at the [website](https://momoka-project.com/) ([FAQ](https://momoka-project.com/faq.html) / [Troubleshooting](https://momoka-project.com/troubleshooting.html)).  
-> This document is mainly for **self-hosting and developers**.
+> This document is mainly for **self-hosting and developers**.  
+> Listing copy: [App Directory](bot_listing_discord.md) · [top.gg](bot_listing_topgg.md) ([index](bot_listing.md))
 
 ## Table of Contents
 
@@ -169,7 +170,8 @@ Fetches media with yt-dlp and shares it via Google Drive (links expire after a d
    pip install -r requirements.txt
    python main.py
    ```
-   On start, the GUI log panes are General / LLM / TTS+Music / Error. Music logs go to TTS+Music.
+   On start, the GUI log panes are General / LLM / TTS+Music / Error. Music logs go to TTS+Music.  
+   The log viewer lives under `MOMOKA/GUI/`. Version constants are in `MOMOKA/version.py` (Discord status date = last git commit).
 
 ---
 

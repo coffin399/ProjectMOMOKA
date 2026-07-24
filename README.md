@@ -66,6 +66,7 @@
 > **Built-ins（セルフホスト時 / when self-hosting）**
 > - Image generation — `MOMOKA/generator/image` (diffusers)
 > - Style-Bert-VITS2 TTS — `MOMOKA/generator/tts` (see `NOTICE`)
+> - Log viewer GUI — `MOMOKA/GUI/` (version: `MOMOKA/version.py`; Discord status date = last git commit)
 
 ### Key Features / 主な機能
 
@@ -121,6 +122,7 @@ startMOMOKA.bat          # Windows (recommended)
 | FAQ / Troubleshooting | https://momoka-project.com/faq.html · https://momoka-project.com/troubleshooting.html |
 | Terms / Privacy | https://momoka-project.com/terms.html · https://momoka-project.com/privacy.html |
 | Detailed setup | [🇯🇵](docs/README_ja.md) · [🇺🇸](docs/README_en.md) |
+| Bot listing copy | [index](docs/bot_listing.md) · [App Directory](docs/bot_listing_discord.md) · [top.gg](docs/bot_listing_topgg.md) |
 | License | **AGPL-3.0** — Style-Bert-VITS2: AGPL/LGPL (`NOTICE`) |
 
 ---
