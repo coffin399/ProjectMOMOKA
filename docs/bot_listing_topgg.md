@@ -39,13 +39,13 @@ Also see: [bot_listing_discord.md](bot_listing_discord.md) (Discord App Director
 ## Short Description — English (≤140)
 
 ```
-PLANA — AI chat, music playback & media download. Free Discord bot. Invite and go.
+PLANA — AI chat, music playback & media download. Multi-functional Discord bot. Invite and go.
 ```
 
 ## Short Description — Japanese (≤140)
 
 ```
-PLANA — AI対話・音楽再生・メディアDL。無料のDiscordボット。招待するだけで使えます。
+PLANA — AI対話・音楽再生・メディアDL。多機能Discordボット。招待して使えます。
 ```
 
 ---
@@ -57,7 +57,7 @@ Paste into top.gg **Long Description**.
 ```markdown
 # PLANA
 
-**PLANA** is a free, multi-functional Discord bot — invite and use. AI chat, music, media download, and more in one bot.
+**PLANA** is a multi-functional Discord bot. AI chat, music, media download, and more in one bot.
 
 ---
 
@@ -128,7 +128,7 @@ Fetch video or audio and share via Google Drive.
 ```markdown
 # PLANA
 
-**PLANA** は無料の多機能 Discord ボットです。招待するだけで使えます。AI対話・音楽・メディアダウンロードなどを1体で提供します。
+**PLANA** は多機能 Discord ボットです。AI対話・音楽・メディアダウンロードなどを1体で提供します。
 
 ---
 

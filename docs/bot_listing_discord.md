@@ -42,13 +42,13 @@ Max 5 tags, max 20 characters each:
 ### App Directory Summary (≤200)
 
 ```
-PLANA — free Discord bot: multi-model AI chat, music (YouTube/Spotify & more), and media download. Invite and use.
+PLANA — multi-model AI chat, music (YouTube/Spotify & more), and media download for Discord. Invite and use.
 ```
 
 ### Application Description (≤400)
 
 ```
-PLANA is a free, multi-functional Discord bot. Chat with AI by @mentioning PLANA, then keep going with replies (multi-model, web search, image understanding). Play music from YouTube, Spotify, and more. Download video/audio with /download_video and /download_audio. Also TTS, Link Fix, notifications, and utilities. Site: https://momoka-project.com/
+PLANA is a multi-functional Discord bot. Chat with AI by @mentioning PLANA, then keep going with replies (multi-model, web search, image understanding). Play music from YouTube, Spotify, and more. Download video/audio with /download_video and /download_audio. Also TTS, Link Fix, notifications, and utilities. Site: https://momoka-project.com/
 ```
 
 ---
@@ -58,13 +58,13 @@ PLANA is a free, multi-functional Discord bot. Chat with AI by @mentioning PLANA
 ### App Directory Summary (≤200)
 
 ```
-PLANA — 無料のDiscordボット。マルチモデルAI対話、音楽再生（YouTube/Spotify等）、メディアダウンロード。招待するだけで使えます。
+PLANA — マルチモデルAI対話、音楽再生（YouTube/Spotify等）、メディアダウンロード対応のDiscordボット。招待して使えます。
 ```
 
 ### Application Description (≤400)
 
 ```
-PLANAは無料の多機能Discordボットです。@メンションでAI対話を始め、リプライで会話を継続（マルチモデル・Web検索・画像理解）。YouTube/Spotify等の音楽再生。/download_video・/download_audioでメディア取得。TTS・Link Fix・通知・ユーティリティも。サイト: https://momoka-project.com/
+PLANAは多機能Discordボットです。@メンションでAI対話を始め、リプライで会話を継続（マルチモデル・Web検索・画像理解）。YouTube/Spotify等の音楽再生。/download_video・/download_audioでメディア取得。TTS・Link Fix・通知・ユーティリティも。サイト: https://momoka-project.com/
 ```
 
 ---
@@ -76,7 +76,7 @@ Paste into App Directory **Expanded Description**.
 ```markdown
 # PLANA
 
-**PLANA** is a free, multi-functional Discord bot — invite and use. AI chat, music, media download, and more in one bot.
+**PLANA** is a multi-functional Discord bot. AI chat, music, media download, and more in one bot.
 
 ---
 
@@ -135,7 +135,7 @@ Fetch video or audio and share via Google Drive.
 ```markdown
 # PLANA
 
-**PLANA** は無料の多機能 Discord ボットです。招待するだけで使えます。AI対話・音楽・メディアダウンロードなどを1体で提供します。
+**PLANA** は多機能 Discord ボットです。AI対話・音楽・メディアダウンロードなどを1体で提供します。
 
 ---
 
