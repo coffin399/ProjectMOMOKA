@@ -570,6 +570,7 @@ class Momoka(commands.Bot):
 # ===============================================================
 # プライマリボット（PLANA）が読み込む全 Cog
 PRIMARY_COGS = [
+    'MOMOKA.count.count_cog',
     'MOMOKA.images.image_commands_cog',
     'MOMOKA.llm.llm_cog',
     'MOMOKA.link_fix.link_fix_cog',

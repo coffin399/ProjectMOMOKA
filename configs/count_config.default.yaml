@@ -1,0 +1,25 @@
+# 掲載サイト向けサーバー数（count）投稿設定
+# top.gg / Discord Bot List / bots.gg などへ guild 数を定期 POST する
+count:
+  # 全体スイッチ（false ならどのサイトにも送らない）
+  enabled: true
+  # 投稿間隔（分）
+  interval_minutes: 30
+  # 掲載サイト（同じ形で追加する）
+  sites:
+    # https://top.gg/
+    topgg:
+      enabled: false
+      token: YOUR_TOPGG_TOKEN
+      # 空文字なら投稿する Bot 自身の user.id を使う
+      bot_id: ""
+    # https://discordbotlist.com/
+    discordbotlist:
+      enabled: false
+      token: YOUR_DISCORDBOTLIST_TOKEN
+      bot_id: ""
+    # https://discord.bots.gg/
+    discordbotsgg:
+      enabled: false
+      token: YOUR_DISCORDBOTSGG_TOKEN
+      bot_id: ""
