@@ -1,5 +1,8 @@
 # 📚 MOMOKA Detailed Documentation (English)
 
+> **If you only want to use the hosted bots**, start at the [website](https://momoka-project.com/) ([FAQ](https://momoka-project.com/faq.html) / [Troubleshooting](https://momoka-project.com/troubleshooting.html)).  
+> This document is mainly for **self-hosting and developers**.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -362,4 +365,6 @@ Real-time JMA WebSocket alerts (early warning, quake info, tsunami forecast).
 
 ---
 
-**Made with ❤️ by the MOMOKA development team**
+**Made by [coffin299](https://discord.com/users/270446628622696449) & [zer0latency](https://discord.com/users/583206903442571264)**
+
+&copy; 2026 MOMOKA

@@ -2,10 +2,12 @@
 
 ![Moe Counter](https://count.getloli.com/@prjMOMOKAGitHub?name=prjMOMOKAGitHub&theme=original-new&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=0&num=1030)
 
-# 🎯 MOMOKA
+# MOMOKA
 
-**AIエージェント型DiscordBOT — PLANA + ARONA のデュアルボット構成。AIチャット・音楽・画像生成・討論など。**
+**JA:** 多機能 Discord ボット — PLANA（主）+ ARONA（コンパニオン）。AIチャット・音楽・読み上げ・通知・Link Fix など。  
+**EN:** Multi-functional Discord bot — PLANA (primary) + ARONA (companion). AI chat, music, TTS, notifications, Link Fix, and more.
 
+[![Website](https://img.shields.io/badge/Website-momoka--project.com-1c1917?style=for-the-badge)](https://momoka-project.com/)
 [![Invite PLANA](https://img.shields.io/badge/Invite%20PLANA-24/7%20Online-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
 [![Invite ARONA](https://img.shields.io/badge/Invite%20ARONA-Companion-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)
 
@@ -13,80 +15,118 @@
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue.svg)
 ![discord.py](https://img.shields.io/badge/discord.py-2.7+-blue.svg)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coffin399/ProjectMOMOKA)
 [![Discord](https://img.shields.io/discord/1305004687921250436?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/H79HKKqx3s)
-[![](https://coffin299.net/assets/badge.svg)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
 
 </div>
 
 <div align="center">
 
-[🇯🇵 日本語 (Japanese)](docs/README_ja.md) | [🇺🇸 English](docs/README_en.md)
+[🇯🇵 日本語詳細](docs/README_ja.md) · [🇺🇸 English docs](docs/README_en.md) · [Website](https://momoka-project.com/) · [FAQ](https://momoka-project.com/faq.html) · [Terms](https://momoka-project.com/terms.html) · [Privacy](https://momoka-project.com/privacy.html)
 
 </div>
 
+> **JA:** 日英で差異がある場合は **日本語を優先**します。  
+> **EN:** If Japanese and English differ, **Japanese takes priority**.
+
 ---
 
-## ✨ What is MOMOKA?
+## まず使う / Get started (recommended)
 
-**MOMOKA** runs **two Discord bots in one process**: **PLANA** (primary) and **ARONA** (companion). Each can run alone for LLM chat and music. Debate / cross-check need both bots in the same guild. TTS, image generation, notifications, trackers, and **Link Fix** are **PLANA only** (ARONA redirects users to PLANA for most of those).
+**JA:** 公開ホストのボットを招待するだけで使えます。セットアップ不要です。  
+**EN:** Just invite the hosted bots — no setup required.
 
-> **Built-ins:**
-> - **Built-in image generation** — diffusers pipeline in `MOMOKA/generator/image`
-> - **Integrated Style-Bert-VITS2 TTS** — see `MOMOKA/generator/tts` and `NOTICE` (AGPL/LGPL)
+1. **[Invite PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)**  
+   **JA:** フル機能 · **EN:** full feature set
+2. **[Invite ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)**  
+   **JA:** debate / cross_check を使うなら同じサーバーに追加 · **EN:** add to the same server for debate / cross_check
+3. **[Website](https://momoka-project.com/)** — [FAQ](https://momoka-project.com/faq.html) · [Troubleshooting](https://momoka-project.com/troubleshooting.html)
 
-### 🚀 Key Features
+**JA:** サポート — [Discord](https://discord.gg/H79HKKqx3s) · DM [coffin299](https://discord.com/users/270446628622696449)  
+**EN:** Support — [Discord](https://discord.gg/H79HKKqx3s) · DM [coffin299](https://discord.com/users/270446628622696449)
 
-- 🤖 **AI Chat (LLM)** — Mention `@PLANA` / `@ARONA`. OpenAI, Gemini, NVIDIA NIM, KoboldCPP + API key rotation
-- 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with judge, or a light 3-step cross-check
-- 🎵 **Music** — YouTube, Spotify, and more (both bots)
-- 🎨 **Image Generation / TTS / Notifications / Trackers** — PLANA only
-- 🔗 **Link Fix** — Replace broken social embeds (X/Instagram/TikTok/…) via fixer proxies; `/linkfix` settings (PLANA only)
-- 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
+---
 
-### 📋 Quick Start
+## What is MOMOKA? / MOMOKA とは
 
-1. **Clone**
-   ```bash
-   git clone https://github.com/coffin399/ProjectMOMOKA.git
-   cd ProjectMOMOKA
-   ```
+**JA:** **MOMOKA** はプロジェクト名です。実際に動く Discord ボットは **PLANA**（プライマリ）と **ARONA**（コンパニオン）の2体で、1プロセスで両方を動かします。  
+**EN:** **MOMOKA** is the project name. The Discord bots are **PLANA** (primary) and **ARONA** (companion), run together in one process.
 
-2. **Requirements**
-   - **Python 3.11.x** (required)
-   - Two Discord Applications (PLANA + ARONA), both with **Message Content Intent**
-   - Optional: Netscape-format `youtube_cookie.txt` in the project root
+| Bot | JA | EN |
+|-----|----|----|
+| **PLANA** | LLM・音楽・TTS・画像・通知・tracker・Link Fix・メディアDL・utilities | LLM, music, TTS, images, notifications, trackers, Link Fix, media download, utilities |
+| **ARONA** | LLM・音楽・slash。TTS/画像/通知/tracker/Link Fix は PLANA へ誘導 | LLM, music, slash. TTS / images / notifications / trackers / Link Fix redirect to PLANA |
+| **Both required** | debate / cross_check（同じギルド） | debate / cross_check (same guild) |
 
-3. **Configure** (`configs/` — root `config.yaml` is **not** used)
-   - First run copies `configs/<category>_config.default.yaml` → `configs/<category>_config.yaml` automatically (or copy manually)
-   - Edit `configs/bots_config.yaml`: set `bots.plana.token` and `bots.arona.token`
-   - Edit `configs/llm_config.yaml` for API keys
-   - Invite both bots:
-     - [PLANA](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
-     - [ARONA](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot)
+> **Built-ins（セルフホスト時 / when self-hosting）**
+> - Image generation — `MOMOKA/generator/image` (diffusers)
+> - Style-Bert-VITS2 TTS — `MOMOKA/generator/tts` (see `NOTICE`)
 
-4. **Run**
-   ```bash
-   startMOMOKA.bat          # Windows (recommended)
-   # or: py -3.11 -m venv .venv && pip install -r requirements.txt && python main.py
-   ```
+### Key Features / 主な機能
 
-### 📚 Docs
+- **AI Chat (LLM)** — `@PLANA` / `@ARONA`, `/chat`, model switch, web search, image understanding
+- **debate / cross_check** — **JA:** PLANA↔ARONA 討論（両ボット必要） · **EN:** PLANA↔ARONA debate (both bots required)
+- **Music** — YouTube / Spotify, etc. (**JA:** 両ボット · **EN:** both bots)
+- **TTS / images / notifications / trackers** — **JA:** PLANA のみ · **EN:** PLANA only
+- **Link Fix** — **JA:** 壊れた SNS embed の代替（`/linkfix`、PLANA のみ） · **EN:** fix broken social embeds (`/linkfix`, PLANA only)
+- **Utilities** — `/help` `/invite` `/support`, timers, `/match_time`, `/download_video` `/download_audio`, …
 
-- [🇯🇵 日本語詳細](docs/README_ja.md) · [🇺🇸 English](docs/README_en.md)
+**JA:** 最新コマンドは `/help` または [コマンド一覧](https://momoka-project.com/commands.html)  
+**EN:** Prefer `/help` in Discord, or the [command list](https://momoka-project.com/commands.html)
 
-### 🔧 Third-Party / License
+---
 
-- Project license: **AGPL-3.0**
-- **[Style-Bert-VITS2](https://github.com/litagin02/Style-Bert-VITS2)** integrated under AGPL-3.0 / LGPL-3.0 — see `NOTICE` and `MOMOKA/generator/tts/LICENSE_SBVITS2*`
+## Self-host / セルフホスト（上級者向け / advanced）
+
+**JA:** 依存が多く重いです。一般利用は上記の招待を推奨します。  
+**EN:** Heavy dependencies. For normal use, invite the hosted bots above.
+
+### Requirements / 要件
+
+- **Python 3.11.x** (**JA:** 必須 · **EN:** required)
+- Discord Application ×2 (PLANA + ARONA), both with **Message Content Intent**
+- Optional: Netscape-format `youtube_cookie.txt` in the project root
+
+### Configure / 設定
+
+**JA:** ルートの `config.yaml` は **使いません**。`configs/` 配下のみです。  
+**EN:** Root `config.yaml` is **not used**. Use `configs/` only.
+
+1. First run copies `configs/<category>_config.default.yaml` → `configs/<category>_config.yaml` (or copy manually)
+2. Set tokens / invite URLs in `configs/bots_config.yaml`
+3. Set API keys in `configs/llm_config.yaml`
+4. Details: [docs/README_ja.md](docs/README_ja.md) · [docs/README_en.md](docs/README_en.md)
+
+### Run / 起動
+
+```bash
+git clone https://github.com/coffin399/ProjectMOMOKA.git
+cd ProjectMOMOKA
+startMOMOKA.bat          # Windows (recommended)
+# or: python main.py     # after installing deps
+```
+
+---
+
+## Docs & Legal / ドキュメント・法務
+
+| | |
+|---|---|
+| Website | https://momoka-project.com/ |
+| FAQ / Troubleshooting | https://momoka-project.com/faq.html · https://momoka-project.com/troubleshooting.html |
+| Terms / Privacy | https://momoka-project.com/terms.html · https://momoka-project.com/privacy.html |
+| Detailed setup | [🇯🇵](docs/README_ja.md) · [🇺🇸](docs/README_en.md) |
+| License | **AGPL-3.0** — Style-Bert-VITS2: AGPL/LGPL (`NOTICE`) |
 
 ---
 
 <div align="center">
 
-**Made with ❤️ by the MOMOKA development team**
+**MOMOKA** · [momoka-project.com](https://momoka-project.com/)
+
+&copy; 2026 MOMOKA · [coffin299](https://discord.com/users/270446628622696449) &amp; [zer0latency](https://discord.com/users/583206903442571264)
 
 </div>

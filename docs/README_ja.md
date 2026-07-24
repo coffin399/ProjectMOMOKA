@@ -1,5 +1,8 @@
 # 📚 MOMOKA 詳細ドキュメント（日本語）
 
+> **公開ボットを使うだけなら** [公式サイト](https://momoka-project.com/)（[FAQ](https://momoka-project.com/faq.html) / [Troubleshooting](https://momoka-project.com/troubleshooting.html)）を先に見てください。  
+> このドキュメントは主に **セルフホスト・開発者向け** です。
+
 ## 目次
 
 - [概要](#概要)
@@ -380,4 +383,6 @@ music:
 
 ---
 
-**Made with ❤️ by the MOMOKA development team**
+**Made by [coffin299](https://discord.com/users/270446628622696449) & [zer0latency](https://discord.com/users/583206903442571264)**
+
+&copy; 2026 MOMOKA
