@@ -20,6 +20,9 @@
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coffin399/ProjectMOMOKA)
 [![Discord](https://img.shields.io/discord/1305004687921250436?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/H79HKKqx3s)
+[![](https://coffin399.github.io/coffin299page/assets/badge.svg)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
+[![PLANA on top.gg](https://top.gg/api/widget/1031673203774464160.svg)](https://top.gg/bot/1031673203774464160)
+[![Discord App Directory](https://img.shields.io/badge/Discord-App%20Directory-5865F2?logo=discord&logoColor=white)](https://discord.com/discovery/applications/1031673203774464160)
 
 </div>
 
