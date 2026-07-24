@@ -798,35 +798,22 @@ class MusicCog(commands.Cog, name="music_cog"):
 
             # NO audio 失敗時の分岐
             if is_no_audio_fail:
-                # 英語バナー／専用パネル用メッセージを組み立てる
-                load_error_text = f'Could not load: "{finished_track.title}"'
-                # 単発再生（次曲が無い）ならエラー専用パネルだけ出す
-                # Loop ONE で壊れた同一曲を回し続けるのも避ける
-                if not has_next_in_queue:
-                    # 再生中トラックをクリアする
-                    state.current_track = None
-                    # 再生位置をリセットする
-                    state.reset_playback_tracking()
-                    # バナー状態は専用パネルに任せるのでクリアする
-                    state.ui_load_error = None
-                    # 表示済みフラグも戻す
-                    state.ui_load_error_seen = False
-                    # プログレス更新を止める
-                    state.stop_progress_updater()
-                    # エラー専用 Components V2 を出す
-                    await self._show_standalone_load_error_panel(
-                        guild_id,
-                        load_error_text,
-                    )
-                    # アイドルミキサーを片付ける
-                    await self._cleanup_idle_mixer(state)
-                    # 次曲再生へ進まない
+                # URL + タイトルを含むバナー文言を組み立てる
+                load_error_text = self._format_ui_load_error(
+                    url=getattr(finished_track, "url", None),
+                    title=getattr(finished_track, "title", None),
+                    detail="No audio produced (stream unavailable).",
+                )
+                # 次曲が無ければ専用パネル、あれば次曲 UI 下へバナー
+                should_continue = await self._present_playback_load_error(
+                    guild_id,
+                    load_error_text,
+                    has_next_in_queue=has_next_in_queue,
+                )
+                # 単発失敗なら次曲再生へ進まない
+                if not should_continue:
+                    # 早期リターン
                     return
-
-                # 次曲がある場合はバナーを載せたままスキップ再生する
-                state.ui_load_error = load_error_text
-                # 次曲の Now Playing で一度見せ、その次の曲で消す
-                state.ui_load_error_seen = False
 
             # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
             # NO audio 失敗時は壊れた曲を ONE で回さない
@@ -1149,15 +1136,53 @@ class MusicCog(commands.Cog, name="music_cog"):
                     f"Guild {guild_id} ({guild.name if guild else ''}): Playback error: {e}",
                     exc_info=True,
                 )
+            # 再生状態を一旦落とす（次曲再生や専用パネルの前準備）
+            state.is_seeking = False
+            state.is_playing = False
+            # シーク失敗は別経路。通常再生のロード失敗は Components V2 へ出す
+            if not is_seek_operation and track_to_play is not None:
+                # URL + yt-dlp 等のエラー文言をバナー用に組み立てる
+                load_error_text = self._format_ui_load_error(
+                    url=getattr(track_to_play, "url", None),
+                    title=getattr(track_to_play, "title", None),
+                    error=e,
+                )
+                # 次曲の有無を失敗曲クリア前に判定する
+                has_next_in_queue = not state.queue.empty()
+                # 壊れた曲を Loop ALL へ再投入しない
+                # （従来は再投入していたが利用不可 URL で無限ループになる）
+                state.current_track = None
+                # 再生位置をリセットする
+                state.reset_playback_tracking()
+                # Components V2（次曲下バナー or 専用パネル）で通知する
+                should_continue = await self._present_playback_load_error(
+                    guild_id,
+                    load_error_text,
+                    has_next_in_queue=has_next_in_queue,
+                    preferred_message=play_msg,
+                )
+                # 次曲があればスキップ再生する
+                if should_continue:
+                    # /play の searching 応答を次曲 Now Playing の編集先として残す
+                    if play_msg is not None and state.last_now_playing_message is None:
+                        # 次曲 UI がこのメッセージを上書きできるようにする
+                        state.last_now_playing_message = play_msg
+                    # 次曲再生をスケジュールする
+                    asyncio.create_task(self._play_next_song(guild_id))
+                # エラー表示まで完了したので終了する
+                return
+            # シーク失敗など: 従来どおりテキスト通知（稀な経路）
             error_message = self.exception_handler.handle_error(e, guild)
             if state.last_text_channel_id:
-                await self._send_background_message(state.last_text_channel_id, "error_message_wrapper",
-                                                    error=error_message)
+                await self._send_background_message(
+                    state.last_text_channel_id,
+                    "error_message_wrapper",
+                    error=error_message,
+                )
+            # Loop ALL のシーク失敗時のみ再投入を維持する
             if state.loop_mode == LoopMode.ALL and track_to_play and not is_seek_operation:
                 await state.queue.put(track_to_play)
             state.current_track = None
-            state.is_seeking = False
-            state.is_playing = False
             state.reset_playback_tracking()
             # 再生エラー時はプログレスバー更新を停止する
             state.stop_progress_updater()
@@ -1536,17 +1561,36 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         # 検索または追加処理中に例外が発生した場合のハンドリングを行う
         except Exception as e:
-            # 例外内容を解析し、ギルド用のエラーメッセージを取得する
-            error_message = self.exception_handler.handle_error(e, ctx.guild)
-            # エラー文言をフォーマットして取得する
-            wrapped_error_msg = self.exception_handler.get_message("error_message_wrapper", error=error_message)
+            # Video unavailable / DRM 等は Components V2 のエラーパネルで出す
+            load_error_text = self._format_ui_load_error(
+                url=query,
+                error=e,
+            )
+            # エラー専用 LayoutView を組み立てる
+            error_view = LoadErrorLayoutView(load_error_text)
             # 検索中メッセージが存在するか判定する
             if searching_msg:
-                # 検索メッセージをエラーメッセージに編集する
-                await searching_msg.edit(content=wrapped_error_msg)
+                try:
+                    # 検索メッセージをエラー専用 V2 に差し替える
+                    await searching_msg.edit(content=None, embed=None, view=error_view)
+                except Exception as edit_err:
+                    # 編集失敗時はフォールバックでテキスト通知する
+                    logger.warning(
+                        "Guild %s: Failed to edit play reply into load-error panel: %s",
+                        ctx.guild.id if ctx.guild else "?",
+                        edit_err,
+                    )
+                    # 従来のラップ文言へフォールバックする
+                    error_message = self.exception_handler.handle_error(e, ctx.guild)
+                    wrapped_error_msg = self.exception_handler.get_message(
+                        "error_message_wrapper",
+                        error=error_message,
+                    )
+                    # テキストで編集する
+                    await searching_msg.edit(content=wrapped_error_msg)
             else:
-                # メッセージがない場合は、新規にエラーメッセージを送信する
-                await self._send_ctx_message(ctx, content=wrapped_error_msg)
+                # メッセージがない場合は、新規に V2 パネルを送信する
+                await self._send_ctx_message(ctx, view=error_view)
 
         # 最終的に必ず実行するクリーンアップ処理
         finally:
@@ -1896,10 +1940,101 @@ class MusicCog(commands.Cog, name="music_cog"):
         # 構築完了したEmbedオブジェクトを返す
         return embed
 
+    def _format_ui_load_error(
+        self,
+        *,
+        url: Optional[str] = None,
+        title: Optional[str] = None,
+        error: Optional[BaseException] = None,
+        detail: Optional[str] = None,
+    ) -> str:
+        """Components V2 用のロード失敗文言（URL + エラー）を組み立てる。"""
+        # 表示行を溜めるリスト
+        lines: List[str] = []
+        # URL が空ならプレースホルダを使う
+        display_url = (url or "").strip() or "(unknown URL)"
+        # 先頭行に URL を載せる
+        lines.append(f"Could not load: {display_url}")
+        # タイトルがあれば補助行として付ける
+        if title and str(title).strip():
+            # タイトル行を追加する
+            lines.append(f'Title: "{title}"')
+        # 詳細メッセージの候補を決める
+        msg = (detail or "").strip() if detail else ""
+        # 明示 detail が無く、例外がある場合は原因例外を優先する
+        if not msg and error is not None:
+            # yt-dlp 元例外（Video unavailable 等）を優先する
+            cause = getattr(error, "__cause__", None)
+            # 原因があればそれ、無ければ例外本体の文字列
+            raw = str(cause) if cause else str(error)
+            # 前後空白を落とす
+            msg = raw.strip()
+        # メッセージが取れた場合のみ整形して追加する
+        if msg:
+            # ログ由来の ANSI 色コードを除去する
+            msg = re.sub(r"\x1b\[[0-9;]*m", "", msg)
+            # yt-dlp の "ERROR: " プレフィックスを落とす
+            if msg.upper().startswith("ERROR:"):
+                # 先頭 6 文字を除く
+                msg = msg[6:].strip()
+            # 整形後のエラー行を追加する
+            lines.append(msg)
+        # 改行結合したバナー文言を返す
+        return "\n".join(lines)
+
+    async def _present_playback_load_error(
+        self,
+        guild_id: int,
+        load_error_text: str,
+        *,
+        has_next_in_queue: bool,
+        preferred_message: Optional[discord.Message] = None,
+    ) -> bool:
+        """
+        ロード失敗を Components V2 で出す。
+        次曲あり: Now Playing 最下部バナー用に state へ載せ True を返す。
+        次曲なし: 専用パネルを出し False（次曲再生しない）を返す。
+        """
+        # ギルド状態を取得する
+        state = self._get_guild_state(guild_id)
+        # 状態が無ければ次曲再生もしない
+        if not state:
+            # 継続不可
+            return False
+        # 単発失敗（次曲なし）は専用パネルへ
+        if not has_next_in_queue:
+            # 再生中トラックをクリアする
+            state.current_track = None
+            # 再生位置をリセットする
+            state.reset_playback_tracking()
+            # バナー状態は専用パネルに任せるのでクリアする
+            state.ui_load_error = None
+            # 表示済みフラグも戻す
+            state.ui_load_error_seen = False
+            # プログレス更新を止める
+            state.stop_progress_updater()
+            # エラー専用 Components V2 を出す（/play 応答があればそれを優先編集）
+            await self._show_standalone_load_error_panel(
+                guild_id,
+                load_error_text,
+                preferred_message=preferred_message,
+            )
+            # アイドルミキサーを片付ける
+            await self._cleanup_idle_mixer(state)
+            # 次曲再生へ進まない
+            return False
+        # 次曲がある場合はバナーを載せたままスキップ再生する
+        state.ui_load_error = load_error_text
+        # 次曲の Now Playing で一度見せ、その次の曲で消す
+        state.ui_load_error_seen = False
+        # 呼び出し側は次曲再生へ進む
+        return True
+
     async def _show_standalone_load_error_panel(
         self,
         guild_id: int,
         load_error_text: str,
+        preferred_message: Optional[discord.Message] = None,
     ) -> None:
         """単発再生のロード失敗時、エラー専用 Components V2 パネルを出す。"""
         # ギルド状態を取得する
@@ -1911,11 +2046,27 @@ class MusicCog(commands.Cog, name="music_cog"):
 
         # エラー専用 LayoutView を組み立てる
         view = LoadErrorLayoutView(load_error_text)
-        # 既存の Now Playing メッセージがあればそれをエラー表示に差し替える
-        if state.last_now_playing_message:
+
+        # 編集候補: /play の searching 応答 → 既存 Now Playing の順
+        edit_candidates: List[discord.Message] = []
+        # preferred があれば最優先候補へ入れる
+        if preferred_message is not None:
+            # /play 応答などを先頭に置く
+            edit_candidates.append(preferred_message)
+        # 既存 Now Playing があれば続ける
+        if state.last_now_playing_message is not None:
+            # 同一メッセージの二重編集を避ける
+            if preferred_message is None or state.last_now_playing_message.id != getattr(
+                preferred_message, "id", None
+            ):
+                # Now Playing を候補へ追加する
+                edit_candidates.append(state.last_now_playing_message)
+
+        # 候補を順に編集試行する
+        for candidate in edit_candidates:
             try:
                 # webhook 期限切れ回避のため通常 Message へ変換する
-                target = await self._to_durable_message(state.last_now_playing_message)
+                target = await self._to_durable_message(candidate)
                 # 変換できた場合のみ編集する
                 if target is not None:
                     # エラー専用 UI に上書きする
@@ -1925,12 +2076,14 @@ class MusicCog(commands.Cog, name="music_cog"):
                     # 成功したので終了する
                     return
             except Exception as e:
-                # 編集失敗はログに残し、新規送信へフォールバックする
+                # 編集失敗はログに残し、次候補または新規送信へ進む
                 logger.warning(
-                    f"Guild {guild_id}: Failed to edit Now Playing into load-error panel: {e}"
+                    f"Guild {guild_id}: Failed to edit message into load-error panel: {e}"
                 )
-                # 壊れた参照を捨てる
-                state.last_now_playing_message = None
+                # preferred 以外（Now Playing）が壊れていれば参照を捨てる
+                if candidate is state.last_now_playing_message:
+                    # 壊れた参照を捨てる
+                    state.last_now_playing_message = None
 
         # 新規送信先チャンネルを解決する
         channel = None
@@ -1948,7 +2101,6 @@ class MusicCog(commands.Cog, name="music_cog"):
         except Exception as e:
             # 送信失敗をログする
             logger.error(f"Guild {guild_id}: Failed to send load-error panel: {e}")
-
     async def _update_now_playing_message_ui(
         self,
         guild_id: int,
