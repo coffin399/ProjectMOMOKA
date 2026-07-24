@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -10,6 +11,8 @@ from discord.ext import commands, tasks
 
 from MOMOKA.count.providers import (
     PROVIDERS,
+    SITE_MIN_INTERVAL_SECONDS,
+    RateLimitedError,
     app_commands_to_payload,
     is_placeholder_token,
     post_discordbotlist_commands,
@@ -34,6 +37,8 @@ class CountCog(commands.Cog):
             self.section = {}
         # HTTP セッション（遅延生成）
         self._session: Optional[aiohttp.ClientSession] = None
+        # サイトごとの最終成功時刻（monotonic）
+        self._last_success_at: Dict[str, float] = {}
         # 間隔（分）を読む
         interval = float(self.section.get("interval_minutes") or 30)
         # 最低 5 分にクランプする（レート制限・過負荷防止）
@@ -64,6 +69,28 @@ class CountCog(commands.Cog):
             self._session = aiohttp.ClientSession()
         # 返す
         return self._session
+
+    def _in_cooldown(self, site_id: str) -> bool:
+        """サイト固有の最短間隔内なら True。"""
+        # 既定の最短間隔（秒）
+        min_seconds = float(SITE_MIN_INTERVAL_SECONDS.get(site_id, 0.0))
+        # サイト設定で上書きできる
+        cfg = self._sites().get(site_id) or {}
+        raw = cfg.get("min_interval_minutes")
+        if raw is not None:
+            try:
+                min_seconds = max(min_seconds, float(raw) * 60.0)
+            except (TypeError, ValueError):
+                pass
+        # 制限なし
+        if min_seconds <= 0:
+            return False
+        # 最終成功が無ければ制限外
+        last = self._last_success_at.get(site_id)
+        if last is None:
+            return False
+        # 経過秒を見る
+        return (time.monotonic() - last) < min_seconds
 
     async def cog_unload(self) -> None:
         """Cog アンロード時にループ停止とセッション閉鎖。"""
@@ -177,6 +204,10 @@ class CountCog(commands.Cog):
             return
         # 各サイトへ投稿
         for site_id, cfg in sites.items():
+            # プロセス内クールダウン中なら送らない
+            if self._in_cooldown(site_id):
+                logger.debug("[count] skip %s: site cooldown", site_id)
+                continue
             # プロバイダ関数
             post_fn = PROVIDERS[site_id]
             # bot_id 解決
@@ -186,6 +217,8 @@ class CountCog(commands.Cog):
             # 投稿を試みる
             try:
                 await post_fn(session, bot_id, server_count, token)
+                # 成功時刻を記録する
+                self._last_success_at[site_id] = time.monotonic()
                 # 成功ログ
                 logger.info(
                     "[count] posted to %s: server_count=%s bot_id=%s",
@@ -193,6 +226,9 @@ class CountCog(commands.Cog):
                     server_count,
                     bot_id,
                 )
+            except RateLimitedError as exc:
+                # 再起動直後などで起きうる想定内エラー
+                logger.info("[count] rate limited for %s: %s", site_id, exc)
             except Exception as exc:
                 # サイト単位で失敗しても他は続ける
                 logger.warning("[count] post failed for %s: %s", site_id, exc)
@@ -200,6 +236,11 @@ class CountCog(commands.Cog):
             if site_id == "discordbotlist":
                 try:
                     await self._post_discordbotlist_commands(session, cfg)
+                except RateLimitedError as exc:
+                    logger.info(
+                        "[count] discordbotlist commands rate limited: %s",
+                        exc,
+                    )
                 except Exception as exc:
                     # コマンド投稿失敗でも stats 成功分は残す
                     logger.warning(

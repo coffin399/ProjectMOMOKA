@@ -15,6 +15,22 @@ PostFn = Callable[
     Awaitable[None],
 ]
 
+# サイトごとの最短投稿間隔（秒）。再投稿しすぎ防止。
+SITE_MIN_INTERVAL_SECONDS: Dict[str, float] = {
+    # Void Bots: "every 3 minutes"
+    "voidbots": 180.0,
+}
+
+
+class RateLimitedError(RuntimeError):
+    """掲載サイト側のレート制限（HTTP 429）。"""
+
+    def __init__(self, site_id: str, detail: str) -> None:
+        # サイト id を保持する
+        self.site_id = site_id
+        # 親へメッセージを渡す
+        super().__init__(f"{site_id} rate limited: {detail}")
+
 
 async def _post_json(
     session: aiohttp.ClientSession,
@@ -37,7 +53,11 @@ async def _post_json(
         headers=headers,
         timeout=aiohttp.ClientTimeout(total=30),
     ) as resp:
-        # 失敗なら本文付きで例外
+        # 429 は想定内の制限なので専用例外にする
+        if resp.status == 429:
+            body = await resp.text()
+            raise RateLimitedError(site_id, body[:300])
+        # その他の失敗は本文付きで例外
         if resp.status >= 400:
             body = await resp.text()
             raise RuntimeError(f"{site_id} HTTP {resp.status}: {body[:300]}")

@@ -27,10 +27,13 @@ count:
       token: YOUR_DISCORDBOTSGG_TOKEN
       bot_id: ""
     # https://voidbots.net/
+    # サーバ数 POST は最短 3 分間隔（429 防止）。再起動直後は制限に当たることがある
     voidbots:
       enabled: false
       token: YOUR_VOIDBOTS_TOKEN
       bot_id: ""
+      # 任意: このサイトだけの最短間隔（分）。未指定時も voidbots は 3 分
+      # min_interval_minutes: 3
     # https://discordextremelist.xyz/
     discordextremelist:
       enabled: false
