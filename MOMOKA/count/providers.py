@@ -1,9 +1,9 @@
 # MOMOKA/count/providers.py
-# 掲載サイトごとのサーバー数 POST 実装。
+# 掲載サイトごとのサーバー数 / コマンド一覧 POST 実装。
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, List, Sequence
 
 import aiohttp
 
@@ -22,15 +22,15 @@ async def _post_json(
     site_id: str,
     url: str,
     token: str,
-    payload: Dict[str, Any],
+    payload: Any,
 ) -> None:
     """Authorization + JSON POST の共通処理。"""
-    # ヘッダを組み立てる
+    # ヘッダを組み立てる（token はそのまま Authorization に載せる）
     headers = {
         "Authorization": token,
         "Content-Type": "application/json",
     }
-    # POST する
+    # POST する（payload は dict / list どちらも可）
     async with session.post(
         url,
         json=payload,
@@ -79,6 +79,46 @@ async def post_discordbotlist(
         token=token,
         payload={"guilds": int(server_count)},
     )
+
+
+async def post_discordbotlist_commands(
+    session: aiohttp.ClientSession,
+    bot_id: str,
+    commands: Sequence[Dict[str, Any]],
+    token: str,
+) -> None:
+    """Discord Bot List にスラッシュコマンド一覧を投稿する。"""
+    # 公式: POST /api/v1/bots/:id/commands（Discord API と同じ配列）
+    url = f"https://discordbotlist.com/api/v1/bots/{bot_id}/commands"
+    # 配列へ正規化する（呼び出し側の型ゆれを吸収）
+    payload: List[Dict[str, Any]] = [dict(item) for item in commands]
+    # POST する
+    await _post_json(
+        session,
+        site_id="discordbotlist_commands",
+        url=url,
+        token=token,
+        payload=payload,
+    )
+
+
+def app_commands_to_payload(commands: Sequence[Any]) -> List[Dict[str, Any]]:
+    """discord.app_commands 系オブジェクトを Discord API 形式へ変換する。"""
+    # 変換結果
+    payloads: List[Dict[str, Any]] = []
+    # 各コマンドを走査する
+    for cmd in commands:
+        # to_dict が無ければスキップする
+        to_dict = getattr(cmd, "to_dict", None)
+        if not callable(to_dict):
+            continue
+        # Discord 送信と同じ辞書にする
+        data = to_dict()
+        # dict だけ採用する
+        if isinstance(data, dict):
+            payloads.append(data)
+    # 返す
+    return payloads
 
 
 async def post_discordbotsgg(

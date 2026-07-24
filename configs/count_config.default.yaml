@@ -18,6 +18,9 @@ count:
       enabled: false
       token: YOUR_DISCORDBOTLIST_TOKEN
       bot_id: ""
+      # スラッシュコマンド一覧も POST する（bot ページに表示）
+      # https://docs.discordbotlist.com/commands-list
+      post_commands: true
     # https://discord.bots.gg/
     discordbotsgg:
       enabled: false

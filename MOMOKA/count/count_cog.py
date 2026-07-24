@@ -1,16 +1,18 @@
 # MOMOKA/count/count_cog.py
-# 掲載サイトへサーバー数（count）を定期投稿する Cog。
+# 掲載サイトへサーバー数（count）とコマンド一覧を定期投稿する Cog。
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 from discord.ext import commands, tasks
 
 from MOMOKA.count.providers import (
     PROVIDERS,
+    app_commands_to_payload,
     is_placeholder_token,
+    post_discordbotlist_commands,
     resolve_bot_id,
 )
 
@@ -114,9 +116,50 @@ class CountCog(commands.Cog):
         # 返す
         return enabled
 
+    def _collect_command_payloads(self) -> List[Dict[str, Any]]:
+        """CommandTree 上のアプリコマンドを Discord API 形式へ変換する。"""
+        # tree が無ければ空
+        tree = getattr(self.bot, "tree", None)
+        if tree is None:
+            return []
+        # 登録済みトップレベルコマンドを取る
+        commands_list = tree.get_commands()
+        # Discord API 形式へ変換する
+        return app_commands_to_payload(commands_list)
+
+    async def _post_discordbotlist_commands(
+        self,
+        session: aiohttp.ClientSession,
+        cfg: Dict[str, Any],
+    ) -> None:
+        """discordbotlist へスラッシュコマンド一覧を投稿する。"""
+        # サイト設定でオフなら送らない（既定はオン）
+        if not bool(cfg.get("post_commands", True)):
+            return
+        # Bot 未ログインなら送れない
+        if self.bot.user is None:
+            return
+        # コマンド配列を組み立てる
+        payloads = self._collect_command_payloads()
+        # 未登録ならスキップ（空配列で消すのは明示設定時のみにする）
+        if not payloads:
+            logger.info("[count] discordbotlist commands skipped: no app commands on tree")
+            return
+        # bot_id / token
+        bot_id = resolve_bot_id(cfg, self.bot.user.id)
+        token = str(cfg.get("token") or "").strip()
+        # POST する
+        await post_discordbotlist_commands(session, bot_id, payloads, token)
+        # 成功ログ
+        logger.info(
+            "[count] posted commands to discordbotlist: count=%s bot_id=%s",
+            len(payloads),
+            bot_id,
+        )
+
     @tasks.loop(minutes=30)
     async def post_counts(self) -> None:
-        """有効な掲載サイトへ server_count を送る。"""
+        """有効な掲載サイトへ server_count（と DBL コマンド一覧）を送る。"""
         # 全体オフ
         if not bool(self.section.get("enabled", True)):
             return
@@ -153,6 +196,16 @@ class CountCog(commands.Cog):
             except Exception as exc:
                 # サイト単位で失敗しても他は続ける
                 logger.warning("[count] post failed for %s: %s", site_id, exc)
+            # Discord Bot List だけコマンド一覧も送る
+            if site_id == "discordbotlist":
+                try:
+                    await self._post_discordbotlist_commands(session, cfg)
+                except Exception as exc:
+                    # コマンド投稿失敗でも stats 成功分は残す
+                    logger.warning(
+                        "[count] discordbotlist commands post failed: %s",
+                        exc,
+                    )
 
     @post_counts.before_loop
     async def before_post_counts(self) -> None:
