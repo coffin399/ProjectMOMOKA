@@ -40,6 +40,8 @@ class Track:
     original_query: Optional[str] = None
     # アップローダーまたはチャンネル名（無い場合はNone）
     uploader: Optional[str] = None
+    # アップローダー／チャンネルページのURL（無い場合はNone）
+    uploader_url: Optional[str] = None
     # 音声の取得に必要なHTTPヘッダー情報（User-Agentなど、無い場合はNone）
     http_headers: Optional[dict] = None
 
@@ -47,6 +49,86 @@ class Track:
 # --- yt-dlp 設定 ---
 CACHE_DIR = Path("./cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# yt-dlp 本体が使う既定キャッシュ候補（OS 差を吸収）
+_YTDLP_DEFAULT_CACHE_CANDIDATES = (
+    Path.home() / ".cache" / "yt-dlp",
+    Path.home() / "AppData" / "Local" / "yt-dlp" / "Cache",
+)
+
+
+def clear_ytdlp_cache() -> int:
+    """起動時用: プロジェクト cache と yt-dlp 既定キャッシュを削除する。
+
+    Returns:
+        削除に成功したエントリ数（ファイル／ディレクトリ単位の概算）。
+    """
+    # 削除成功数を初期化する
+    cleared = 0
+
+    def _purge_path(target: Path) -> int:
+        # 対象パスが無ければ何もしない
+        if not target.exists():
+            # 削除件数 0
+            return 0
+        # この呼び出しでの削除件数
+        local_cleared = 0
+        # ディレクトリなら中身を消す（ディレクトリ自体は残す場合もある）
+        if target.is_dir():
+            # 子エントリを走査する
+            for child in list(target.iterdir()):
+                try:
+                    # ファイル／シンボリックリンクを削除する
+                    if child.is_file() or child.is_symlink():
+                        # ファイルを消す
+                        child.unlink(missing_ok=True)
+                    else:
+                        # サブディレクトリを再帰削除する
+                        shutil.rmtree(child, ignore_errors=False)
+                    # 成功件数を加算する
+                    local_cleared += 1
+                except Exception as e:
+                    # 個別失敗は警告に留め、他の削除は続行する
+                    logger.warning("Failed to remove cache entry %s: %s", child, e)
+        elif target.is_file() or target.is_symlink():
+            try:
+                # 単一ファイルを削除する
+                target.unlink(missing_ok=True)
+                # 成功件数を加算する
+                local_cleared += 1
+            except Exception as e:
+                # 削除失敗を警告する
+                logger.warning("Failed to remove cache file %s: %s", target, e)
+        # このパスでの削除件数を返す
+        return local_cleared
+
+    # プロジェクトの ./cache を空にする
+    cleared += _purge_path(CACHE_DIR)
+    # 空ディレクトリとして再作成する
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # yt-dlp 既定キャッシュ候補も消す
+    for cache_path in _YTDLP_DEFAULT_CACHE_CANDIDATES:
+        # 存在する候補だけ対象にする
+        if not cache_path.exists():
+            # 次の候補へ
+            continue
+        try:
+            # ディレクトリごと削除する（次回 yt-dlp が再作成する）
+            shutil.rmtree(cache_path)
+            # ディレクトリ 1 件として数える
+            cleared += 1
+            # 削除成功をログする
+            logger.info("Removed yt-dlp cache directory: %s", cache_path)
+        except Exception as e:
+            # 失敗は警告に留める
+            logger.warning("Failed to remove yt-dlp cache directory %s: %s", cache_path, e)
+
+    # 結果をログする
+    logger.info("yt-dlp cache cleanup finished (removed ~%s entries)", cleared)
+    # 削除件数を返す
+    return cleared
+
 
 NICO_COOKIE_PATH = Path("./nico_cookies.txt")
 # ニコニコ動画用クッキーファイルが存在しない場合は作成する
@@ -732,6 +814,8 @@ def _entry_to_track(entry: dict, *, is_downloaded_nico: bool = False) -> Track:
         original_query=entry.get("original_query"),
         # アップローダー、チャンネル、またはアップローダーIDを設定する
         uploader=entry.get("uploader") or entry.get("channel") or entry.get("uploader_id"),
+        # チャンネル／アップローダーページURLを設定する
+        uploader_url=entry.get("uploader_url") or entry.get("channel_url"),
         # 接続に必要なHTTPヘッダー情報を設定する
         http_headers=entry.get("http_headers")
     )
@@ -796,11 +880,23 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
         # 抽出したメタデータから一時的なTrackオブジェクトを構築する
         temp_track = _entry_to_track(entry_to_use, is_downloaded_nico=False)
         # 再生に必要なストリームURL、HTTPヘッダー、サムネイル、アップローダー情報をタプルで返す
-        return temp_track.stream_url, temp_track.http_headers, temp_track.thumbnail, temp_track.uploader
+        return (
+            temp_track.stream_url,
+            temp_track.http_headers,
+            temp_track.thumbnail,
+            temp_track.uploader,
+            temp_track.uploader_url,
+        )
 
     try:
         # 同期実行のyt-dlp抽出処理を非同期イベントループのバックグラウンドスレッドプールで実行する
-        new_stream_url, new_http_headers, new_thumbnail, new_uploader = await loop.run_in_executor(None, _run_extract_single_info)
+        (
+            new_stream_url,
+            new_http_headers,
+            new_thumbnail,
+            new_uploader,
+            new_uploader_url,
+        ) = await loop.run_in_executor(None, _run_extract_single_info)
         # 取得した新しいストリームURLが有効か判定する
         if new_stream_url:
             # トラックオブジェクトのストリームURLを最新のものに更新する
@@ -811,6 +907,8 @@ async def ensure_stream(track: Track, ytdl_opts_override: Optional[dict] = None)
             track.thumbnail = new_thumbnail
             # トラックオブジェクトのアップローダー情報を更新する
             track.uploader = new_uploader
+            # チャンネルURLも更新する
+            track.uploader_url = new_uploader_url
         else:
             # 取得失敗時は警告メッセージをコンソールに出力する
             print(f"[ytdlp_wrapper Warning] ストリームURLの再取得に失敗: {track.title} (URL: {track.url})")

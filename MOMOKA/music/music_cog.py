@@ -34,6 +34,7 @@ try:
         extract as extract_audio_data,
         ensure_stream,
         set_youtube_cookie_path,
+        clear_ytdlp_cache,
         UnsupportedMediaError,
         COMMON_YTDL_OPTS,
         YOUTUBE_PLAYER_CLIENT_FALLBACK,
@@ -47,6 +48,7 @@ except ImportError as e:
     extract_audio_data = None
     ensure_stream = None
     set_youtube_cookie_path = None
+    clear_ytdlp_cache = None
     UnsupportedMediaError = None
     COMMON_YTDL_OPTS = None
     YOUTUBE_PLAYER_CLIENT_FALLBACK = None
@@ -135,6 +137,10 @@ class GuildState:
         self.queue_page: int = 0
         # Stop ボタン押下後の確認ダイアログ表示中フラグ
         self.confirming_stop: bool = False
+        # Components V2 下部に出すロード失敗バナー（英語・コードブロック用）
+        self.ui_load_error: Optional[str] = None
+        # 失敗バナーを一度 UI に出したあと、次曲開始で消すためのフラグ
+        self.ui_load_error_seen: bool = False
 
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -232,6 +238,15 @@ class MusicCog(commands.Cog, name="music_cog"):
         self.cleanup_task = None
 
     async def cog_load(self):
+        # 起動時に yt-dlp / プロジェクト cache を掃除して古いストリーム情報を残さない
+        if clear_ytdlp_cache is not None:
+            try:
+                # キャッシュ削除を実行する
+                clear_ytdlp_cache()
+            except Exception as e:
+                # キャッシュ削除失敗でも Cog ロードは続行する
+                logger.warning(f"yt-dlp cache cleanup failed (non-fatal): {e}")
+
         # DAVE: 2.6 系向けモンキーパッチ / 2.7+ は discord.py ネイティブ + davey（voice_dave_patch 内で分岐）
         if apply_dave_patch:
             try:
@@ -725,31 +740,60 @@ class MusicCog(commands.Cog, name="music_cog"):
             # 再生中フラグを下ろす
             state.is_playing = False
 
-            # リトライ済みかつ NO audio ならユーザーへ短文通知する
-            if (
+            # NO audio 失敗かどうか
+            is_no_audio_fail = (
                 finished_source is not None
                 and getattr(finished_source, "no_audio_failure", False)
-                and state.last_text_channel_id
                 and finished_track is not None
-            ):
-                # チャンネルへ再生失敗を通知する
-                await self._send_background_message(
-                    state.last_text_channel_id,
-                    "error_message_wrapper",
-                    error=(
-                        f"再生に失敗しました: {finished_track.title} "
-                        "(ストリーム取得エラー)"
-                    ),
-                )
+            )
+            # キューに次曲があるか（失敗曲の再投入前に判定）
+            has_next_in_queue = not state.queue.empty()
+
+            # NO audio 失敗時の分岐
+            if is_no_audio_fail:
+                # 英語バナー／専用パネル用メッセージを組み立てる
+                load_error_text = f'Could not load: "{finished_track.title}"'
+                # 単発再生（次曲が無い）ならエラー専用パネルだけ出す
+                # Loop ONE で壊れた同一曲を回し続けるのも避ける
+                if not has_next_in_queue:
+                    # 再生中トラックをクリアする
+                    state.current_track = None
+                    # 再生位置をリセットする
+                    state.reset_playback_tracking()
+                    # バナー状態は専用パネルに任せるのでクリアする
+                    state.ui_load_error = None
+                    # 表示済みフラグも戻す
+                    state.ui_load_error_seen = False
+                    # プログレス更新を止める
+                    state.stop_progress_updater()
+                    # エラー専用 Components V2 を出す
+                    await self._show_standalone_load_error_panel(
+                        guild_id,
+                        load_error_text,
+                    )
+                    # アイドルミキサーを片付ける
+                    await self._cleanup_idle_mixer(state)
+                    # 次曲再生へ進まない
+                    return
+
+                # 次曲がある場合はバナーを載せたままスキップ再生する
+                state.ui_load_error = load_error_text
+                # 次曲の Now Playing で一度見せ、その次の曲で消す
+                state.ui_load_error_seen = False
 
             # LoopMode.ONEの場合は current_track を保持、それ以外は None にする
-            if state.loop_mode != LoopMode.ONE:
+            # NO audio 失敗時は壊れた曲を ONE で回さない
+            if state.loop_mode != LoopMode.ONE or is_no_audio_fail:
                 state.current_track = None
 
             state.reset_playback_tracking()
 
-            # LoopMode.ALLの場合はキューに再追加
-            if finished_track and state.loop_mode == LoopMode.ALL:
+            # LoopMode.ALLの場合はキューに再追加（NO audio 失敗曲は再投入しない）
+            if (
+                finished_track
+                and state.loop_mode == LoopMode.ALL
+                and not is_no_audio_fail
+            ):
                 await state.queue.put(finished_track)
 
             # 次の曲を再生（キューが空の場合はミキサーの停止も行う）
@@ -841,6 +885,14 @@ class MusicCog(commands.Cog, name="music_cog"):
             await self._cleanup_idle_mixer(state)
             # 次曲再生処理を終了する
             return
+
+        # 失敗バナーを「次曲の再生中だけ」出すため、
+        # バナー表示済みの状態でさらに次の曲へ進むときに消す
+        if state.ui_load_error_seen:
+            # バナー本文をクリアする
+            state.ui_load_error = None
+            # 表示済みフラグも戻す
+            state.ui_load_error_seen = False
 
         if not is_seek_operation:
             state.current_track = track_to_play
@@ -1746,6 +1798,10 @@ class MusicCog(commands.Cog, name="music_cog"):
         
         # アップローダー/チャンネル名が定義されているか判定し、無ければ「Unknown」にする
         uploader_val = track.uploader if track.uploader else "Unknown"
+        # チャンネルURLがあればリンク付きにする
+        if track.uploader_url and uploader_val != "Unknown":
+            # Embed 用の Markdown リンクにする
+            uploader_val = f"[{uploader_val}]({track.uploader_url})"
         # アップローダー名を記載するフィールドをEmbedに追加する
         embed.add_field(name="Channel / Uploader", value=uploader_val, inline=True)
         # リクエストユーザーを記載するフィールドをEmbedに追加する
@@ -1767,6 +1823,59 @@ class MusicCog(commands.Cog, name="music_cog"):
         embed.set_footer(text="MOMOKA Music Player")
         # 構築完了したEmbedオブジェクトを返す
         return embed
+
+    async def _show_standalone_load_error_panel(
+        self,
+        guild_id: int,
+        load_error_text: str,
+    ) -> None:
+        """単発再生のロード失敗時、エラー専用 Components V2 パネルを出す。"""
+        # ギルド状態を取得する
+        state = self._get_guild_state(guild_id)
+        # 状態が無ければ何もしない
+        if not state:
+            # 早期リターン
+            return
+
+        # エラー専用 LayoutView を組み立てる
+        view = LoadErrorLayoutView(load_error_text)
+        # 既存の Now Playing メッセージがあればそれをエラー表示に差し替える
+        if state.last_now_playing_message:
+            try:
+                # webhook 期限切れ回避のため通常 Message へ変換する
+                target = await self._to_durable_message(state.last_now_playing_message)
+                # 変換できた場合のみ編集する
+                if target is not None:
+                    # エラー専用 UI に上書きする
+                    await target.edit(content=None, embed=None, view=view)
+                    # 参照をクリアして以降のプログレス更新対象外にする
+                    state.last_now_playing_message = None
+                    # 成功したので終了する
+                    return
+            except Exception as e:
+                # 編集失敗はログに残し、新規送信へフォールバックする
+                logger.warning(
+                    f"Guild {guild_id}: Failed to edit Now Playing into load-error panel: {e}"
+                )
+                # 壊れた参照を捨てる
+                state.last_now_playing_message = None
+
+        # 新規送信先チャンネルを解決する
+        channel = None
+        # last_text_channel_id があればそこへ送る
+        if state.last_text_channel_id:
+            # チャンネルオブジェクトを取得する
+            channel = self.bot.get_channel(state.last_text_channel_id)
+        # テキストチャンネルでなければ送れない
+        if not isinstance(channel, discord.TextChannel):
+            # 送信先なし
+            return
+        try:
+            # @silent でエラー専用パネルを新規投稿する
+            await channel.send(view=view, silent=True)
+        except Exception as e:
+            # 送信失敗をログする
+            logger.error(f"Guild {guild_id}: Failed to send load-error panel: {e}")
 
     async def _update_now_playing_message_ui(
         self,
@@ -2023,6 +2132,26 @@ class MusicCog(commands.Cog, name="music_cog"):
                 ephemeral=True,
             )
 
+class LoadErrorLayoutView(discord.ui.LayoutView):
+    """単発再生のストリーム取得失敗用 Components V2 パネル。"""
+
+    def __init__(self, load_error_text: str):
+        # タイムアウトなし（静的表示）
+        super().__init__(timeout=None)
+        # 警告色のコンテナを作る
+        container = discord.ui.Container(accent_color=discord.Color.orange())
+        # 見出しを載せる
+        container.add_item(
+            discord.ui.TextDisplay("### Could not load track")
+        )
+        # 英語メッセージをコードブロックで最下部相当に載せる
+        container.add_item(
+            discord.ui.TextDisplay(f"```\n{load_error_text}\n```")
+        )
+        # ビューにコンテナを載せる
+        self.add_item(container)
+
+
 class MusicControllerView(discord.ui.LayoutView):
     def __init__(
         self,
@@ -2118,7 +2247,28 @@ class MusicControllerView(discord.ui.LayoutView):
             # サムネイル無しはテキストのみ追加する
             container.add_item(discord.ui.TextDisplay(title_text))
 
-        # タイトルと Progress の間に区切り線を入れる
+        # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
+        uploader_val = track.uploader if track.uploader else "Unknown"
+        # チャンネルURLがあれば Markdown リンクにする
+        if track.uploader_url and uploader_val != "Unknown":
+            # クリック可能なチャンネル名にする
+            uploader_display = f"[{uploader_val}]({track.uploader_url})"
+        else:
+            # URL が無ければプレーンテキストのまま使う
+            uploader_display = uploader_val
+        # リクエストユーザーのメンション文字列を設定する
+        requester_mention = f"<@{track.requester_id}>" if track.requester_id else "Unknown"
+        # 残りのキューの数を取得する
+        remaining = state.queue.qsize()
+        # ループモード表示用の短いラベルを決める
+        loop_label = state.loop_mode.name.lower()
+
+        # 曲名の直下に Channel を置く
+        container.add_item(
+            discord.ui.TextDisplay(f"**Channel:** {uploader_display}")
+        )
+
+        # Channel と Progress の間に区切り線を入れる
         container.add_item(discord.ui.Separator())
 
         # 現在の再生位置（秒）を取得する
@@ -2127,7 +2277,7 @@ class MusicControllerView(discord.ui.LayoutView):
         progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
         # 再生時間と総再生時間の文字列フォーマットを生成する
         duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
-        # Progress を大きく目立たせて配置する
+        # Progress を Channel の下に大きく配置する
         container.add_item(
             discord.ui.TextDisplay(
                 f"## Progress\n# {progress_bar}\n### {duration_str}"
@@ -2137,21 +2287,12 @@ class MusicControllerView(discord.ui.LayoutView):
         # Progress とメタ情報の間に区切り線を入れる
         container.add_item(discord.ui.Separator())
 
-        # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
-        uploader_val = track.uploader if track.uploader else "Unknown"
-        # リクエストユーザーのメンション文字列を設定する
-        requester_mention = f"<@{track.requester_id}>" if track.requester_id else "Unknown"
-        # 残りのキューの数を取得する
-        remaining = state.queue.qsize()
-        # ループモード表示用の短いラベルを決める
-        loop_label = state.loop_mode.name.lower()
-
-        # 詳細メタデータ用のテキスト文字列を構築する
+        # Requested By / Loop / Queue は Progress の下にまとめる
         info_text = (
-            f"**Channel:** {uploader_val}  |  **Requested By:** {requester_mention}\n"
+            f"**Requested By:** {requester_mention}\n"
             f"**Loop:** `{loop_label}`  |  **Queue:** {remaining} songs"
         )
-        # メタデータも TextDisplay のみで追加する
+        # メタデータを TextDisplay で追加する
         container.add_item(discord.ui.TextDisplay(info_text))
 
         # 一時停止/再生ボタンを初期化する
@@ -2305,8 +2446,26 @@ class MusicControllerView(discord.ui.LayoutView):
             # コンテナにページング行を追加する
             container.add_item(nav_row)
 
+        # ロード失敗バナーがあればキューの下（最下部）にコードブロックで出す
+        self._append_load_error_banner(container, state)
+
         # ビューに構築したコンテナをアタッチする
         self.add_item(container)
+
+    def _append_load_error_banner(self, container: discord.ui.Container, state: Optional[GuildState]):
+        """NO audio 等のロード失敗を Components V2 最下部に英語コードブロックで付ける。"""
+        # 状態またはバナー文字列が無ければ何もしない
+        if not state or not state.ui_load_error:
+            # 早期リターン
+            return
+        # 区切り線を入れてバナーを目立たせる
+        container.add_item(discord.ui.Separator())
+        # Discord コードブロックとして英語メッセージを載せる
+        container.add_item(
+            discord.ui.TextDisplay(f"```\n{state.ui_load_error}\n```")
+        )
+        # 一度表示したことを記録し、次曲開始で消せるようにする
+        state.ui_load_error_seen = True
 
     def _build_stop_confirm_ui(self, state: GuildState):
         """Stop 確認用の Confirm / Cancel UI を組み立てる。"""
@@ -2489,6 +2648,10 @@ class MusicControllerView(discord.ui.LayoutView):
         await state.clear_queue()
         # キューページをリセットする
         state.queue_page = 0
+        # ロード失敗バナーも消す
+        state.ui_load_error = None
+        # 表示済みフラグも戻す
+        state.ui_load_error_seen = False
         # オーディオミキサーが存在するか判定する
         if state.mixer:
             # ミキサーを完全に停止する
