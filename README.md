@@ -18,6 +18,7 @@
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/coffin399/ProjectMOMOKA)
 [![Discord](https://img.shields.io/discord/1305004687921250436?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/H79HKKqx3s)
+[![](https://coffin299.net/assets/badge.svg)](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot)
 
 </div>
 
@@ -31,7 +32,7 @@
 
 ## ✨ What is MOMOKA?
 
-**MOMOKA** runs **two Discord bots in one process**: **PLANA** (primary) and **ARONA** (companion). Each can run alone for LLM chat and music. Debate / cross-check need both bots in the same guild. TTS, image generation, notifications, and trackers are **PLANA only** (ARONA redirects users to PLANA).
+**MOMOKA** runs **two Discord bots in one process**: **PLANA** (primary) and **ARONA** (companion). Each can run alone for LLM chat and music. Debate / cross-check need both bots in the same guild. TTS, image generation, notifications, trackers, and **Link Fix** are **PLANA only** (ARONA redirects users to PLANA for most of those).
 
 > **Built-ins:**
 > - **Built-in image generation** — diffusers pipeline in `MOMOKA/generator/image`
@@ -43,6 +44,7 @@
 - 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with judge, or a light 3-step cross-check
 - 🎵 **Music** — YouTube, Spotify, and more (both bots)
 - 🎨 **Image Generation / TTS / Notifications / Trackers** — PLANA only
+- 🔗 **Link Fix** — Replace broken social embeds (X/Instagram/TikTok/…) via fixer proxies; `/linkfix` settings (PLANA only)
 - 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
 
 ### 📋 Quick Start

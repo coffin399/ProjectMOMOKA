@@ -20,8 +20,8 @@
 
 | Bot | Role | Invite |
 |-----|------|--------|
-| **PLANA** | Primary — LLM, music, TTS, images, notifications, trackers, utilities | [Invite](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot) |
-| **ARONA** | Companion — LLM, music, utilities. TTS/images/notifications/trackers redirect to PLANA | [Invite](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot) |
+| **PLANA** | Primary — LLM, music, TTS, images, notifications, trackers, Link Fix, utilities | [Invite](https://discord.com/oauth2/authorize?client_id=1031673203774464160&permissions=6516795221339600&scope=bot) |
+| **ARONA** | Companion — LLM, music, utilities. TTS/images/notifications/trackers/Link Fix redirect to PLANA | [Invite](https://discord.com/oauth2/authorize?client_id=1364917551024308255&permissions=6516795221339600&scope=bot) |
 
 - Create **two Discord Applications** and enable **Message Content Intent** on both
 - The old root `config.yaml` / `config.default.yaml` are **not used** (no compatibility)
@@ -32,6 +32,7 @@
 - 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with a judge turn, or a light 3-step verification
 - 🎵 **Music playback** — YouTube, Spotify, Google Drive, and more (both bots)
 - 🎨 **Image generation / TTS / notifications / trackers** — **PLANA only**
+- 🔗 **Link Fix** — Replace broken social embeds via fixer proxies (`/linkfix`, **PLANA only**)
 - 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
 
 ---
@@ -84,7 +85,17 @@ Rainbow Six Siege / VALORANT stats.
 
 Earthquake alerts and Twitch stream notifications.
 
-### 7. Utilities
+### 7. Link Fix (PLANA only)
+
+When Discord’s official embed is missing or broken, PLANA silently replies with a fixer-proxy URL so media previews work again.
+
+- Examples: X (Twitter), Instagram, TikTok, Reddit, Threads, Bluesky, Facebook, Pixiv, YouTube, and more
+- Skip with `fxignore` in the message, or wrap the URL in `<>`
+- For X posts, if the guild `preferred_locale` is known, `🌐` / flag buttons switch original vs translated embeds (FxEmbed-compatible fixers only)
+- `/linkfix` (Manage Server): per-guild master/site toggles and fixer source/destination domains (Components V2)
+- Config: `configs/link_fix_config.yaml`; guild overrides in `data/link_fix_settings.json`
+
+### 8. Utilities
 
 Dice, timers, server/user info, gacha, etc. `/help` and `/invite` use Components V2 and cover both bot invites.
 
@@ -170,6 +181,7 @@ Settings live under `configs/` as category YAML files. See each `*_config.defaul
 | `notifications_config.yaml` | Earthquake / Twitch (PLANA) |
 | `tracker_config.yaml` | Game stats (PLANA) |
 | `debate_config.yaml` | debate / cross_check |
+| `link_fix_config.yaml` | Link Fix (broken social embeds, PLANA) |
 | `utilities_config.yaml` | Utilities |
 | `core_config.yaml` | Shared core settings |
 
@@ -248,6 +260,14 @@ llm:
 | `/earthquake_*` | Earthquake alerts |
 | `/twitch_add` `/twitch_remove` `/twitch_list` | Twitch alerts |
 
+### Link Fix (PLANA)
+
+| Command / action | Description |
+|------------------|-------------|
+| Post an SNS URL | Silent quote-reply with a fixer URL when the official embed is missing/broken |
+| `/linkfix` | Master/site toggles and fixer source/destination (Components V2, Manage Server) |
+| Include `fxignore` | Skip Link Fix for that message |
+
 ### Utilities
 
 | Command | Description |
@@ -283,6 +303,13 @@ Place models under `models/image-models/`, use `provider: "local"` (default). Fo
 ### Earthquake alerts (PLANA)
 
 Real-time JMA WebSocket alerts (early warning, quake info, tsunami forecast).
+
+### Link Fix (PLANA)
+
+- Waits briefly for Discord’s official embed; replies with a fixer URL **only when media is missing/mismatched** (not always-on)
+- Replies are `@silent`; original embeds are suppressed when Manage Messages is available
+- If the fixer reply gets no embed, it is deleted
+- `/linkfix` lets each guild pick fixer denominations (e.g. `fxtwitter.com` / `vxtwitter.com`) and match domains
 
 ---
 
