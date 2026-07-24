@@ -1810,7 +1810,8 @@ class LLMCog(commands.Cog, name="LLM"):
         try:
             full_response_text, last_update, last_displayed_length, chunk_count = "", 0.0, 0, 0
             update_interval, min_update_chars, retry_sleep_time = 0.5, 15, 2.0
-            emoji_prefix, emoji_suffix = ":incoming_envelope: ", " :incoming_envelope:"
+            # ストリーム生成中のみ前後に付けるカスタム絵文字（完了後は外す）
+            emoji_prefix, emoji_suffix = "<:stream:1313474295372058758> ", " <:stream:1313474295372058758>"
             max_final_retries, final_retry_delay = 3, 2.0
             is_first_update = True
             # 待機 V2 から通常 content へ切り替えたか
