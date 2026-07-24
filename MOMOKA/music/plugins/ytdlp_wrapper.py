@@ -223,32 +223,29 @@ _FORMAT_TRIES: tuple[str, ...] = (
     "bestaudio*/best*",
     "bestaudio/best",
     "best[acodec!=none]/best*",
-    "best*",
+    # 結合失敗時の最終手段（itag 18 等の progressive）
+    "best/best*",
+    "18/bestaudio*/best*",
 )
-# 一次クライアント: yt-dlp 既定から PO Token / 403 系を除外する
-# - android_sdkless: ダウンロード時 403 になりやすい
-# - ios: https 形式が GVS PO Token 必須（未設定時はスキップ警告＋403）
-# - mweb: GVS PO Token 必須
+# 一次クライアント: 上流 yt-dlp 既定に近い android_vr を先頭に置く
+# （web 系は SABR-only で URL 無しになりやすい）
 _YOUTUBE_PLAYER_CLIENT_PRIMARY: list[str] = [
-    "default",
-    "-android_sdkless",
-    "-ios",
-    "-mweb",
+    "android_vr",
+    "web_embedded",
+    "tv_downgraded",
 ]
 # 403 / NO audio リトライ用の代替クライアント列
-# （tv 本体 / mweb / ios は PO Token または DRM 実験のため載せない）
 _YOUTUBE_PLAYER_CLIENT_FALLBACK: list[str] = [
-    "web_embedded",
-    "android_vr",
-    "tv_downgraded",
     "web_creator",
+    "tv",
+    "web",
 ]
 # player_client 候補（None は yt-dlp デフォルトに任せる）
 _YOUTUBE_PLAYER_CLIENT_TRIES: tuple[Optional[list[str]], ...] = (
     _YOUTUBE_PLAYER_CLIENT_PRIMARY,
     _YOUTUBE_PLAYER_CLIENT_FALLBACK,
-    # ios は使わず、PO Token 不要寄りの web 系へ寄せる
-    ["web", "web_embedded", "android_vr"],
+    # 除外付き default も最後の手段として残す
+    ["default", "-android_sdkless", "-ios", "-mweb"],
     None,
 )
 # 外部モジュール向けの公開エイリアス
@@ -529,8 +526,20 @@ def _entry_has_playable_url(info: Optional[dict]) -> bool:
     if not entry:
         # 再生不可
         return False
-    # 直接 URL、または結合前の requested_formats があれば再生可能とみなす
-    return bool(entry.get("url") or entry.get("requested_formats") or entry.get("formats"))
+    # 直接のストリーム URL があれば再生可能
+    if entry.get("url"):
+        # 再生可能
+        return True
+    # 結合前の requested_formats に実 URL があるか見る
+    requested = entry.get("requested_formats") or []
+    # いずれかに url / manifest_url があれば可
+    if any(f.get("url") or f.get("manifest_url") for f in requested if isinstance(f, dict)):
+        # 再生可能
+        return True
+    # formats 一覧に実 URL があるか見る（SABR-only で URL 無しのダミーは除外）
+    formats = entry.get("formats") or []
+    # 実 URL 付きフォーマットが1つでもあれば可
+    return any(f.get("url") or f.get("manifest_url") for f in formats if isinstance(f, dict))
 
 
 def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_stream: bool = False):
@@ -549,8 +558,9 @@ def _extract_with_fallbacks(opts: dict, url: str, *, download: bool, resolve_str
     has_cookies = ("cookiefile" in opts) or ("cookiesfrombrowser" in opts)
     # クッキー有り→無しの順で試す（指定が無ければ無しのみ）
     cookie_modes = [True, False] if has_cookies else [False]
-    # ストリーム解決時はフォーマット候補を多めに、検索時は軽量に試す
-    format_tries = _FORMAT_TRIES if resolve_stream else (_FORMAT_TRIES[0],)
+    # ストリーム解決時は全 format 候補、それ以外も最低2候補は試す
+    # （SABR 等で先頭 format だけ空になるケースへの保険）
+    format_tries = _FORMAT_TRIES if resolve_stream else _FORMAT_TRIES[:2]
     # まず「現在の opts そのまま」を1回試し、失敗時のみフォールバックする
     primary_attempts: list[tuple[str, Optional[list[str]], bool]] = []
     # プライマリ: 呼び出し元 format + 呼び出し元 client + クッキー有り
@@ -706,7 +716,7 @@ COMMON_YTDL_OPTS: dict = {
     "skip_download": True,
     # プレイリスト展開を必要時にオンデマンドで読み込む設定
     "lazy_playlist": True,
-    # YouTube: PO Token 不要寄りのクライアントを優先（android_sdkless は 403 多発のため除外）
+    # YouTube: android_vr 優先（SABR-only の web 系より安定しやすい）
     "extractor_args": {
         "youtube": {
             "player_client": list(_YOUTUBE_PLAYER_CLIENT_PRIMARY),
@@ -792,7 +802,11 @@ def _entry_to_track(entry: dict, *, is_downloaded_nico: bool = False) -> Track:
         stream_url_val = entry.get("url")
 
     # タイトルキーが存在しない場合のデフォルト値を設定する
-    title = entry.get("title", "タイトルなし")
+    title = entry.get("title") or "タイトルなし"
+    # タイトルが文字列以外（稀に None 以外）でも文字列化する
+    if not isinstance(title, str):
+        # 強制的に文字列へ変換する
+        title = str(title)
     # タイトルがデフォルト値のままであり、かつIDキーが存在するか判定する
     if title == "タイトルなし" and entry.get("id"):
         # IDをタイトル名として代替設定する

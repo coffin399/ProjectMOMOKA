@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # Now Playing プログレスバーの更新間隔（秒）。Discord rate limit を考慮して 10 秒にする
 PROGRESS_UPDATE_INTERVAL = 10
 # Now Playing パネル下部に表示するキューの1ページあたり曲数
-QUEUE_PAGE_SIZE = 10
+QUEUE_PAGE_SIZE = 5
 # Components V2 上で大きく見せるプログレスバーの長さ
 PROGRESS_BAR_LENGTH = 28
 
@@ -141,6 +141,8 @@ class GuildState:
         self.ui_load_error: Optional[str] = None
         # 失敗バナーを一度 UI に出したあと、次曲開始で消すためのフラグ
         self.ui_load_error_seen: bool = False
+        # /play の query が URL だったときの履歴（停止パネル用・サムネ不要）
+        self.last_history_url: Optional[str] = None
 
     def update_activity(self):
         self.last_activity = datetime.now()
@@ -408,6 +410,51 @@ class MusicCog(commands.Cog, name="music_cog"):
             for s in self.guild_states.values()
             if s.voice_client and s.voice_client.is_connected()
         )
+
+    @staticmethod
+    def _is_http_url(value: Optional[str]) -> bool:
+        """文字列が http(s) URL かどうかを判定する。"""
+        # 空なら URL ではない
+        if not value:
+            # 非 URL
+            return False
+        # 前後空白を除いて小文字化して先頭を見る
+        lowered = value.strip().lower()
+        # http / https のみ履歴対象にする
+        return lowered.startswith("http://") or lowered.startswith("https://")
+
+    def _remember_play_history_url(
+        self,
+        state: GuildState,
+        track: Optional[Track],
+    ) -> None:
+        """/play の query が URL だったトラックを停止パネル用履歴に残す。"""
+        # トラックが無ければ何もしない
+        if not track:
+            # 更新スキップ
+            return
+        # ユーザーが入力した元クエリを取得する
+        query = (track.original_query or "").strip()
+        # URL 再生のときだけ履歴を上書きする（検索再生では消さない）
+        if self._is_http_url(query):
+            # 停止パネルに出す URL を保存する
+            state.last_history_url = query
+
+    @staticmethod
+    def _inject_history_url(message: str, history_url: Optional[str]) -> str:
+        """終了メッセージの1行目の直後に履歴 URL を差し込む。"""
+        # 履歴が無ければ原文のまま返す
+        if not history_url:
+            # 差し込みなし
+            return message
+        # 先頭行と残りに分割する
+        parts = message.split("\n", 1)
+        # 本文がある場合は見出し→URL→本文の順にする
+        if len(parts) == 2:
+            # 指定レイアウトで結合する
+            return f"{parts[0]}\n{history_url}\n{parts[1]}"
+        # 1行だけの場合は末尾に URL を付ける
+        return f"{message}\n{history_url}"
 
     @staticmethod
     async def _to_durable_message(
@@ -855,6 +902,8 @@ class MusicCog(commands.Cog, name="music_cog"):
                 pass
 
         if not track_to_play:
+            # 終了前に URL 再生履歴を残す（この直後に current_track を消す）
+            self._remember_play_history_url(state, state.current_track)
             # 再生対象が無いので再生状態をクリアする
             state.current_track = None
             # 再生中フラグを下ろす
@@ -895,7 +944,10 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.ui_load_error_seen = False
 
         if not is_seek_operation:
+            # 次に再生するトラックを現在曲として設定する
             state.current_track = track_to_play
+            # URL 指定の /play なら停止パネル用履歴に残す
+            self._remember_play_history_url(state, track_to_play)
 
         # 新規曲の通常再生開始時は 403 カウンタをリセットする（リトライ中は維持）
         if retry_track is None and not is_seek_operation:
@@ -1441,30 +1493,33 @@ class MusicCog(commands.Cog, name="music_cog"):
             if was_playing:
                 # 複数曲（プレイリスト）がキューに追加されたか判定する
                 if added_count > 1:
-                    # 追加完了の文言を取得する
-                    added_playlist_content = self.exception_handler.get_message("added_playlist_to_queue", count=added_count)
-                    # 検索開始メッセージが保持されているか判定する
+                    # 従来どおりプレイリスト追加は Embed で簡潔に出す
+                    playlist_embed = discord.Embed(
+                        description=self.exception_handler.get_message(
+                            "added_playlist_to_queue",
+                            count=added_count,
+                        ),
+                        color=discord.Color.from_rgb(79, 194, 255),
+                    )
+                    # 検索開始メッセージがあれば Embed に差し替える
                     if searching_msg:
-                        # 既存の検索開始メッセージをキュー追加完了メッセージに編集する
-                        await searching_msg.edit(content=added_playlist_content)
+                        # 本文を消して Embed のみにする
+                        await searching_msg.edit(content=None, embed=playlist_embed, view=None)
                     else:
-                        # メッセージがない場合は新規にキュー追加メッセージを送信する
-                        await self._send_ctx_message(ctx, content=added_playlist_content)
+                        # 新規に Embed を送る（silent）
+                        await self._send_ctx_message(ctx, embed=playlist_embed)
 
                 # 1曲だけが追加され、かつそのトラックオブジェクトが有効か判定する
                 elif added_count == 1 and first_track:
-                    # 1曲追加完了の文言をフォーマットして取得する
-                    added_song_content = self.exception_handler.get_message("added_to_queue",
-                                                                           title=first_track.title,
-                                                                           duration=format_duration(first_track.duration),
-                                                                           requester_display_name=ctx.author.display_name)
-                    # 検索開始メッセージが保持されているか判定する
+                    # 単曲追加は小さめの Components V2 パネルにする
+                    added_view = QueueAddedLayoutView(first_track, ctx.author)
+                    # 検索開始メッセージがあれば V2 に差し替える
                     if searching_msg:
-                        # 既存の検索開始メッセージを1曲追加メッセージに編集する
-                        await searching_msg.edit(content=added_song_content)
+                        # 本文・Embed を消して LayoutView のみにする
+                        await searching_msg.edit(content=None, embed=None, view=added_view)
                     else:
-                        # メッセージがない場合は新規に1曲追加メッセージを送信する
-                        await self._send_ctx_message(ctx, content=added_song_content)
+                        # 新規に V2 パネルを送る
+                        await self._send_ctx_message(ctx, view=added_view)
                 # キュー追加後に Now Playing のキュー一覧を更新する
                 await self._update_now_playing_message_ui(ctx.guild.id)
 
@@ -1619,6 +1674,8 @@ class MusicCog(commands.Cog, name="music_cog"):
             state.voice_client.stop()
         state.is_playing = False
         state.is_paused = False
+        # 停止前に URL 再生履歴を残す（クリア後は current_track が無い）
+        self._remember_play_history_url(state, state.current_track)
         state.current_track = None
         state.reset_playback_tracking()
         # stop 時はプログレスバー更新を停止する
@@ -1711,10 +1768,19 @@ class MusicCog(commands.Cog, name="music_cog"):
         lines: List[str] = []
         # ページ内の曲を走査する
         for i, track in enumerate(queue_list[start:end], start=start + 1):
+            # タイトルが None / 空でも落ちないよう文字列化する
+            raw_title = track.title or "Unknown title"
             # 長すぎるタイトルは省略する
-            title = track.title if len(track.title) <= 42 else track.title[:39] + "..."
-            # 番号付きリンク行を追加する
-            lines.append(f"`{i}.` [{title}]({track.url})")
+            title = raw_title if len(raw_title) <= 42 else raw_title[:39] + "..."
+            # URL が無い場合はリンクにせずプレーン表示にする
+            track_url = track.url or ""
+            # 番号付き行を追加する
+            if track_url:
+                # リンク付きで追加する
+                lines.append(f"`{i}.` [{title}]({track_url})")
+            else:
+                # URL 無しはタイトルのみ追加する
+                lines.append(f"`{i}.` {title}")
         # 見出し付き本文を組み立てる
         body = (
             f"### Queue ({total_items}) — {page + 1}/{total_pages}\n"
@@ -2132,6 +2198,59 @@ class MusicCog(commands.Cog, name="music_cog"):
                 ephemeral=True,
             )
 
+class QueueAddedLayoutView(discord.ui.LayoutView):
+    """再生中に単曲をキュー追加したときの小さめ Components V2 パネル。"""
+
+    def __init__(self, track: Track, requester: discord.abc.User):
+        # 静的表示のためタイムアウトなし
+        super().__init__(timeout=None)
+        # タイトルを安全に文字列化する
+        safe_title = track.title or "Unknown title"
+        # 曲URLがあればリンクにする
+        if track.url:
+            # Markdown リンクにする
+            title_line = f"[{safe_title}]({track.url})"
+        else:
+            # URL 無しはプレーンにする
+            title_line = safe_title
+        # チャンネル名を取る
+        uploader_val = track.uploader or "Unknown"
+        # チャンネルURLがあればリンクにする
+        if track.uploader_url and uploader_val != "Unknown":
+            # リンク付きチャンネル名にする
+            channel_line = f"[{uploader_val}]({track.uploader_url})"
+        else:
+            # プレーン名にする
+            channel_line = uploader_val
+        # 長さをフォーマットする
+        duration_str = format_duration(track.duration)
+        # 小さめの本文を組み立てる
+        body = (
+            f"### ➕ Added to queue\n"
+            f"{title_line}\n"
+            f"**Channel:** {channel_line}\n"
+            f"**Duration:** `{duration_str}`\n"
+            f"**Requested by:** {requester.mention}"
+        )
+        # 水色アクセントのコンテナを作る
+        container = discord.ui.Container(accent_color=discord.Color.from_rgb(79, 194, 255))
+        # サムネイルがあれば Section、無ければ TextDisplay
+        thumb = track.thumbnail
+        if thumb and str(thumb).strip() and str(thumb) != "None":
+            # 右にサムネ付きで載せる
+            container.add_item(
+                discord.ui.Section(
+                    discord.ui.TextDisplay(body),
+                    accessory=discord.ui.Thumbnail(str(thumb)),
+                )
+            )
+        else:
+            # テキストのみ載せる
+            container.add_item(discord.ui.TextDisplay(body))
+        # ビューにコンテナを載せる
+        self.add_item(container)
+
+
 class LoadErrorLayoutView(discord.ui.LayoutView):
     """単発再生のストリーム取得失敗用 Components V2 パネル。"""
 
@@ -2189,6 +2308,13 @@ class MusicControllerView(discord.ui.LayoutView):
                 "⏹️ **Playback Stopped**\n"
                 "Playback was stopped or the queue has finished."
             )
+            # /play が URL だった場合は見出しの直下に履歴 URL を差し込む
+            if state and state.last_history_url:
+                # サムネなし・テキストのみで履歴を載せる
+                stopped_text = self.cog._inject_history_url(
+                    stopped_text,
+                    state.last_history_url,
+                )
             # Section は accessory 必須のため、停止メッセージは TextDisplay のみ使う
             container.add_item(discord.ui.TextDisplay(stopped_text))
 
@@ -2232,8 +2358,17 @@ class MusicControllerView(discord.ui.LayoutView):
         # 水色のアクセント色でV2コンテナを初期化する
         container = discord.ui.Container(accent_color=discord.Color.from_rgb(79, 194, 255))
 
-        # タイトル本文を構築する
-        title_text = f"### {status_icon} Now {status_text}\n**[{track.title}]({track.url})**"
+        # タイトル本文を構築する（title が None でも落ちないようにする）
+        safe_title = track.title or "Unknown title"
+        # 曲URLが無い場合はリンクにしない
+        if track.url:
+            # リンク付きタイトルにする（見出しで強調するため太字は付けない）
+            title_line = f"[{safe_title}]({track.url})"
+        else:
+            # プレーンタイトルにする
+            title_line = safe_title
+        # ステータスは小さめ、曲名は大きめの見出しにする
+        title_text = f"### {status_icon} Now {status_text}\n# {title_line}"
         # サムネイルがあるときだけ Section（accessory 必須）を使い、無いときは TextDisplay
         if track.thumbnail and track.thumbnail.strip() and track.thumbnail != "None":
             # 右上サムネイル付きセクションを追加する
@@ -2277,10 +2412,10 @@ class MusicControllerView(discord.ui.LayoutView):
         progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
         # 再生時間と総再生時間の文字列フォーマットを生成する
         duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
-        # Progress を Channel の下に大きく配置する
+        # Progress は見出しを抑え、縦幅を小さくしつつバー横幅は維持する
         container.add_item(
             discord.ui.TextDisplay(
-                f"## Progress\n# {progress_bar}\n### {duration_str}"
+                f"**Progress**\n{progress_bar}\n{duration_str}"
             )
         )
 
@@ -2373,78 +2508,80 @@ class MusicControllerView(discord.ui.LayoutView):
             # コンテナに寄付行を追加する
             container.add_item(donation_row)
 
-        # コントロールとキュー一覧の間に区切り線を入れる
-        container.add_item(discord.ui.Separator())
+        # キューに次曲があるときだけ Queue 一覧を出す（単発再生中は非表示）
+        if not state.queue.empty():
+            # コントロールとキュー一覧の間に区切り線を入れる
+            container.add_item(discord.ui.Separator())
 
-        # キュー一覧テキストとページ情報を取得する
-        queue_text, page, total_pages = self.cog._build_queue_display_text(state)
-        # キュー一覧を TextDisplay で追加する
-        container.add_item(discord.ui.TextDisplay(queue_text))
+            # キュー一覧テキストとページ情報を取得する
+            queue_text, page, total_pages = self.cog._build_queue_display_text(state)
+            # キュー一覧を TextDisplay で追加する
+            container.add_item(discord.ui.TextDisplay(queue_text))
 
-        # 複数ページあるときだけページングボタンを付ける
-        if total_pages > 1:
-            # ページング用アクション行を作成する
-            nav_row = discord.ui.ActionRow()
-            # 先頭ページボタンを作る
-            first_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                label="⏪",
-                custom_id=f"music_q_first_{self.guild_id}",
-                disabled=(page <= 0),
-            )
-            # コールバックを紐付ける
-            first_btn.callback = self.queue_first_callback
-            # 行に追加する
-            nav_row.add_item(first_btn)
+            # 複数ページあるときだけページングボタンを付ける
+            if total_pages > 1:
+                # ページング用アクション行を作成する
+                nav_row = discord.ui.ActionRow()
+                # 先頭ページボタンを作る
+                first_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    label="⏪",
+                    custom_id=f"music_q_first_{self.guild_id}",
+                    disabled=(page <= 0),
+                )
+                # コールバックを紐付ける
+                first_btn.callback = self.queue_first_callback
+                # 行に追加する
+                nav_row.add_item(first_btn)
 
-            # 前ページボタンを作る
-            prev_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                label="◀️",
-                custom_id=f"music_q_prev_{self.guild_id}",
-                disabled=(page <= 0),
-            )
-            # コールバックを紐付ける
-            prev_btn.callback = self.queue_prev_callback
-            # 行に追加する
-            nav_row.add_item(prev_btn)
+                # 前ページボタンを作る
+                prev_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    label="◀️",
+                    custom_id=f"music_q_prev_{self.guild_id}",
+                    disabled=(page <= 0),
+                )
+                # コールバックを紐付ける
+                prev_btn.callback = self.queue_prev_callback
+                # 行に追加する
+                nav_row.add_item(prev_btn)
 
-            # 現在ページ表示（押下不可）を作る
-            page_btn = discord.ui.Button(
-                style=discord.ButtonStyle.secondary,
-                label=f"{page + 1}/{total_pages}",
-                custom_id=f"music_q_page_{self.guild_id}",
-                disabled=True,
-            )
-            # 行に追加する
-            nav_row.add_item(page_btn)
+                # 現在ページ表示（押下不可）を作る
+                page_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.secondary,
+                    label=f"{page + 1}/{total_pages}",
+                    custom_id=f"music_q_page_{self.guild_id}",
+                    disabled=True,
+                )
+                # 行に追加する
+                nav_row.add_item(page_btn)
 
-            # 次ページボタンを作る
-            next_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                label="▶️",
-                custom_id=f"music_q_next_{self.guild_id}",
-                disabled=(page >= total_pages - 1),
-            )
-            # コールバックを紐付ける
-            next_btn.callback = self.queue_next_callback
-            # 行に追加する
-            nav_row.add_item(next_btn)
+                # 次ページボタンを作る
+                next_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    label="▶️",
+                    custom_id=f"music_q_next_{self.guild_id}",
+                    disabled=(page >= total_pages - 1),
+                )
+                # コールバックを紐付ける
+                next_btn.callback = self.queue_next_callback
+                # 行に追加する
+                nav_row.add_item(next_btn)
 
-            # 末尾ページボタンを作る
-            last_btn = discord.ui.Button(
-                style=discord.ButtonStyle.primary,
-                label="⏩",
-                custom_id=f"music_q_last_{self.guild_id}",
-                disabled=(page >= total_pages - 1),
-            )
-            # コールバックを紐付ける
-            last_btn.callback = self.queue_last_callback
-            # 行に追加する
-            nav_row.add_item(last_btn)
+                # 末尾ページボタンを作る
+                last_btn = discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    label="⏩",
+                    custom_id=f"music_q_last_{self.guild_id}",
+                    disabled=(page >= total_pages - 1),
+                )
+                # コールバックを紐付ける
+                last_btn.callback = self.queue_last_callback
+                # 行に追加する
+                nav_row.add_item(last_btn)
 
-            # コンテナにページング行を追加する
-            container.add_item(nav_row)
+                # コンテナにページング行を追加する
+                container.add_item(nav_row)
 
         # ロード失敗バナーがあればキューの下（最下部）にコードブロックで出す
         self._append_load_error_banner(container, state)
@@ -2666,6 +2803,8 @@ class MusicControllerView(discord.ui.LayoutView):
         state.is_playing = False
         # 一時停止フラグを初期化する
         state.is_paused = False
+        # 停止前に URL 再生履歴を残す
+        self.cog._remember_play_history_url(state, state.current_track)
         # 再生中トラック情報を初期化する
         state.current_track = None
         # 再生時間計測情報を初期化する

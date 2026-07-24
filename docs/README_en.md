@@ -169,6 +169,7 @@ Fetches media with yt-dlp and shares it via Google Drive (links expire after a d
    pip install -r requirements.txt
    python main.py
    ```
+   On start, the GUI log panes are General / LLM / TTS+Music / Error. Music logs go to TTS+Music.
 
 ---
 
@@ -240,7 +241,7 @@ llm:
 | `/play` `/pause` `/resume` `/stop` `/skip` | Playback |
 | `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` `/loop` | Queue & volume |
 
-Now Playing panel (Components V2): Pause / Skip / Stop (Confirm/Cancel) / Loop / QLoop, queue (up to 10) with paging.
+Now Playing panel (Components V2): Pause / Skip / Stop (Confirm/Cancel) / Loop / QLoop. Queue list (up to 5 + paging) only when upcoming tracks exist. URL `/play` queries are kept as history on the stopped panel.
 Playlist fetch limit is `music.max_playlist_items` (default 10000).
 Music messages are sent `@silent` (suppress notifications) by default.
 

@@ -1008,8 +1008,8 @@ class LogViewerApp:
         llm_level.bind("<<ComboboxSelected>>", 
                       lambda e: self.update_log_level("llm", self.llm_level_var.get()))
         
-        # TTSログレベル
-        ttk.Label(log_level_frame, text="TTS:").grid(row=0, column=4, padx=2, pady=2, sticky=tk.W)
+        # TTS+Music ログレベル
+        ttk.Label(log_level_frame, text="TTS+Music:").grid(row=0, column=4, padx=2, pady=2, sticky=tk.W)
         tts_level = ttk.Combobox(
             log_level_frame,
             textvariable=self.tts_level_var,
@@ -1128,8 +1128,8 @@ class LogViewerApp:
         )
         self.llm_log.pack(fill=tk.BOTH, expand=True)
         
-        # 左下: TTSログ
-        tts_frame = ttk.LabelFrame(log_frame, text="TTSログ", padding="2", style='TLabelframe')
+        # 左下: TTS+Musicログ（音声読み上げと音楽再生をまとめる）
+        tts_frame = ttk.LabelFrame(log_frame, text="TTS+Musicログ", padding="2", style='TLabelframe')
         tts_frame.grid(row=1, column=0, padx=2, pady=2, sticky="nsew")
         self.tts_log = scrolledtext.ScrolledText(
             tts_frame, 
@@ -1296,7 +1296,8 @@ class LogViewerApp:
         if "MOMOKA.llm" in name:
             widget = self.llm_log
             min_level = log_levels.get(self.llm_level_var.get(), 20)
-        elif "MOMOKA.tts" in name:
+        elif "MOMOKA.tts" in name or "MOMOKA.music" in name:
+            # TTS と Music は同一パネル（TTS+Musicログ）へ振り分ける
             widget = self.tts_log
             min_level = log_levels.get(self.tts_level_var.get(), 20)
         else:
