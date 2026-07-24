@@ -259,7 +259,7 @@ music:
 | `/play` `/pause` `/resume` `/stop` `/skip` | 再生制御 |
 | `/seek` `/volume` `/queue` `/shuffle` `/clear` `/remove` `/nowplaying` `/loop` | キュー・音量など |
 
-Now Playing パネル（Components V2）: Pause / Skip / Stop（Confirm/Cancel）/ Loop / QLoop。次曲があるときだけ下部にキュー（最大5曲＋ページング）を表示。URL 指定の `/play` は停止パネルに履歴 URL を残す。
+Now Playing パネル（Components V2）: 曲名（##）直下にチャンネル、Progress はインラインコード1行（`バー 時間 / 総時間`）。Pause / Skip / Stop（Confirm/Cancel）/ Loop / QLoop。次曲があるときだけ下部にキュー（最大5曲＋ページング）を表示。URL 指定の `/play` は停止パネルに履歴 URL を残す。
 プレイリスト取得上限は `music.max_playlist_items`（既定 10000）。
 音楽メッセージは既定で `@silent`（通知抑制）送信。
 

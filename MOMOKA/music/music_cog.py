@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 PROGRESS_UPDATE_INTERVAL = 10
 # Now Playing パネル下部に表示するキューの1ページあたり曲数
 QUEUE_PAGE_SIZE = 5
-# Components V2 上で大きく見せるプログレスバーの長さ
+# Components V2 上で表示するプログレスバーの長さ（インラインコード1行向け）
 PROGRESS_BAR_LENGTH = 28
 
 
@@ -2367,8 +2367,23 @@ class MusicControllerView(discord.ui.LayoutView):
         else:
             # プレーンタイトルにする
             title_line = safe_title
-        # ステータスは小さめ、曲名は大きめの見出しにする
-        title_text = f"### {status_icon} Now {status_text}\n# {title_line}"
+
+        # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
+        uploader_val = track.uploader if track.uploader else "Unknown"
+        # チャンネルURLがあれば Markdown リンクにする
+        if track.uploader_url and uploader_val != "Unknown":
+            # クリック可能なチャンネル名にする
+            uploader_display = f"[{uploader_val}]({track.uploader_url})"
+        else:
+            # URL が無ければプレーンテキストのまま使う
+            uploader_display = uploader_val
+
+        # ステータスは小さめ、曲名は ##（# より一段小さく）、直後にチャンネル名
+        title_text = (
+            f"### {status_icon} Now {status_text}\n"
+            f"## {title_line}\n"
+            f"{uploader_display}"
+        )
         # サムネイルがあるときだけ Section（accessory 必須）を使い、無いときは TextDisplay
         if track.thumbnail and track.thumbnail.strip() and track.thumbnail != "None":
             # 右上サムネイル付きセクションを追加する
@@ -2382,15 +2397,6 @@ class MusicControllerView(discord.ui.LayoutView):
             # サムネイル無しはテキストのみ追加する
             container.add_item(discord.ui.TextDisplay(title_text))
 
-        # チャンネル名（アップローダー）のデフォルトフォールバックを設定する
-        uploader_val = track.uploader if track.uploader else "Unknown"
-        # チャンネルURLがあれば Markdown リンクにする
-        if track.uploader_url and uploader_val != "Unknown":
-            # クリック可能なチャンネル名にする
-            uploader_display = f"[{uploader_val}]({track.uploader_url})"
-        else:
-            # URL が無ければプレーンテキストのまま使う
-            uploader_display = uploader_val
         # リクエストユーザーのメンション文字列を設定する
         requester_mention = f"<@{track.requester_id}>" if track.requester_id else "Unknown"
         # 残りのキューの数を取得する
@@ -2398,25 +2404,19 @@ class MusicControllerView(discord.ui.LayoutView):
         # ループモード表示用の短いラベルを決める
         loop_label = state.loop_mode.name.lower()
 
-        # 曲名の直下に Channel を置く
-        container.add_item(
-            discord.ui.TextDisplay(f"**Channel:** {uploader_display}")
-        )
-
-        # Channel と Progress の間に区切り線を入れる
-        container.add_item(discord.ui.Separator())
-
         # 現在の再生位置（秒）を取得する
         current_pos = state.get_current_position()
-        # 進行状況バー（テキストアート）を大きめに生成する
+        # 進行状況バー（テキストアート）を生成する
         progress_bar = self.cog._create_progress_bar(current_pos, track.duration)
-        # 再生時間と総再生時間の文字列フォーマットを生成する
-        duration_str = f"`{format_duration(current_pos)}` / `{format_duration(track.duration)}`"
-        # Progress は見出しを抑え、縦幅を小さくしつつバー横幅は維持する
+        # 現在時間 / 総時間を同じ行に載せ、インラインコードで表示する
+        # 例: `━━━━━━━━━━○───────────────── 11:11 / 33:33`
+        progress_line = (
+            f"{progress_bar} "
+            f"{format_duration(current_pos)} / {format_duration(track.duration)}"
+        )
+        # Progress を単一バッククォートの1行でまとめる
         container.add_item(
-            discord.ui.TextDisplay(
-                f"**Progress**\n{progress_bar}\n{duration_str}"
-            )
+            discord.ui.TextDisplay(f"`{progress_line}`")
         )
 
         # Progress とメタ情報の間に区切り線を入れる
