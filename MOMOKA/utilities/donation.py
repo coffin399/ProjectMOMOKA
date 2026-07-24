@@ -108,11 +108,11 @@ def make_help_link_button(settings: DonationSettings) -> Optional[discord.ui.But
     )
 
 
-def help_donation_body(settings: DonationSettings) -> str:
-    """/help に載せる日英の支援文。"""
-    # 見出し付きで返す
-    return (
-        f"**☕ Support / 支援**\n"
-        f"{settings.help_text_ja}\n\n"
-        f"{settings.help_text_en}"
-    )
+def help_donation_body(settings: DonationSettings, lang: str = "en") -> str:
+    """/help に載せる支援文（選択言語のみ）。"""
+    # 日本語なら JA 文
+    if lang == "ja":
+        # 見出し＋日本語本文
+        return f"**☕ 支援**\n{settings.help_text_ja}"
+    # それ以外は英語
+    return f"**☕ Support**\n{settings.help_text_en}"

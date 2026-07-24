@@ -15,7 +15,12 @@ from discord.ext import commands
 # ユーザー指定のエラークラスをインポート
 from MOMOKA.utilities.error.errors import InvalidDiceNotationError, DiceValueError
 # /help /invite 用 Components V2 LayoutView
-from MOMOKA.utilities.help_view import HelpLayoutView, InviteLayoutView, resolve_invite_urls
+from MOMOKA.utilities.help_view import (
+    HelpLayoutView,
+    InviteLayoutView,
+    lang_from_discord_locale,
+    resolve_invite_urls,
+)
 # フィードバック Modal / 複数チャンネル投稿
 from MOMOKA.utilities.feedback import (
     CATEGORIES,
@@ -510,12 +515,16 @@ class SlashCommandsCog(commands.Cog, name="スラッシュコマンド"):
     @app_commands.command(name="help",
                           description="Displays help information for the bot. / Botのヘルプ情報を表示します。")
     async def help_slash_command(self, interaction: discord.Interaction):
+        # Discord クライアント言語から初期表示言語を決める
+        initial_lang = lang_from_discord_locale(interaction.locale)
         # Components V2 LayoutView のみ送信（embed 非併用）
-        view = HelpLayoutView(self.bot, page=0)
+        view = HelpLayoutView(self.bot, page=0, lang=initial_lang)
         # ヘルプパネルを返す
         await interaction.response.send_message(view=view)
         # 実行ログ
-        logger.info(f"/help が実行されました。 (User: {interaction.user.id})")
+        logger.info(
+            f"/help が実行されました。 (User: {interaction.user.id}, lang={initial_lang})"
+        )
 
 
 async def setup(bot: commands.Bot):

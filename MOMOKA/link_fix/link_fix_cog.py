@@ -81,12 +81,31 @@ class LinkFixCog(commands.Cog):
                 # 失敗時は元を返す
                 return message
 
-    def _build_reply_content(self, links: List[MatchedLink]) -> str:
+    def _resolve_footnote(self, preferred_locale: Any = None) -> str:
+        """ギルド locale に応じた注記文（旧 footnote キーもフォールバック）。"""
+        # locale から ISO 言語を解決する
+        locale_info = resolve_locale(preferred_locale)
+        # ja なら日本語注記を優先する
+        if locale_info and locale_info[0] == "ja":
+            # footnote_ja → 旧 footnote
+            text = self._cfg("footnote_ja") or self._cfg("footnote") or ""
+        else:
+            # footnote_en → 旧 footnote
+            text = self._cfg("footnote_en") or self._cfg("footnote") or ""
+        # 文字列化して返す
+        return str(text).strip()
+
+    def _build_reply_content(
+        self,
+        links: List[MatchedLink],
+        *,
+        preferred_locale: Any = None,
+    ) -> str:
         """返信本文（複数リンク＋注記）。"""
         # 各行
         lines = [format_reply_line(link) for link in links]
-        # 注記
-        footnote = str(self._cfg("footnote") or "")
+        # 注記（locale 別）
+        footnote = self._resolve_footnote(preferred_locale)
         # 注記があれば -# 行を付ける
         if footnote:
             lines.append(f"-# {footnote}")
@@ -201,8 +220,10 @@ class LinkFixCog(commands.Cog):
             return
         # 1) ユーザー公式 embed を破壊（抑制）
         suppressed = await self._suppress_original(message)
+        # ギルド preferred_locale（注記言語用）
+        guild_locale = getattr(message.guild, "preferred_locale", None)
         # 返信本文
-        content = self._build_reply_content(matched)
+        content = self._build_reply_content(matched, preferred_locale=guild_locale)
         # Twitter 単独かつ翻訳対応なら View を付ける
         view: Optional[discord.ui.View] = None
         if len(matched) == 1 and matched[0].site_id == "twitter":
@@ -218,7 +239,7 @@ class LinkFixCog(commands.Cog):
                     self.bot_config, link.site_id, link.fix_domain
                 ),
                 locale_info=locale_info,
-                footnote=str(self._cfg("footnote") or ""),
+                footnote=self._resolve_footnote(guild_locale),
                 timeout=float(self._cfg("translation_view_timeout") or 3600),
             )
         # 2) silent 引用返信で Fix URL に replace

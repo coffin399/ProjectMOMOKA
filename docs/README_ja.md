@@ -37,7 +37,7 @@
 - 🎵 **音楽再生** - YouTube、Spotify、Google Drive など（両ボット）
 - 🎨 **画像生成 / TTS / 通知 / tracker** - **PLANA 専用**
 - 🔗 **Link Fix** - 公式 SNS embed を抑制し Fix URL で引用置換（`/linkfix`・**PLANA 専用**）
-- 🎲 **ユーティリティ** - `/help`・`/invite`（Components V2）、ダイス、タイマー、メディアダウンロード（`/download_video` / `/download_audio`・Components V2）など
+- 🎲 **ユーティリティ** - `/help`（🇯🇵/🇺🇸・ページング）・`/invite`（Components V2）、タイマー、メディアダウンロード（`/download_video` / `/download_audio`・Components V2）など
 
 ---
 
@@ -103,7 +103,7 @@ Rainbow Six Siege / VALORANT の統計表示。
 
 ### 8. ユーティリティ
 
-ダイス、タイマー、サーバー/ユーザー情報、ガチャなど。`/help` と `/invite` は Components V2 で、両ボットの招待を案内します。
+ダイス、タイマー、サーバー/ユーザー情報、ガチャなど。`/help` は Components V2 で **🇯🇵/🇺🇸 言語切替とページング**（LLM / Music+Download / Link Fix / Twitch を先頭に案内）。`/invite` も Components V2 で両ボットの招待を案内します。
 
 #### メディアダウンロード（Components V2）
 
@@ -303,7 +303,7 @@ Now Playing パネル（Components V2）: 曲名（##）直下にチャンネル
 
 | コマンド | 説明 |
 |---------|------|
-| `/help` | ヘルプ（Components V2） |
+| `/help` | ヘルプ（Components V2・🇯🇵/🇺🇸 切替・ページング） |
 | `/invite` | PLANA / ARONA 招待（Components V2） |
 | `/download_video` `/download_audio` | メディアダウンロード（Components V2・Google Drive 共有） |
 | `/ping` `/serverinfo` `/userinfo` `/avatar` | 情報系 |
