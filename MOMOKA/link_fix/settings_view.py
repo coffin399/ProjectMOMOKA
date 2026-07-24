@@ -183,7 +183,7 @@ class LinkFixSettingsView(discord.ui.LayoutView):
             "### Link Fix Settings\n"
             f"**Feature:** `{status}`\n"
             f"**Sites enabled:** `{on_count}/{total}`\n\n"
-            "Replace broken social embeds with fixer proxy URLs.\n"
+            "Suppress original social embeds and quote-replace with fixer proxy URLs.\n"
             "Use **Sites** to toggle each network and pick fixer denominations.\n"
             "Requires **Manage Server**."
         )

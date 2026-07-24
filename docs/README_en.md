@@ -35,7 +35,7 @@
 - 🗣️ **debate / cross_check** — Multi-round PLANA↔ARONA debate with a judge turn, or a light 3-step verification
 - 🎵 **Music playback** — YouTube, Spotify, Google Drive, and more (both bots)
 - 🎨 **Image generation / TTS / notifications / trackers** — **PLANA only**
-- 🔗 **Link Fix** — Replace broken social embeds via fixer proxies (`/linkfix`, **PLANA only**)
+- 🔗 **Link Fix** — Suppress original social embeds and quote-replace via fixer proxies (`/linkfix`, **PLANA only**)
 - 🎲 **Utilities** — `/help` and `/invite` (Components V2), dice, timers, media download (`/download_video` / `/download_audio`, Components V2), and more
 
 ---
@@ -90,13 +90,15 @@ Earthquake alerts and Twitch stream notifications.
 
 ### 7. Link Fix (PLANA only)
 
-When Discord’s official embed is missing or broken, PLANA silently replies with a fixer-proxy URL so media previews work again.
+When a supported SNS URL is posted, PLANA **suppresses the original Discord embed** and silently quote-replies with a fixer-proxy URL so media previews work.
 
 - Examples: X (Twitter), Instagram, TikTok, Reddit, Threads, Bluesky, Facebook, Pixiv, YouTube, and more
 - Skip with `fxignore` in the message, or wrap the URL in `<>`
 - For X posts, if the guild `preferred_locale` is known, `🌐` / flag buttons switch original vs translated embeds (FxEmbed-compatible fixers only)
 - `/linkfix` (Manage Server): per-guild master/site toggles and fixer source/destination domains (Components V2)
 - Config: `configs/link_fix_config.yaml`; guild overrides in `data/link_fix_settings.json`
+- If the fixer reply gets no embed, it is deleted and the original embed suppress is undone
+- Suppressing the original embed requires **Manage Messages**
 
 ### 8. Utilities
 
@@ -184,7 +186,7 @@ Settings live under `configs/` as category YAML files. See each `*_config.defaul
 | `notifications_config.yaml` | Earthquake / Twitch (PLANA) |
 | `tracker_config.yaml` | Game stats (PLANA) |
 | `debate_config.yaml` | debate / cross_check |
-| `link_fix_config.yaml` | Link Fix (broken social embeds, PLANA) |
+| `link_fix_config.yaml` | Link Fix (suppress + quote-replace social embeds, PLANA) |
 | `utilities_config.yaml` | Utilities |
 | `core_config.yaml` | Shared core settings |
 
@@ -267,7 +269,7 @@ llm:
 
 | Command / action | Description |
 |------------------|-------------|
-| Post an SNS URL | Silent quote-reply with a fixer URL when the official embed is missing/broken |
+| Post an SNS URL | Suppress the original embed, then silent quote-reply with a fixer URL |
 | `/linkfix` | Master/site toggles and fixer source/destination (Components V2, Manage Server) |
 | Include `fxignore` | Skip Link Fix for that message |
 
@@ -309,10 +311,10 @@ Real-time JMA WebSocket alerts (early warning, quake info, tsunami forecast).
 
 ### Link Fix (PLANA)
 
-- Waits briefly for Discord’s official embed; replies with a fixer URL **only when media is missing/mismatched** (not always-on)
-- Replies are `@silent`; original embeds are suppressed when Manage Messages is available
-- If the fixer reply gets no embed, it is deleted
+- On a matched URL, waits briefly for Discord’s official embed, **suppresses it**, then quote-replies with a fixer URL
+- Replies are `@silent`; if the fixer reply gets no embed, it is deleted and the original suppress is undone
 - `/linkfix` lets each guild pick fixer denominations (e.g. `fxtwitter.com` / `vxtwitter.com`) and match domains
+- Suppressing the original embed requires Manage Messages
 
 ---
 

@@ -1,5 +1,5 @@
 # MOMOKA/link_fix/link_fix_cog.py
-# 壊れた SNS embed を検知し、Fix プロキシ URL を silent 引用返信する。
+# SNS リンクの公式 embed を抑制し、Fix プロキシ URL で silent 引用置換する。
 from __future__ import annotations
 
 import asyncio
@@ -20,10 +20,7 @@ from MOMOKA.link_fix.presets import (
 from MOMOKA.link_fix.settings_store import LinkFixSettingsStore
 from MOMOKA.link_fix.settings_view import LinkFixSettingsView
 from MOMOKA.link_fix.translation_view import maybe_make_twitter_translation_view
-from MOMOKA.link_fix.url_utils import (
-    extract_previewable_urls,
-    is_embed_broken_or_missing,
-)
+from MOMOKA.link_fix.url_utils import extract_previewable_urls
 from MOMOKA.link_fix.websites import (
     MatchedLink,
     format_reply_line,
@@ -34,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class LinkFixCog(commands.Cog):
-    """SNS リンクの壊れた embed を Fix URL で代替表示する Cog。"""
+    """SNS リンクの公式 embed を壊し、Fix URL の引用返信で置き換える Cog。"""
 
     def __init__(self, bot: commands.Bot) -> None:
         # Bot 参照を保持する
@@ -96,40 +93,64 @@ class LinkFixCog(commands.Cog):
         # 結合する
         return "\n".join(lines)
 
-    async def _suppress_original(self, message: discord.Message) -> None:
-        """可能なら元メッセージの embed を抑制する。"""
-        # ギルド無ければ不可
+    def _can_manage_messages(self, message: discord.Message) -> bool:
+        """元メッセージの embed 抑制が可能か。"""
+        # ギルド必須
         if not message.guild:
-            return
+            return False
         # me
         me = message.guild.me
         if me is None:
-            return
-        # 権限
-        perms = message.channel.permissions_for(me)
-        # Manage Messages が無ければスキップ
-        if not perms.manage_messages:
-            return
+            return False
+        # Manage Messages
+        return bool(message.channel.permissions_for(me).manage_messages)
+
+    async def _suppress_original(self, message: discord.Message) -> bool:
+        """元メッセージの embed を抑制する。成功なら True。"""
+        # 権限無ければ失敗扱い
+        if not self._can_manage_messages(message):
+            return False
         # 抑制を試みる
         try:
-            await message.edit(suppress=True)
+            # 公式 embed 付与を少し待つ（無いまま抑制しても後から付くことがある）
+            wait_s = float(self._cfg("embed_wait_seconds") or 5.0)
+            # 待ちつつ最新を取る
+            target = await self._wait_for_embeds(message, wait_s)
+            # suppress フラグを立てる
+            await target.edit(suppress=True)
             # Discord が再付与することがあるので短く待って再試行
             await asyncio.sleep(1.0)
             # 再取得
             try:
-                refreshed = await message.channel.fetch_message(message.id)
+                refreshed = await target.channel.fetch_message(target.id)
             except (discord.NotFound, discord.HTTPException):
-                return
+                # 取得失敗でも抑制は一度成功している
+                return True
             # まだ embed があれば再抑制
             if refreshed.embeds:
                 await refreshed.edit(suppress=True)
+            # 成功
+            return True
         except (discord.Forbidden, discord.HTTPException) as exc:
-            # 抑制失敗は致命ではない
+            # 抑制失敗
             logger.debug("suppress failed: %s", exc)
+            return False
+
+    async def _unsuppress_original(self, message: discord.Message) -> None:
+        """Fix 失敗時に元メッセージの embed 抑制を戻す。"""
+        # 権限無ければ何もしない
+        if not self._can_manage_messages(message):
+            return
+        # 抑制解除を試みる
+        try:
+            await message.edit(suppress=False)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound) as exc:
+            # 戻せなくても致命ではない
+            logger.debug("unsuppress failed: %s", exc)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """対象 URL があり公式 embed が壊れているときだけ Fix 返信する。"""
+        """対象 URL があれば元 embed を壊し、Fix URL で引用置換する。"""
         # Bot / webhook / システムは無視
         if message.author.bot or message.webhook_id or message.is_system():
             return
@@ -156,9 +177,9 @@ class LinkFixCog(commands.Cog):
             return
         # ギルドサイト上書き
         guild_sites = self.store.get_all_sites_overrides(message.guild.id)
-        # 無効サイトを擬似上書きで落とす（match 前フィルタ）
+        # 無効サイトを擬似上書きで落とす
         effective_sites: Dict[str, Any] = dict(guild_sites)
-
+        # 全サイトを走査する
         for site_id in list_site_ids(self.bot_config):
             # サイト無効なら enabled=False を載せる
             if not self.store.is_site_enabled(message.guild.id, site_id):
@@ -168,32 +189,24 @@ class LinkFixCog(commands.Cog):
         # locale（Twitter 翻訳用）
         locale_info = resolve_locale(getattr(message.guild, "preferred_locale", None))
         translate_lang = locale_info[0] if locale_info else None
-        # マッチ（初期は翻訳 lang 付きで Twitter を組む）
+        # 対象 URL をすべてマッチ（壊れているか問わず置換）
         matched = match_urls(
             urls,
             self.bot_config,
             effective_sites,
             translate_lang=translate_lang,
         )
+        # 対象無しなら終了
         if not matched:
             return
-        # 公式 embed 待ち
-        wait_s = float(self._cfg("embed_wait_seconds") or 5.0)
-        refreshed = await self._wait_for_embeds(message, wait_s)
-        # 壊れているリンクだけ残す
-        broken: List[MatchedLink] = []
-        for link in matched:
-            if is_embed_broken_or_missing(refreshed.embeds, link.original_url):
-                broken.append(link)
-        # 無ければ何もしない
-        if not broken:
-            return
+        # 1) ユーザー公式 embed を破壊（抑制）
+        suppressed = await self._suppress_original(message)
         # 返信本文
-        content = self._build_reply_content(broken)
+        content = self._build_reply_content(matched)
         # Twitter 単独かつ翻訳対応なら View を付ける
         view: Optional[discord.ui.View] = None
-        if len(broken) == 1 and broken[0].site_id == "twitter":
-            link = broken[0]
+        if len(matched) == 1 and matched[0].site_id == "twitter":
+            link = matched[0]
             view = maybe_make_twitter_translation_view(
                 site_id=link.site_id,
                 original_url=link.original_url,
@@ -208,7 +221,7 @@ class LinkFixCog(commands.Cog):
                 footnote=str(self._cfg("footnote") or ""),
                 timeout=float(self._cfg("translation_view_timeout") or 3600),
             )
-        # silent 引用返信
+        # 2) silent 引用返信で Fix URL に replace
         silent = bool(self._cfg("silent", True))
         try:
             sent = await message.reply(
@@ -218,25 +231,28 @@ class LinkFixCog(commands.Cog):
                 view=view,
             )
         except discord.HTTPException as exc:
-            # 送信失敗
+            # 送信失敗 → 抑制済みなら元を戻す
             logger.warning("link fix reply failed: %s", exc)
+            if suppressed:
+                await self._unsuppress_original(message)
             return
         # Fix 側 embed 待ち
         fixed_wait = float(self._cfg("fixed_embed_wait_seconds") or 6.0)
         fixed_msg = await self._wait_for_embeds(sent, fixed_wait)
-        # embed が無ければ削除（誤爆防止）
+        # embed が無ければ返信削除＋元 embed 復元
         if not fixed_msg.embeds:
             try:
                 await sent.delete()
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
+            # 抑制していた場合は戻す
+            if suppressed:
+                await self._unsuppress_original(message)
             return
-        # 元メッセージの embed 抑制
-        await self._suppress_original(refreshed)
 
     @app_commands.command(
         name="linkfix",
-        description="Configure Link Fix (broken social embed replacement)",
+        description="Configure Link Fix (social embed replacement)",
     )
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()

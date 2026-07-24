@@ -71,7 +71,7 @@
 - **debate / cross_check** — **JA:** PLANA↔ARONA 討論（両ボット必要） · **EN:** PLANA↔ARONA debate (both bots required)
 - **Music** — YouTube / Spotify, etc. (**JA:** 両ボット · **EN:** both bots)
 - **TTS / images / notifications / trackers** — **JA:** PLANA のみ · **EN:** PLANA only
-- **Link Fix** — **JA:** 壊れた SNS embed の代替（`/linkfix`、PLANA のみ） · **EN:** fix broken social embeds (`/linkfix`, PLANA only)
+- **Link Fix** — **JA:** 公式 SNS embed を抑制し Fix URL で引用置換（`/linkfix`、PLANA のみ） · **EN:** suppress original social embeds and quote-replace via fixers (`/linkfix`, PLANA only)
 - **Utilities** — `/help` `/invite` `/support`, timers, `/match_time`, `/download_video` `/download_audio`, …
 
 **JA:** 最新コマンドは `/help` または [コマンド一覧](https://momoka-project.com/commands.html)  

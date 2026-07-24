@@ -1,12 +1,12 @@
-# Link Fix（壊れた SNS embed の代替表示）設定
+# Link Fix（SNS embed の抑制＋Fix URL 引用置換）設定
 link_fix:
   # 機能全体のデフォルト（ギルド未設定時）
   enabled: true
   # 返信は常に @silent
   silent: true
-  # 公式 embed 待ち秒数
+  # 元メッセージの公式 embed 待ち秒数（抑制前）
   embed_wait_seconds: 5.0
-  # Fix 側 embed 待ち秒数（無ければ返信削除）
+  # Fix 側 embed 待ち秒数（無ければ返信削除＋元復元）
   fixed_embed_wait_seconds: 6.0
   # 本文に含まれていればスキップ
   ignore_keyword: fxignore
